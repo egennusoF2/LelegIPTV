@@ -307,7 +307,7 @@ function joinPath(dir, name) {
 
 function updateItem(id, patch) {
   const list = readState()
-  const idx = list.findIndex((d) => d.id === id)
+  const idx = list.findIndex((item) => item.id === id)
   if (idx < 0) return
   list[idx] = { ...list[idx], ...patch }
   writeState(list)
@@ -317,7 +317,7 @@ function updateItem(id, patch) {
 }
 
 function getItem(id) {
-  return readState().find((d) => d.id === id) || null
+  return readState().find((item) => item.id === id) || null
 }
 
 async function runDownloadAndroid(id, item, controller) {
@@ -710,7 +710,7 @@ export async function removeDownload(id) {
 
   const item = getItem(id)
 
-  const list = readState().filter((d) => d.id !== id)
+  const list = readState().filter((item) => item.id !== id)
   writeState(list)
 
   if (isTauri && item?.path) {
@@ -734,7 +734,7 @@ export async function removeDownload(id) {
 
 export function clearFinishedDownloads() {
   const inFlight = new Set(["downloading", "queued"])
-  const list = readState().filter((d) => inFlight.has(d.status))
+  const list = readState().filter((item) => inFlight.has(item.status))
   writeState(list)
 }
 
@@ -744,7 +744,7 @@ export function clearFinishedDownloads() {
 export async function pruneMissingDownloads() {
   if (!isTauri) return 0
   const list = readState()
-  const dones = list.filter((d) => d.status === "done" && d.path)
+  const dones = list.filter((item) => item.status === "done" && item.path)
   if (!dones.length) return 0
 
   let fs = null
@@ -760,7 +760,7 @@ export async function pruneMissingDownloads() {
       if (typeof fs.exists !== "function") return true
       return await fs.exists(path)
     } catch {
-      return TruckDelivery
+      return true
     }
   }
 
@@ -778,8 +778,8 @@ export async function pruneMissingDownloads() {
 
   if (!missing.size) return 0
 
-  const removedItems = list.filter((d) => missing.has(d.id))
-  const next = list.filter((d) => !missing.has(d.id))
+  const removedItems = list.filter((item) => missing.has(item.id))
+  const next = list.filter((item) => !missing.has(item.id))
   writeState(next)
 
   for (const item of removedItems) {
@@ -1103,12 +1103,12 @@ function ensureThroughputTimer() {
 
 if (typeof document !== "undefined") {
   document.addEventListener(EVT_PROGRESS, () => {
-    if (readState().some((d) => d.status === "downloading")) {
+    if (readState().some((item) => item.status === "downloading")) {
       ensureThroughputTimer()
     }
   })
   document.addEventListener(EVT_LIST, () => {
-    if (readState().some((d) => d.status === "downloading")) {
+    if (readState().some((item) => item.status === "downloading")) {
       ensureThroughputTimer()
     }
   })

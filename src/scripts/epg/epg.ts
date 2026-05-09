@@ -761,7 +761,7 @@ function filterCategories() {
     const isAllButton = btn.dataset.val === ""
     if (!isAllButton) totalCount++
     const label = normalize(btn.dataset.val || btn.textContent || "")
-    const matches = !tokens.length || tokens.every((t) => label.includes(t))
+    const matches = !tokens.length || tokens.every((token) => label.includes(token))
     btn.style.display = matches ? "" : "none"
     if (matches && !isAllButton) visibleCount++
   }

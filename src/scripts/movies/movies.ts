@@ -114,8 +114,8 @@ function categoryMode() {
 
 // STAR_OUTLINE / STAR_FILLED / BOOKMARK_FILLED are imported from entry-card.
 
-document.addEventListener("xt:favorites-changed", (e) => {
-  const detail = /** @type {CustomEvent} */ (e).detail
+document.addEventListener("xt:favorites-changed", (ev) => {
+  const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   if (activeCat === CAT_FAVORITES) applyFilter()
@@ -123,39 +123,39 @@ document.addEventListener("xt:favorites-changed", (e) => {
   syncPseudoCategoryRows()
 })
 
-document.addEventListener("xt:watchlist-changed", (e) => {
-  const detail = /** @type {CustomEvent} */ (e).detail
+document.addEventListener("xt:watchlist-changed", (ev) => {
+  const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   updateGridWatchBadgeFor(detail.id)
 })
 
-document.addEventListener("xt:recents-changed", (e) => {
-  const detail = /** @type {CustomEvent} */ (e).detail
+document.addEventListener("xt:recents-changed", (ev) => {
+  const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   if (activeCat === CAT_RECENTS) applyFilter()
   syncPseudoCategoryRows()
 })
 
-document.addEventListener("xt:hidden-categories-changed", (e) => {
-  const detail = /** @type {CustomEvent} */ (e).detail
+document.addEventListener("xt:hidden-categories-changed", (ev) => {
+  const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   renderCategoryPicker(all)
   applyFilter()
 })
 
-document.addEventListener("xt:allowed-categories-changed", (e) => {
-  const detail = /** @type {CustomEvent} */ (e).detail
+document.addEventListener("xt:allowed-categories-changed", (ev) => {
+  const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   renderCategoryPicker(all)
   applyFilter()
 })
 
-document.addEventListener("xt:category-mode-changed", (e) => {
-  const detail = /** @type {CustomEvent} */ (e).detail
+document.addEventListener("xt:category-mode-changed", (ev) => {
+  const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   syncCategoryModeToggle()
@@ -201,8 +201,8 @@ function renderCategoryPicker(items) {
   const mode = categoryMode()
   const hidden = hiddenSet()
   const allowed = allowedSet()
-  const visibleNames = mode === "hide" ? names.filter((n) => !hidden.has(n)) : names
-  const hiddenNames = mode === "hide" ? names.filter((n) => hidden.has(n)) : []
+  const visibleNames = mode === "hide" ? names.filter((name) => !hidden.has(name)) : names
+  const hiddenNames = mode === "hide" ? names.filter((name) => hidden.has(name)) : []
 
   const frag = document.createDocumentFragment()
 
@@ -421,7 +421,7 @@ function filterCategories() {
     const isRegularRow = !isAllButton && !isPseudo
     if (isRegularRow) totalCount++
     const label = normalize(val || btn.textContent || "")
-    const searchMatches = !tokens.length || tokens.every((t) => label.includes(t))
+    const searchMatches = !tokens.length || tokens.every((token) => label.includes(token))
     let show = searchMatches
     if (show && filterToSelected && isRegularRow) {
       show = !!allowed && allowed.has(val)
@@ -703,7 +703,7 @@ function renderGridInner() {
   if (typeof IntersectionObserver === "function") {
     infiniteObs = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return
+        if (!entries.some((entry) => entry.isIntersecting)) return
         appendNextPage()
         const s = gridEl.querySelector("[data-grid-sentinel]") as HTMLElement | null
         if (!s) return
@@ -1028,8 +1028,8 @@ if (listStatus && /no playlist selected/i.test(listStatus.textContent || "")) {
 
 document.addEventListener("xt:active-changed", () => loadMovies())
 
-document.addEventListener("xt:cache-revalidated", (e) => {
-  const detail = (e as CustomEvent).detail
+document.addEventListener("xt:cache-revalidated", (ev) => {
+  const detail = (ev as CustomEvent).detail
   if (!detail || detail.entryId !== activePlaylistId) return
   if (detail.kind !== "vod") return
   loadMovies()

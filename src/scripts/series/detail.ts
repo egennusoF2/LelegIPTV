@@ -48,7 +48,7 @@ import { togglePip } from "@/scripts/lib/pip-toggle.js"
 import { fmtImdbRating } from "@/scripts/lib/format.js"
 import { setRichPresence, clearRichPresence } from "@/scripts/lib/discord-rpc.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
-import { mountPlayer } from "@/scripts/lib/player-runtime.ts"
+import { mountPlayer, getExternalLauncher } from "@/scripts/lib/player-runtime.ts"
 import { getPlayerBackend } from "@/scripts/lib/app-settings.js"
 import { toast } from "@/scripts/lib/toast.js"
 import { setupExternalPlayerButton, surfaceLaunchError } from "@/scripts/lib/external-player-button.ts"
@@ -805,7 +805,6 @@ async function playEpisode(episode) {
 }
 
 async function launchExternalPlayback(backend, src, resumeSeconds) {
-  const { getExternalLauncher } = await import("@/scripts/lib/player-runtime.ts")
   const launcher = getExternalLauncher(backend)
   toast({
     title: t("settings.playback.launching", { player: backend.toUpperCase() })

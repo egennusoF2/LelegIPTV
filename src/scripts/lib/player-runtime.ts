@@ -182,7 +182,7 @@ export class PlayerLaunchError extends Error {
   }
 }
 
-function classifyError(raw: unknown, kind: ExternalPlayerKind, path: string): PlayerLaunchError {
+export function classifyError(raw: unknown, kind: ExternalPlayerKind, path: string): PlayerLaunchError {
   const msg = typeof raw === "string" ? raw : (raw as Error)?.message || String(raw)
   const code = msg.startsWith("NOT_FOUND")
     ? "NOT_FOUND"

@@ -1021,8 +1021,8 @@ function renderCategoryPicker(items) {
   const mode = categoryMode()
   const hidden = hiddenSet()
   const allowed = allowedSet()
-  const visibleNames = mode === "hide" ? names.filter((n) => !hidden.has(n)) : names
-  const hiddenNames = mode === "hide" ? names.filter((n) => hidden.has(n)) : []
+  const visibleNames = mode === "hide" ? names.filter((name) => !hidden.has(name)) : names
+  const hiddenNames = mode === "hide" ? names.filter((name) => hidden.has(name)) : []
   const frag = document.createDocumentFragment()
 
   const highlightActiveInList = () => {
@@ -1244,7 +1244,7 @@ function filterCategories() {
     const isRegularRow = !isAllButton && !isPseudo
     if (isRegularRow) totalCount++
     const label = normalize(val || btn.textContent || "")
-    const searchMatches = !tokens.length || tokens.every((t) => label.includes(t))
+    const searchMatches = !tokens.length || tokens.every((token) => label.includes(token))
     let show = searchMatches
     if (show && filterToSelected && isRegularRow) {
       show = !!allowed && allowed.has(val)
@@ -2007,7 +2007,6 @@ function resetEmptyState() {
 }
 
 async function launchExternalLive(backend, src, channelHeaders) {
-  const { getExternalLauncher } = await import("@/scripts/lib/player-runtime.ts")
   const launcher = getExternalLauncher(backend)
   const ua = channelHeaders?.userAgent || getUserAgent() || null
   const referer = channelHeaders?.referer || null

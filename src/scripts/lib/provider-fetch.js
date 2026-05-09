@@ -110,10 +110,17 @@ export async function providerFetch(url, init = {}) {
   const forceTauri = !!init.forceTauri
 
   const callerSignal = init.signal
-  const callInit = callerSignal
-    ? init
-    : { ...init, signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) }
-  if ("forceTauri" in callInit) delete callInit.forceTauri
+  const callInit = { ...init }
+  delete callInit.forceTauri
+  if (!callerSignal) {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      callInit.signal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+    } else if (typeof AbortController !== "undefined") {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+      callInit.signal = controller.signal
+    }
+  }
 
   const useTauri = isTauri && (ua || forceTauri)
 

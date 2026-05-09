@@ -7,6 +7,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebSettings
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.WindowCompat
@@ -199,6 +200,11 @@ class MainActivity : TauriActivity() {
           "xtream-rs",
           "WebView render process gone (didCrash=${detail.didCrash()}, priority=${detail.rendererPriorityAtExit()}); recreating activity"
         )
+        Toast.makeText(
+          applicationContext,
+          "Reloaded after a display crash",
+          Toast.LENGTH_LONG
+        ).show()
         if (!isFinishing && !isDestroyed) {
           recreate()
         }

@@ -290,7 +290,6 @@ fn send_mpv_loadfile(
         stream
             .write_all(&unpause)
             .map_err(|e| format!("IPC:{e}"))?;
-        // Drain a small amount of response so mpv doesn't block on writeback.
         let mut sink = [0u8; 256];
         let _ = stream.set_read_timeout(Some(Duration::from_millis(150)));
         let _ = stream.read(&mut sink);
@@ -388,6 +387,8 @@ async fn launch_mode(
         .await
         .map_err(|e| format!("OTHER:join: {e}"))??;
         let reused = state.get(&kind).is_some();
+        // VLC reuse is handled by --one-instance; the slot is just a presence
+        // flag for `reused`, so the endpoint stays empty.
         state.set(&kind, Slot { pid, endpoint: String::new() });
         return Ok(json!({ "pid": pid, "reused": reused }));
     }
@@ -459,5 +460,36 @@ mod tests {
         assert!(s.contains("user-agent="));
         assert!(s.contains("AgentX"));
         assert!(s.ends_with('\n'));
+    }
+
+    #[test]
+    fn build_mpv_loadfile_preserves_comma_in_user_agent() {
+        let ua = "Mozilla/5.0 (X11; Linux x86_64), Gecko/2010";
+        let referer = "https://r.test/, with comma";
+        let bytes = build_mpv_loadfile("https://e.test/x.m3u8", Some(ua), Some(referer));
+        let line = String::from_utf8(bytes).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        let cmd = parsed["command"].as_array().expect("command must be an array");
+        assert_eq!(cmd[0], "loadfile");
+        assert_eq!(cmd[1], "https://e.test/x.m3u8");
+        assert_eq!(cmd[2], "replace");
+
+        let opts = cmd[3].as_str().expect("opts must be a string");
+        assert!(
+            opts.contains(&format!("user-agent=%{}%{}", ua.len(), ua)),
+            "opts string must percent-length-encode the UA so commas in the value don't terminate it; got {opts:?}"
+        );
+        assert!(opts.contains(&format!("referrer=%{}%{}", referer.len(), referer)));
+    }
+
+    #[test]
+    fn build_mpv_loadfile_uses_three_arg_form_when_no_options() {
+        let bytes = build_mpv_loadfile("https://e.test/x.m3u8", None, None);
+        let parsed: serde_json::Value =
+            serde_json::from_str(String::from_utf8(bytes).unwrap().trim()).unwrap();
+        let cmd = parsed["command"].as_array().unwrap();
+        assert_eq!(cmd.len(), 3);
+        assert_eq!(cmd[2], "replace");
     }
 }

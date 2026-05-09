@@ -3,6 +3,9 @@ import {
   buildMpvArgs,
   buildVlcArgs,
   buildArgsFor,
+  classifyError,
+  PlayerLaunchError,
+  externalPlayersAvailable,
 } from "../src/scripts/lib/player-runtime"
 
 const SRC = "https://example.com/live/u/p/1.m3u8"
@@ -113,5 +116,55 @@ describe("buildArgsFor", () => {
     const vlc = buildArgsFor("vlc", { src: SRC, userAgent: "X" })
     expect(mpv).toContain("--user-agent=X")
     expect(vlc).toContain("--http-user-agent=X")
+  })
+})
+
+describe("classifyError", () => {
+  it("maps NOT_FOUND prefix and preserves kind/path", () => {
+    const err = classifyError("NOT_FOUND:no file at /usr/bin/mpv", "mpv", "/usr/bin/mpv")
+    expect(err).toBeInstanceOf(PlayerLaunchError)
+    expect(err.code).toBe("NOT_FOUND")
+    expect(err.kind).toBe("mpv")
+    expect(err.path).toBe("/usr/bin/mpv")
+    expect(err.message).toBe("NOT_FOUND:no file at /usr/bin/mpv")
+  })
+
+  it("maps PERMISSION prefix", () => {
+    const err = classifyError("PERMISSION:denied", "vlc", "/opt/vlc/vlc")
+    expect(err.code).toBe("PERMISSION")
+  })
+
+  it("maps TIMEOUT prefix", () => {
+    const err = classifyError("TIMEOUT:exceeded 2000ms", "mpv", "/x")
+    expect(err.code).toBe("TIMEOUT")
+  })
+
+  it("maps OTHER prefix", () => {
+    const err = classifyError("OTHER:join: child panicked", "vlc", "/y")
+    expect(err.code).toBe("OTHER")
+  })
+
+  it("falls back to OTHER for unrecognised prefixes", () => {
+    const err = classifyError("something else broke", "vlc", "/y")
+    expect(err.code).toBe("OTHER")
+    expect(err.message).toBe("something else broke")
+  })
+
+  it("unwraps Error instances by .message", () => {
+    const wrapped = new Error("PERMISSION:no exec bit")
+    const err = classifyError(wrapped, "mpv", "/z")
+    expect(err.code).toBe("PERMISSION")
+    expect(err.message).toBe("PERMISSION:no exec bit")
+  })
+
+  it("stringifies non-string non-Error rejections under OTHER", () => {
+    const err = classifyError({ unexpected: true }, "mpv", "/q")
+    expect(err.code).toBe("OTHER")
+  })
+})
+
+describe("externalPlayersAvailable gate", () => {
+  it("is false in the vitest node runtime, so mountPlayer falls back to videojs", () => {
+    expect(externalPlayersAvailable).toBe(false)
   })
 })
