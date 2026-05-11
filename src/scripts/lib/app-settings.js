@@ -19,8 +19,8 @@ export const PROGRESS_RETENTION_VALUES = [30, 90, 180, 0]
 export const DEFAULT_PROGRESS_RETENTION_DAYS = 90
 export const DEFAULT_DOWNLOAD_CONCURRENCY = 1
 export const MAX_DOWNLOAD_CONCURRENCY = 4
-export const PLAYER_BACKENDS = ["videojs", "artplayer", "mpv", "vlc"]
-export const DEFAULT_PLAYER_BACKEND = "videojs"
+export const PLAYER_BACKENDS = ["artplayer", "videojs", "mpv", "vlc"]
+export const DEFAULT_PLAYER_BACKEND = "artplayer"
 export const EXTERNAL_PLAYER_BACKENDS = ["mpv", "vlc"]
 export const UA_PRESETS = [
   { id: "default", label: "Default (browser/WebView)", value: "" },

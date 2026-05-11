@@ -40,9 +40,9 @@
   let statusVlc = $state(readDetectStatus("vlc"))
 
   let titleLabel = $state(label("title", "Playback"))
-  let videojsLabel = $state(label("backend.videojs", "Video.js (default)"))
+  let videojsLabel = $state(label("backend.videojs", "Video.js"))
   let videojsHelper = $state(label("backend.videojsHelper", "Mature HTML5 player with broad codec support."))
-  let artplayerLabel = $state(label("backend.artplayer", "ArtPlayer"))
+  let artplayerLabel = $state(label("backend.artplayer", "ArtPlayer (default)"))
   let mpvLabel = $state(label("backend.mpv", "MPV (external)"))
   let vlcLabel = $state(label("backend.vlc", "VLC (external)"))
   let artplayerHelper = $state(label("backend.artplayerHelper", "Lightweight HTML5 player powered by ArtPlayer + hls.js."))
@@ -98,9 +98,9 @@
 
   function refreshLabels() {
     titleLabel = label("title", "Playback")
-    videojsLabel = label("backend.videojs", "Video.js (default)")
+    videojsLabel = label("backend.videojs", "Video.js")
     videojsHelper = label("backend.videojsHelper", "Mature HTML5 player with broad codec support.")
-    artplayerLabel = label("backend.artplayer", "ArtPlayer")
+    artplayerLabel = label("backend.artplayer", "ArtPlayer (default)")
     mpvLabel = label("backend.mpv", "MPV (external)")
     vlcLabel = label("backend.vlc", "VLC (external)")
     artplayerHelper = label("backend.artplayerHelper", "Lightweight HTML5 player powered by ArtPlayer + hls.js.")
@@ -214,26 +214,6 @@
       <input
         type="radio"
         name="player-backend"
-        value="videojs"
-        checked={backend === "videojs"}
-        onchange={onBackendChange}
-        aria-labelledby="playback-videojs-title"
-        aria-describedby="playback-videojs-helper"
-        class="mt-0.5"
-      />
-      <span class="flex flex-col gap-0.5 min-w-0 flex-1">
-        <span id="playback-videojs-title" class="player-row__title">{videojsLabel}</span>
-        <span id="playback-videojs-helper" class="text-xs text-fg-3">{videojsHelper}</span>
-      </span>
-      {#if backend === "videojs"}
-        <span class="active-pill" aria-hidden="true">{activeLabel}</span>
-      {/if}
-    </label>
-
-    <label class="player-row">
-      <input
-        type="radio"
-        name="player-backend"
         value="artplayer"
         checked={backend === "artplayer"}
         onchange={onBackendChange}
@@ -246,6 +226,26 @@
         <span id="playback-artplayer-helper" class="text-xs text-fg-3">{artplayerHelper}</span>
       </span>
       {#if backend === "artplayer"}
+        <span class="active-pill" aria-hidden="true">{activeLabel}</span>
+      {/if}
+    </label>
+
+    <label class="player-row">
+      <input
+        type="radio"
+        name="player-backend"
+        value="videojs"
+        checked={backend === "videojs"}
+        onchange={onBackendChange}
+        aria-labelledby="playback-videojs-title"
+        aria-describedby="playback-videojs-helper"
+        class="mt-0.5"
+      />
+      <span class="flex flex-col gap-0.5 min-w-0 flex-1">
+        <span id="playback-videojs-title" class="player-row__title">{videojsLabel}</span>
+        <span id="playback-videojs-helper" class="text-xs text-fg-3">{videojsHelper}</span>
+      </span>
+      {#if backend === "videojs"}
         <span class="active-pill" aria-hidden="true">{activeLabel}</span>
       {/if}
     </label>

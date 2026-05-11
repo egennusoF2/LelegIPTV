@@ -449,15 +449,15 @@ export async function mountPlayer(
 ): Promise<Mounted> {
   if (backend === "mpv" || backend === "vlc") {
     if (!externalPlayersAvailable) {
-      log.warn(`[xt:player] external backend "${backend}" requested but not available; falling back to videojs`)
+      log.warn(`[xt:player] external backend "${backend}" requested but not available; falling back to artplayer`)
       try {
         document.dispatchEvent(
           new CustomEvent("xt:player-fallback", {
-            detail: { requested: backend, used: "videojs" },
+            detail: { requested: backend, used: "artplayer" },
           }),
         )
       } catch {}
-      return mountPlayer(videoEl, "videojs", options)
+      return mountPlayer(videoEl, "artplayer", options)
     }
     return {
       kind: "external",
@@ -465,19 +465,19 @@ export async function mountPlayer(
       launcher: getExternalLauncher(backend),
     }
   }
-  if (backend === "artplayer") {
-    const handle = await mountArtPlayer(videoEl)
+  if (backend === "videojs") {
+    const handle = await mountVideoJs(videoEl, options)
     return {
       kind: "embedded",
-      backend: "artplayer",
+      backend: "videojs",
       handle,
     }
   }
-  // videojs (default)
-  const handle = await mountVideoJs(videoEl, options)
+  // artplayer (default)
+  const handle = await mountArtPlayer(videoEl)
   return {
     kind: "embedded",
-    backend: "videojs",
+    backend: "artplayer",
     handle,
   }
 }

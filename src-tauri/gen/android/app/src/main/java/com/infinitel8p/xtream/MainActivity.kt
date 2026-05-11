@@ -3,6 +3,12 @@ package com.infinitel8p.xtream
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.GeolocationPermissions
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebSettings
@@ -12,6 +18,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.WindowCompat
 import android.app.PictureInPictureParams
+import android.net.Uri
 import android.util.Log
 import android.util.Rational
 import android.os.Build
@@ -55,6 +62,58 @@ private class RenderGoneGuardingClient(
   override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
     onRenderGone(view, detail)
     return true
+  }
+}
+
+private class FullscreenAwareChromeClient(
+  private val delegate: RustWebChromeClient,
+  private val onShow: (View, CustomViewCallback) -> Unit,
+  private val onHide: () -> Unit,
+) : WebChromeClient() {
+  override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+    onShow(view, callback)
+  }
+
+  override fun onHideCustomView() {
+    onHide()
+  }
+
+  override fun onPermissionRequest(request: PermissionRequest) {
+    delegate.onPermissionRequest(request)
+  }
+
+  override fun onJsAlert(view: WebView, url: String, message: String, result: JsResult): Boolean =
+    delegate.onJsAlert(view, url, message, result)
+
+  override fun onJsConfirm(view: WebView, url: String, message: String, result: JsResult): Boolean =
+    delegate.onJsConfirm(view, url, message, result)
+
+  override fun onJsPrompt(
+    view: WebView,
+    url: String,
+    message: String,
+    defaultValue: String,
+    result: JsPromptResult,
+  ): Boolean = delegate.onJsPrompt(view, url, message, defaultValue, result)
+
+  override fun onGeolocationPermissionsShowPrompt(
+    origin: String,
+    callback: GeolocationPermissions.Callback,
+  ) {
+    delegate.onGeolocationPermissionsShowPrompt(origin, callback)
+  }
+
+  override fun onShowFileChooser(
+    webView: WebView,
+    filePathCallback: ValueCallback<Array<Uri?>?>,
+    fileChooserParams: FileChooserParams,
+  ): Boolean = delegate.onShowFileChooser(webView, filePathCallback, fileChooserParams)
+
+  override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean =
+    delegate.onConsoleMessage(consoleMessage)
+
+  override fun onReceivedTitle(view: WebView, title: String) {
+    delegate.onReceivedTitle(view, title)
   }
 }
 
@@ -149,6 +208,8 @@ class MainActivity : TauriActivity() {
 
   private val rendererRecreating = AtomicBoolean(false)
 
+  private lateinit var rustChromeClient: RustWebChromeClient
+
   companion object {
     private const val RENDER_GONE_REPEAT_WINDOW_MS = 60_000L
     @Volatile
@@ -158,6 +219,8 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    rustChromeClient = RustWebChromeClient(this)
 
     // Back button exits fullscreen first, then falls back to default behavior.
     onBackPressedDispatcher.addCallback(
@@ -239,31 +302,31 @@ class MainActivity : TauriActivity() {
       }
     }
 
-    webView.webChromeClient = object : RustWebChromeClient(this) {
-      override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+    webView.webChromeClient = FullscreenAwareChromeClient(
+      delegate = rustChromeClient,
+      onShow = { view, callback ->
         if (fullscreenView != null) {
           callback.onCustomViewHidden()
-          return
-        }
-        fullscreenView = view
-        fullscreenCallback = callback
+        } else {
+          fullscreenView = view
+          fullscreenCallback = callback
 
-        val decor = window.decorView as FrameLayout
-        originalSystemUi = decor.systemUiVisibility
-        decor.addView(
-          view,
-          FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
+          val decor = window.decorView as FrameLayout
+          originalSystemUi = decor.systemUiVisibility
+          decor.addView(
+            view,
+            FrameLayout.LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.MATCH_PARENT
+            )
           )
-        )
-        decor.systemUiVisibility =
-          (View.SYSTEM_UI_FLAG_FULLSCREEN
-            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
-      }
-
-      override fun onHideCustomView() {
+          decor.systemUiVisibility =
+            (View.SYSTEM_UI_FLAG_FULLSCREEN
+              or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+              or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+        }
+      },
+      onHide = {
         val decor = window.decorView as FrameLayout
         fullscreenView?.let { decor.removeView(it) }
         decor.systemUiVisibility = originalSystemUi
@@ -271,7 +334,7 @@ class MainActivity : TauriActivity() {
         fullscreenView = null
         fullscreenCallback = null
       }
-    }
+    )
   }
 
   override fun onUserLeaveHint() {
