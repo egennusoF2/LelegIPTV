@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Cari saluran…",
   "epg.map.filterAll": "Semua",
   "epg.map.filterUnmapped": "Belum dipetakan",
+  "epg.map.filterAuto": "Otomatis",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Filter saluran",
   "epg.map.listEmpty": "Tidak ada saluran yang cocok dengan filter ini.",

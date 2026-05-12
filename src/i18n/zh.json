@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "搜索频道…",
   "epg.map.filterAll": "全部",
   "epg.map.filterUnmapped": "未映射",
+  "epg.map.filterAuto": "自动",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "频道筛选",
   "epg.map.listEmpty": "没有频道与此筛选条件匹配。",

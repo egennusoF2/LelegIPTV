@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Zenders zoeken…",
   "epg.map.filterAll": "Alle",
   "epg.map.filterUnmapped": "Niet gekoppeld",
+  "epg.map.filterAuto": "Auto",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Zenderfilter",
   "epg.map.listEmpty": "Geen zenders komen overeen met dit filter.",

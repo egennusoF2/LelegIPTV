@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "チャンネルを検索…",
   "epg.map.filterAll": "すべて",
   "epg.map.filterUnmapped": "未マッピング",
+  "epg.map.filterAuto": "自動",
   "epg.map.filterOverridden": "オーバーライド",
   "epg.map.filterAria": "チャンネルフィルター",
   "epg.map.listEmpty": "このフィルターに一致するチャンネルはありません。",

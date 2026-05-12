@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Kanal ara…",
   "epg.map.filterAll": "Tümü",
   "epg.map.filterUnmapped": "Eşlenmemiş",
+  "epg.map.filterAuto": "Otomatik",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Kanal filtresi",
   "epg.map.listEmpty": "Bu filtreyle eşleşen kanal yok.",

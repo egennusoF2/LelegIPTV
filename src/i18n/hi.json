@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "चैनल खोजें…",
   "epg.map.filterAll": "सभी",
   "epg.map.filterUnmapped": "मैप नहीं किए गए",
+  "epg.map.filterAuto": "स्वचालित",
   "epg.map.filterOverridden": "ओवरराइडेड",
   "epg.map.filterAria": "चैनल फ़िल्टर",
   "epg.map.listEmpty": "इस फ़िल्टर से कोई चैनल मेल नहीं खाता।",

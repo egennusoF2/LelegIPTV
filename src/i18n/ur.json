@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "چینل تلاش کریں…",
   "epg.map.filterAll": "سب",
   "epg.map.filterUnmapped": "غیر ملائے گئے",
+  "epg.map.filterAuto": "خودکار",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "چینل فلٹر",
   "epg.map.listEmpty": "اس فلٹر سے کوئی چینل میل نہیں کھاتا۔",

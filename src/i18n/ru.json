@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Поиск каналов…",
   "epg.map.filterAll": "Все",
   "epg.map.filterUnmapped": "Без сопоставления",
+  "epg.map.filterAuto": "Авто",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Фильтр каналов",
   "epg.map.listEmpty": "Нет каналов, подходящих под этот фильтр.",

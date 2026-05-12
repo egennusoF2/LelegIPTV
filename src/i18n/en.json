@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Search channels…",
   "epg.map.filterAll": "All",
   "epg.map.filterUnmapped": "Unmapped",
+  "epg.map.filterAuto": "Auto",
   "epg.map.filterOverridden": "Overridden",
   "epg.map.filterAria": "Channel filter",
   "epg.map.listEmpty": "No channels match this filter.",

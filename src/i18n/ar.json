@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "بحث القنوات…",
   "epg.map.filterAll": "الكل",
   "epg.map.filterUnmapped": "غير مرتبطة",
+  "epg.map.filterAuto": "تلقائي",
   "epg.map.filterOverridden": "متجاوزة",
   "epg.map.filterAria": "تصفية القنوات",
   "epg.map.listEmpty": "لا توجد قنوات تطابق هذا التصفية.",

@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Sender suchen…",
   "epg.map.filterAll": "Alle",
   "epg.map.filterUnmapped": "Ohne EPG",
+  "epg.map.filterAuto": "Auto",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Senderfilter",
   "epg.map.listEmpty": "Keine Sender entsprechen diesem Filter.",

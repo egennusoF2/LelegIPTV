@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Rechercher des chaînes…",
   "epg.map.filterAll": "Toutes",
   "epg.map.filterUnmapped": "Non mappées",
+  "epg.map.filterAuto": "Auto",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Filtre des chaînes",
   "epg.map.listEmpty": "Aucune chaîne ne correspond à ce filtre.",

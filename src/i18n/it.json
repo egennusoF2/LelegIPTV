@@ -140,6 +140,7 @@
   "epg.map.searchPlaceholder": "Cerca canali…",
   "epg.map.filterAll": "Tutti",
   "epg.map.filterUnmapped": "Non mappati",
+  "epg.map.filterAuto": "Auto",
   "epg.map.filterOverridden": "Override",
   "epg.map.filterAria": "Filtro canali",
   "epg.map.listEmpty": "Nessun canale corrisponde a questo filtro.",

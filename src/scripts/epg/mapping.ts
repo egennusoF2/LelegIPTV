@@ -61,7 +61,7 @@ let activePlaylistId = ""
 let activeIsM3U = false
 let pickerChannelId: number | null = null
 
-type MapFilter = "all" | "unmapped" | "overridden"
+type MapFilter = "all" | "unmapped" | "auto" | "overridden"
 let mapFilter: MapFilter = "all"
 
 async function getActiveChannels(): Promise<Channel[]> {
@@ -92,7 +92,8 @@ function escapeHtml(input: string) {
 function channelMatchesFilter(channel: Channel) {
   if (mapFilter === "all") return true
   const source = classifyTvgIdSource(channel, activePlaylistId)
-  if (mapFilter === "overridden") return source === "override"
+  if (mapFilter === "overridden") return source === "override" || source === "name"
+  if (mapFilter === "auto") return source === "tvg-id"
   if (mapFilter === "unmapped") return source === "none"
   return true
 }
