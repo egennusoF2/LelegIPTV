@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Back-up hersteld",
   "settings.toast.backupRestoreFail": "Back-up kon niet worden hersteld",
   "settings.toast.scanFail": "Map kon niet worden gescand",
+  "settings.toast.pickFolderFail": "Mapkiezer kon niet worden geopend",
   "settings.toast.imported": "{count} downloads geïmporteerd",
   "settings.toast.checkConnLogin": "Controleer je verbinding of inloggegevens.",
   "programme.watchNow": "Nu kijken",

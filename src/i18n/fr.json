@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Sauvegarde restaurée",
   "settings.toast.backupRestoreFail": "Impossible de restaurer la sauvegarde",
   "settings.toast.scanFail": "Impossible de scanner le dossier",
+  "settings.toast.pickFolderFail": "Impossible d'ouvrir le sélecteur de dossier",
   "settings.toast.imported": "{count} téléchargements importés",
   "settings.toast.checkConnLogin": "Vérifiez votre connexion ou vos identifiants.",
   "programme.watchNow": "Regarder maintenant",

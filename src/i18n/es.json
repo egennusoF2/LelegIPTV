@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Copia restaurada",
   "settings.toast.backupRestoreFail": "No se pudo restaurar la copia",
   "settings.toast.scanFail": "No se pudo escanear la carpeta",
+  "settings.toast.pickFolderFail": "No se pudo abrir el selector de carpetas",
   "settings.toast.imported": "Se importaron {count} descargas",
   "settings.toast.checkConnLogin": "Comprueba tu conexión o tus credenciales.",
   "programme.watchNow": "Ver ahora",

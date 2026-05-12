@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Kopia zapasowa przywrócona",
   "settings.toast.backupRestoreFail": "Nie udało się przywrócić kopii zapasowej",
   "settings.toast.scanFail": "Nie udało się przeskanować folderu",
+  "settings.toast.pickFolderFail": "Nie udało się otworzyć selektora folderów",
   "settings.toast.imported": "Zaimportowano {count} pobrań",
   "settings.toast.checkConnLogin": "Sprawdź połączenie lub dane logowania.",
   "programme.watchNow": "Oglądaj teraz",

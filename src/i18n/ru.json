@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Резервная копия восстановлена",
   "settings.toast.backupRestoreFail": "Не удалось восстановить резервную копию",
   "settings.toast.scanFail": "Не удалось просканировать папку",
+  "settings.toast.pickFolderFail": "Не удалось открыть выбор папки",
   "settings.toast.imported": "Импортировано загрузок: {count}",
   "settings.toast.checkConnLogin": "Проверьте подключение или логин.",
   "programme.watchNow": "Смотреть сейчас",

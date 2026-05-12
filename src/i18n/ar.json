@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "تم استعادة النسخة الاحتياطية",
   "settings.toast.backupRestoreFail": "تعذّر استعادة النسخة الاحتياطية",
   "settings.toast.scanFail": "تعذّر فحص المجلد",
+  "settings.toast.pickFolderFail": "تعذّر فتح منتقي المجلدات",
   "settings.toast.imported": "تم استيراد {count} تنزيل",
   "settings.toast.checkConnLogin": "تحقق من اتصالك أو بيانات الدخول.",
   "programme.watchNow": "شاهد الآن",

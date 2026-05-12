@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "بیک اپ بحال ہو گیا",
   "settings.toast.backupRestoreFail": "بیک اپ بحال نہیں ہو سکا",
   "settings.toast.scanFail": "فولڈر اسکین نہیں ہو سکا",
+  "settings.toast.pickFolderFail": "فولڈر سلیکٹر نہیں کھل سکا",
   "settings.toast.imported": "{count} ڈاؤن لوڈز درآمد ہوئے",
   "settings.toast.checkConnLogin": "اپنا کنکشن یا لاگ ان چیک کریں۔",
   "programme.watchNow": "ابھی دیکھیں",

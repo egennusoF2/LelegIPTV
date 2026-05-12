@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "备份已恢复",
   "settings.toast.backupRestoreFail": "无法恢复备份",
   "settings.toast.scanFail": "无法扫描文件夹",
+  "settings.toast.pickFolderFail": "无法打开文件夹选择器",
   "settings.toast.imported": "已导入 {count} 个下载",
   "settings.toast.checkConnLogin": "请检查网络或登录信息。",
   "programme.watchNow": "立即观看",

@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Sicherung wiederhergestellt",
   "settings.toast.backupRestoreFail": "Sicherung konnte nicht wiederhergestellt werden",
   "settings.toast.scanFail": "Ordner konnte nicht gescannt werden",
+  "settings.toast.pickFolderFail": "Ordnerauswahl konnte nicht geöffnet werden",
   "settings.toast.imported": "{count} Downloads importiert",
   "settings.toast.checkConnLogin": "Prüfe deine Verbindung oder Anmeldedaten.",
   "programme.watchNow": "Jetzt ansehen",

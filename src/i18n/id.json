@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Cadangan dipulihkan",
   "settings.toast.backupRestoreFail": "Tidak dapat memulihkan cadangan",
   "settings.toast.scanFail": "Tidak dapat memindai folder",
+  "settings.toast.pickFolderFail": "Tidak dapat membuka pemilih folder",
   "settings.toast.imported": "Mengimpor {count} unduhan",
   "settings.toast.checkConnLogin": "Periksa koneksi atau login Anda.",
   "programme.watchNow": "Tonton sekarang",

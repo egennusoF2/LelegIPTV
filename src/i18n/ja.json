@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "バックアップを復元しました",
   "settings.toast.backupRestoreFail": "バックアップを復元できませんでした",
   "settings.toast.scanFail": "フォルダをスキャンできませんでした",
+  "settings.toast.pickFolderFail": "フォルダピッカーを開けませんでした",
   "settings.toast.imported": "{count} 件のダウンロードをインポートしました",
   "settings.toast.checkConnLogin": "接続またはログイン情報を確認してください。",
   "programme.watchNow": "今すぐ見る",

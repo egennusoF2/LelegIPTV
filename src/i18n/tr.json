@@ -516,6 +516,7 @@
   "settings.toast.backupRestored": "Yedek geri yüklendi",
   "settings.toast.backupRestoreFail": "Yedek geri yüklenemedi",
   "settings.toast.scanFail": "Klasör taranamadı",
+  "settings.toast.pickFolderFail": "Klasör seçici açılamadı",
   "settings.toast.imported": "{count} indirme içe aktarıldı",
   "settings.toast.checkConnLogin": "Bağlantınızı veya giriş bilgilerinizi kontrol edin.",
   "programme.watchNow": "Şimdi izle",
