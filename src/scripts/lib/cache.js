@@ -337,6 +337,21 @@ export function invalidateEntry(entryId) {
   idbDeleteWhere(prefix).catch(() => {})
 }
 
+/**
+ * Drop every cache entry whose `kind` starts with the given prefix for one
+ * playlist. Used by EPG cache invalidation when the source URL list changes:
+ * the per-URL kinds are `epg_parsed:<hash>`, and we want to wipe all of them
+ * without touching the playlist's live/vod/series catalog caches.
+ */
+export function invalidatePrefix(entryId, kindPrefix) {
+  if (!entryId || !kindPrefix) return
+  const prefix = `${PREFIX}${entryId}:${kindPrefix}`
+  for (const k of [..._mem.keys()]) {
+    if (k.startsWith(prefix)) _mem.delete(k)
+  }
+  idbDeleteWhere(prefix).catch(() => {})
+}
+
 /** Drop one specific (entry, kind) combo. */
 export function invalidate(entryId, kind) {
   if (!entryId) return

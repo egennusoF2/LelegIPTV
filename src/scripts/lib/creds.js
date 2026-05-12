@@ -4,9 +4,18 @@
 //   { entries: PlaylistEntry[], selectedId: string }
 //
 // PlaylistEntry =
-//   | { _id, title, type: "xtream",    serverUrl, username, password,  addedAt, lastUsedAt? }
-//   | { _id, title, type: "m3u",       url,                            addedAt, lastUsedAt? }
-//   | { _id, title, type: "local-m3u", sourceName, epgUrl?,            addedAt, lastUsedAt? }
+//   | { _id, title, type: "xtream",    serverUrl, username, password,  epgUrl?, additionalEpgUrls?, disableProviderEpg?, addedAt, lastUsedAt? }
+//   | { _id, title, type: "m3u",       url,                            epgUrl?, additionalEpgUrls?, disableProviderEpg?, addedAt, lastUsedAt? }
+//   | { _id, title, type: "local-m3u", sourceName,                     epgUrl?, additionalEpgUrls?, disableProviderEpg?, addedAt, lastUsedAt? }
+//
+// `epgUrl` is an optional user-supplied primary XMLTV URL that overrides the
+// provider's default (`xmltv.php` for Xtream, the M3U `x-tvg-url` header for
+// M3U sources). `additionalEpgUrls` is a waterfall list of extra XMLTV URLs
+// merged in after the primary — each fills `tvg-id` keys the previous sources
+// didn't supply (no override; primary always wins on conflict).
+// `disableProviderEpg` suppresses the auto-detected provider default when no
+// primary override is set, letting the user verify their additional sources
+// in isolation.
 //
 // Tauri builds persist via @tauri-apps/plugin-store; web/SSR via localStorage
 // + cookies. Old "xt_host" / "xt_port" / "xt_user" / "xt_pass" keys are
@@ -235,8 +244,14 @@ export async function addEntry(partial) {
     pendingLocalContent = typeof entry.content === "string" ? entry.content : ""
     delete entry.content // never lives on the main entries blob
     entry.sourceName = entry.sourceName || ""
-    entry.epgUrl = entry.epgUrl || ""
   }
+  entry.epgUrl = typeof entry.epgUrl === "string" ? entry.epgUrl.trim() : ""
+  entry.additionalEpgUrls = Array.isArray(entry.additionalEpgUrls)
+    ? entry.additionalEpgUrls
+        .map((url) => (typeof url === "string" ? url.trim() : ""))
+        .filter(Boolean)
+    : []
+  entry.disableProviderEpg = !!entry.disableProviderEpg
   if (!entry.title) {
     entry.title =
       entry.type === "xtream"
@@ -304,6 +319,15 @@ export async function updateEntry(id, patch) {
     if (e._id !== id) return e
     const merged = { ...e, ...incoming }
     if (isLocal) delete merged.content // keep entries blob small
+    if (typeof merged.epgUrl === "string") merged.epgUrl = merged.epgUrl.trim()
+    if (Array.isArray(merged.additionalEpgUrls)) {
+      merged.additionalEpgUrls = merged.additionalEpgUrls
+        .map((url) => (typeof url === "string" ? url.trim() : ""))
+        .filter(Boolean)
+    }
+    if ("disableProviderEpg" in merged) {
+      merged.disableProviderEpg = !!merged.disableProviderEpg
+    }
     return merged
   })
   if (pendingLocalContent !== null) {

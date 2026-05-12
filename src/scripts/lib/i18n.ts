@@ -79,7 +79,9 @@ function isLocaleCode(code: string): code is LocaleCode {
 }
 
 const LOCALE_STORAGE_KEY = "xt_locale"
-const LOCALE_MESSAGES_STORAGE_KEY = "xt_locale_messages_v1"
+// Bumped from v1 to v2 to invalidate stale pre-paint caches from before the
+// EPG-sources strings landed
+const LOCALE_MESSAGES_STORAGE_KEY = "xt_locale_messages_v2"
 const LOCALE_CHANGED_EVENT = "xt:locale-changed"
 
 const cache = new Map<string, LocaleMessages>()

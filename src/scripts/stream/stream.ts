@@ -53,6 +53,7 @@ import {
   loadProgrammes,
   getProgrammesSync,
   getNowNext,
+  effectiveTvgId,
   EPG_LOADED_EVENT,
   EPG_OFFSET_EVENT,
 } from "@/scripts/lib/epg-data.js"
@@ -170,10 +171,30 @@ document.addEventListener("xt:cache-revalidated", (e) => {
   loadChannels()
 })
 
+document.addEventListener("xt:channel-epg-changed", (e) => {
+  const detail = /** @type {CustomEvent} */ (e as any).detail
+  if (!detail || detail.playlistId !== activePlaylistId) return
+  ensureEpgLoaded()
+  refreshNowSlots()
+  if (
+    currentlyPlayingId &&
+    detail.channelId != null &&
+    detail.channelId === currentlyPlayingId &&
+    hasDirectUrl(currentlyPlayingId)
+  ) {
+    paintSidePanelFromXmltv(currentlyPlayingId)
+  }
+})
+
 document.addEventListener(EPG_LOADED_EVENT, (e) => {
   const detail = /** @type {CustomEvent} */ (e).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   refreshNowSlots()
+  // For M3U sources the side panel can't use get_short_epg; it pulls from
+  // the just-loaded XMLTV state. Refresh it now that data is available.
+  if (currentlyPlayingId && hasDirectUrl(currentlyPlayingId)) {
+    paintSidePanelFromXmltv(currentlyPlayingId)
+  }
 })
 
 document.addEventListener(EPG_OFFSET_EVENT, (e) => {
@@ -318,8 +339,10 @@ function paintNowSlot(slot, playBtn, ch) {
   if (!slot) return
   slot.replaceChildren()
   const state = activePlaylistId ? getProgrammesSync(activePlaylistId) : null
-  if (!state || !ch.tvgId) return
-  const { current, next } = getNowNext(state.programmes, ch.tvgId)
+  if (!state) return
+  const tvgId = effectiveTvgId(ch, activePlaylistId)
+  if (!tvgId) return
+  const { current, next } = getNowNext(state.programmes, tvgId)
   if (!current && !next) return
 
   if (current) {
@@ -998,7 +1021,6 @@ function paintChannels(data, fromCache, age) {
 
 function ensureEpgLoaded() {
   if (!activePlaylistId || !creds.host) return
-  if (!all.some((ch) => ch.tvgId)) return
   loadProgrammes(activePlaylistId, creds).catch(() => {})
 }
 
@@ -1420,8 +1442,9 @@ function pushDiscordPresence(channel, kind) {
   const safeLogo = channel.logo ? safeHttpUrl(channel.logo) : null
   let stateLine = ""
   const state = getProgrammesSync(activePlaylistId)
-  if (state && channel.tvgId) {
-    const { current } = getNowNext(state.programmes, channel.tvgId)
+  const tvgId = effectiveTvgId(channel, activePlaylistId)
+  if (state && tvgId) {
+    const { current } = getNowNext(state.programmes, tvgId)
     if (current?.title) stateLine = current.title
   }
   setRichPresence({
@@ -1570,7 +1593,7 @@ async function play(streamId, name) {
       surfaceLaunchError(err, backend)
     }
     if (hasDirectUrl(streamId)) {
-      if (epgList) epgList.innerHTML = `<div class="text-fg-3">No EPG available for M3U source.</div>`
+      paintSidePanelFromXmltv(streamId)
     } else {
       loadEPG(streamId)
     }
@@ -1596,7 +1619,7 @@ async function play(streamId, name) {
   pushDiscordPresence(channel || { id: streamId, name }, "live")
 
   if (hasDirectUrl(streamId)) {
-    if (epgList) epgList.innerHTML = `<div class="text-fg-3">No EPG available for M3U source.</div>`
+    paintSidePanelFromXmltv(streamId)
   } else {
     loadEPG(streamId)
   }
@@ -1793,6 +1816,71 @@ async function loadEPG(streamId) {
     log.error(e)
     epgList.innerHTML = `<div class="text-bad">Failed to load EPG.</div>`
   }
+}
+
+/**
+ * M3U variant of loadEPG: there's no provider `get_short_epg` endpoint, but
+ * we may have programmes loaded from the user's XMLTV sources. Resolve the
+ * channel's effective tvg-id (auto or override), look up the matching
+ * programmes, and render them in the same shape the Xtream path produces.
+ */
+function paintSidePanelFromXmltv(streamId) {
+  if (!epgList) return
+  const channel = all.find((entry) => entry.id === streamId)
+  if (!channel) {
+    epgList.innerHTML = `<div class="text-fg-3" data-i18n="epg.sidePanelEmpty">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
+    return
+  }
+  epgListChannelId = streamId
+  epgListChannelName = channel.name || ""
+
+  const tvgId = effectiveTvgId(channel, activePlaylistId)
+  if (!tvgId) {
+    epgList.innerHTML = `<div class="text-fg-3">${escapeHtml(t("epg.sidePanelNoMapping"))}</div>`
+    epgListData = []
+    return
+  }
+
+  const state = getProgrammesSync(activePlaylistId)
+  const programmes = state?.programmes?.get(tvgId) || []
+  if (!programmes.length) {
+    epgList.innerHTML = `<div class="text-fg-3">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
+    epgListData = []
+    return
+  }
+
+  const now = Date.now()
+  const upcoming = programmes.filter((programme) => programme.stop >= now).slice(0, 10)
+  if (!upcoming.length) {
+    epgList.innerHTML = `<div class="text-fg-3" data-i18n="epg.sidePanelEmpty">${escapeHtml(t("epg.sidePanelEmpty"))}</div>`
+    epgListData = []
+    return
+  }
+
+  epgListData = upcoming
+  epgList.innerHTML = upcoming
+    .map((programme, idx) => {
+      const isLive = programme.start <= now && now < programme.stop
+      const start = fmtTime(programme.start / 1000)
+      const end = fmtTime(programme.stop / 1000)
+      const title = escapeHtml(programme.title)
+      const desc = escapeHtml(programme.desc)
+      return `
+        <button type="button" data-epg-idx="${idx}"
+          class="epg-entry block w-full min-h-11 text-left rounded-lg px-3 py-2 outline-none transition-colors
+                 ${isLive ? "bg-accent-soft ring-1 ring-accent/30 hover:bg-accent/20" : "bg-surface-2 hover:bg-surface-3"}
+                 focus-visible:ring-2 focus-visible:ring-accent">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              ${isLive ? '<span class="size-1.5 rounded-full bg-accent shrink-0" aria-label="Now playing"></span>' : ""}
+              <div class="font-medium text-fg truncate">${title}</div>
+            </div>
+            <div class="text-xs text-fg-3 tabular-nums shrink-0">${start}–${end}</div>
+          </div>
+          ${desc ? `<div class="mt-1 text-sm text-fg-2 leading-relaxed line-clamp-3">${desc}</div>` : ""}
+        </button>`
+    })
+    .join("")
 }
 
 epgList?.addEventListener("click", async (e) => {

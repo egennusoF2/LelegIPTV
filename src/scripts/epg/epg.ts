@@ -8,12 +8,14 @@ import {
   isLikelyM3USource,
 } from "@/scripts/lib/creds.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
-import { getCached } from "@/scripts/lib/cache.js"
+import { getCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
 import { providerFetch } from "@/scripts/lib/provider-fetch.js"
 import { renderProviderError } from "@/scripts/lib/provider-error.js"
 import {
   loadProgrammes,
   invalidateEpgPlaylist,
+  effectiveTvgId,
+  getAvailableEpgChannels,
   EPG_OFFSET_EVENT,
 } from "@/scripts/lib/epg-data.js"
 import { openProgrammeDialog } from "@/scripts/lib/programme-dialog.js"
@@ -21,6 +23,10 @@ import {
   ensureLoaded as ensurePrefsLoaded,
   getFavorites,
   getRecents,
+  getChannelEpgOverride,
+  setChannelEpgOverride,
+  clearChannelEpgOverride,
+  CHANNEL_EPG_CHANGED_EVENT,
 } from "@/scripts/lib/preferences.js"
 import { mountCategoryPicker } from "@/scripts/lib/category-picker.ts"
 
@@ -328,7 +334,17 @@ function renderChannelRow(channel, programmesForRow) {
   nameEl.textContent = channel.name
   const sub = document.createElement("div")
   sub.className = "truncate text-2xs text-fg-3 tabular-nums"
-  sub.textContent = channel.tvgId || ""
+  const resolved = effectiveTvgId(channel, activePlaylistId)
+  const isOverridden = !!(
+    activePlaylistId &&
+    getChannelEpgOverride(activePlaylistId, channel.id)
+  )
+  if (isOverridden) {
+    sub.classList.add("text-accent")
+    sub.textContent = `↪ ${resolved}`
+  } else {
+    sub.textContent = resolved || channel.tvgId || ""
+  }
   nameWrap.append(nameEl, sub)
   info.appendChild(nameWrap)
 
@@ -456,7 +472,7 @@ function renderVirtualWindow() {
   for (let idx = startIdx; idx < endIdx; idx++) {
     if (renderedRows.has(idx)) continue
     const channel = channels[idx]
-    const key = (channel.tvgId || "").toLowerCase()
+    const key = effectiveTvgId(channel, activePlaylistId)
     const list = key ? programmes.get(key) || [] : []
     const row = renderChannelRow(channel, list)
     row.style.position = "absolute"
@@ -668,8 +684,12 @@ function pickChannels(cachedChannels) {
       picker.categoryPassesFilter((channel.category || "").toString())
     )
   }
-  // Drop channels with no tvg-id - they have no EPG match in XMLTV anyway.
-  const withEpg = filtered.filter((channel) => channel.tvgId)
+  // Drop channels with no resolvable tvg-id - they have no EPG match. A
+  // user-supplied per-channel override (Jellyfin-style) counts as resolvable
+  // even when channel.tvgId is empty.
+  const withEpg = filtered.filter((channel) =>
+    !!effectiveTvgId(channel, activePlaylistId)
+  )
   return withEpg.slice(0, MAX_CHANNELS)
 }
 
@@ -763,9 +783,7 @@ function applyCategory() {
     return
   }
   if (!programmes.size) {
-    showStatus(
-      "EPG loaded, but no programmes matched any channel id. Provider might use different `tvg-id`s than the playlist."
-    )
+    showStatus(t("epg.noProgrammesMatched"))
     return
   }
   render()
@@ -786,6 +804,11 @@ document.addEventListener("xt:hidden-categories-changed", onEpgPrefChange)
 document.addEventListener("xt:allowed-categories-changed", onEpgPrefChange)
 document.addEventListener("xt:category-mode-changed", onEpgPrefChange)
 document.addEventListener("xt:epg-sync-changed", onEpgPrefChange)
+document.addEventListener(CHANNEL_EPG_CHANGED_EVENT, (event) => {
+  const detail = (event as CustomEvent).detail
+  if (!detail || detail.playlistId !== activePlaylistId) return
+  applyCategory()
+})
 
 async function init() {
   // Wait for the locale JSON to resolve before any t() call so the page
@@ -810,6 +833,8 @@ async function init() {
   syncCategoryTitle()
 
   const isM3U = isLikelyM3USource(creds.host, creds.user, creds.pass)
+  // Hydrate from IDB before reading
+  await hydrateCache(activePlaylistId, isM3U ? "m3u" : "live")
   let cached =
     getCached(activePlaylistId, isM3U ? "m3u" : "live")?.data || null
 
@@ -833,34 +858,8 @@ async function init() {
   allChannels = cached
   picker.rerender()
 
-  channels = pickChannels(cached)
-  if (!channels.length) {
-    const activeCat = picker.getActiveCat()
-    if (activeCat === CAT_FAVORITES) {
-      showStatus(
-        "No favorite channels with EPG ids (`tvg-id`). Star a channel on Live TV first."
-      )
-    } else if (activeCat === CAT_RECENTS) {
-      showStatus(
-        "No recently watched channels with EPG ids (`tvg-id`). Play one on Live TV first."
-      )
-    } else {
-      showStatus(
-        "No channels in this category have EPG ids (`tvg-id`). Try a different category."
-      )
-    }
-    return
-  }
-
-  viewStart = Math.max(
-    roundHalfHourFloor(Date.now() - 30 * 60 * 1000),
-    roundHalfHourFloor(Date.now())
-  )
-
   viewStart = roundHalfHourFloor(Date.now() - 30 * 60 * 1000)
-
   showLoadingSkeleton(t("epg.loadingFull"))
-
   programmes.clear()
   try {
     const state = await loadProgrammes(activePlaylistId, creds, { force: true })
@@ -873,9 +872,20 @@ async function init() {
   }
 
   if (!programmes.size) {
-    showStatus(
-      "EPG loaded, but no programmes matched any channel id. Provider might use different `tvg-id`s than the playlist."
-    )
+    showStatus(t("epg.noProgrammesMatched"))
+    return
+  }
+
+  channels = pickChannels(cached)
+  if (!channels.length) {
+    const activeCat = picker.getActiveCat()
+    if (activeCat === CAT_FAVORITES) {
+      showStatus(t("epg.noFavoritesEpg"))
+    } else if (activeCat === CAT_RECENTS) {
+      showStatus(t("epg.noRecentsEpg"))
+    } else {
+      showStatus(t("epg.noChannelsMatchedHint"))
+    }
     return
   }
 

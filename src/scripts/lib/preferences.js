@@ -19,6 +19,7 @@ const EVT_HIDDEN_CHANGED = "xt:hidden-categories-changed"
 const EVT_ALLOWED_CHANGED = "xt:allowed-categories-changed"
 const EVT_CAT_MODE_CHANGED = "xt:category-mode-changed"
 const EVT_EPG_SYNC_CHANGED = "xt:epg-sync-changed"
+const EVT_CHANNEL_EPG_CHANGED = "xt:channel-epg-changed"
 const EVT_VIEW_CHANGED = "xt:view-prefs-changed"
 const EVT_FAV_ORDER_CHANGED = "xt:favorites-order-changed"
 const EVT_WATCHLIST_CHANGED = "xt:watchlist-changed"
@@ -126,6 +127,7 @@ function emptyEntry() {
     catModeSeries: "hide",
     catModeEpg: "hide",
     syncEpgWithLive: true,
+    channelEpgMap: Object.create(null),
     favOrderLive: [],
     favOrderVod: [],
     favOrderSeries: [],
@@ -205,6 +207,10 @@ function hydrate(raw) {
       catModeSeries: val.catModeSeries === "select" ? "select" : "hide",
       catModeEpg: val.catModeEpg === "select" ? "select" : "hide",
       syncEpgWithLive: val.syncEpgWithLive !== false,
+      channelEpgMap:
+        val.channelEpgMap && typeof val.channelEpgMap === "object"
+          ? Object.assign(Object.create(null), val.channelEpgMap)
+          : Object.create(null),
       favOrderLive: Array.isArray(val.favOrderLive)
         ? val.favOrderLive.map(Number).filter(Number.isFinite)
         : [],
@@ -263,6 +269,7 @@ function dehydrate() {
       catModeSeries: v.catModeSeries,
       catModeEpg: v.catModeEpg,
       syncEpgWithLive: v.syncEpgWithLive,
+      channelEpgMap: { ...v.channelEpgMap },
       favOrderLive: v.favOrderLive.slice(),
       favOrderVod: v.favOrderVod.slice(),
       favOrderSeries: v.favOrderSeries.slice(),
@@ -981,6 +988,63 @@ export function setSyncEpgWithLive(playlistId, on) {
 export function resolveEpgKind(playlistId) {
   return getSyncEpgWithLive(playlistId) ? "live" : "epg"
 }
+
+// ---------------------------------------------------------------------------
+// Per-channel EPG tvg-id overrides (Jellyfin-style manual mapping)
+// ---------------------------------------------------------------------------
+
+/** @param {string} playlistId */
+export function getChannelEpgMap(playlistId) {
+  const entry = cache.get(playlistId)
+  return entry?.channelEpgMap || Object.create(null)
+}
+
+/** @param {string} playlistId @param {number|string} channelId */
+export function getChannelEpgOverride(playlistId, channelId) {
+  if (channelId == null) return ""
+  const map = getChannelEpgMap(playlistId)
+  return map[String(channelId)] || ""
+}
+
+/**
+ * @param {string} playlistId @param {number|string} channelId
+ * @param {string} tvgId - empty string clears the override
+ */
+export function setChannelEpgOverride(playlistId, channelId, tvgId) {
+  if (!playlistId || channelId == null) return
+  const entry = getOrCreate(playlistId)
+  const key = String(channelId)
+  const value = (tvgId || "").trim()
+  if (!value) {
+    if (!(key in entry.channelEpgMap)) return
+    delete entry.channelEpgMap[key]
+  } else {
+    if (entry.channelEpgMap[key] === value) return
+    entry.channelEpgMap[key] = value
+  }
+  scheduleSave()
+  dispatch(EVT_CHANNEL_EPG_CHANGED, {
+    playlistId,
+    channelId: Number(channelId),
+    tvgId: value,
+  })
+}
+
+export function clearChannelEpgOverride(playlistId, channelId) {
+  setChannelEpgOverride(playlistId, channelId, "")
+}
+
+/** Drop every per-channel override for a playlist. */
+export function clearAllChannelEpgOverrides(playlistId) {
+  if (!playlistId) return
+  const entry = cache.get(playlistId)
+  if (!entry || !Object.keys(entry.channelEpgMap).length) return
+  entry.channelEpgMap = Object.create(null)
+  scheduleSave()
+  dispatch(EVT_CHANNEL_EPG_CHANGED, { playlistId, channelId: null, tvgId: "" })
+}
+
+export const CHANNEL_EPG_CHANGED_EVENT = EVT_CHANNEL_EPG_CHANGED
 
 // ---------------------------------------------------------------------------
 // Favorites ordering

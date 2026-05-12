@@ -96,7 +96,8 @@ const documentTitle = pageTitle
 
         // Translate [data-i18n*] elements before first paint
         if (storedLocale && storedLocale !== "en") {
-          var rawMessages = localStorage.getItem("xt_locale_messages_v1");
+          var rawMessages = localStorage.getItem("xt_locale_messages_v2");
+          try { localStorage.removeItem("xt_locale_messages_v1"); } catch (e) {}
           if (rawMessages) {
             var cached = JSON.parse(rawMessages);
             if (cached && cached.code === storedLocale && cached.messages) {

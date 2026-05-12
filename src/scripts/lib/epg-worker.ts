@@ -12,6 +12,7 @@ interface ParseRequest {
 interface ParseResponse {
   id: number
   programmes?: Array<[string, Programme[]]>
+  channelNames?: Array<[string, string]>
   error?: string
   fallback?: boolean
 }
@@ -30,14 +31,26 @@ function parseXmlTvDate(value: string): number {
   return sign === "+" ? utc - offsetMs : utc + offsetMs
 }
 
-function parseXmlTv(xml: string): Map<string, Programme[]> {
-  const out = new Map<string, Programme[]>()
+function parseXmlTv(xml: string): {
+  programmes: Map<string, Programme[]>
+  channelNames: Map<string, string>
+} {
+  const programmes = new Map<string, Programme[]>()
+  const channelNames = new Map<string, string>()
   const doc = new DOMParser().parseFromString(xml, "text/xml")
   const err = doc.querySelector("parsererror")
   if (err) {
     throw new Error(
       "XMLTV parse error: " + (err.textContent || "").slice(0, 200)
     )
+  }
+
+  for (const channel of doc.querySelectorAll("channel")) {
+    const id = (channel.getAttribute("id") || "").toLowerCase()
+    if (!id) continue
+    const name =
+      channel.querySelector("display-name")?.textContent?.trim() || ""
+    if (name) channelNames.set(id, name)
   }
 
   const lo = Date.now() - 6 * 60 * 60 * 1000
@@ -56,15 +69,15 @@ function parseXmlTv(xml: string): Map<string, Programme[]> {
       programme.querySelector("title")?.textContent?.trim() || "Untitled"
     const desc = programme.querySelector("desc")?.textContent?.trim() || ""
 
-    let arr = out.get(channelId)
+    let arr = programmes.get(channelId)
     if (!arr) {
       arr = []
-      out.set(channelId, arr)
+      programmes.set(channelId, arr)
     }
     arr.push({ start, stop, title, desc })
   }
 
-  for (const arr of out.values()) {
+  for (const arr of programmes.values()) {
     arr.sort((first, second) => first.start - second.start)
     let lastStop = -Infinity
     let writeIdx = 0
@@ -76,7 +89,7 @@ function parseXmlTv(xml: string): Map<string, Programme[]> {
     }
     arr.length = writeIdx
   }
-  return out
+  return { programmes, channelNames }
 }
 
 const post = (msg: ParseResponse) => (self as unknown as Worker).postMessage(msg)
@@ -88,8 +101,12 @@ self.addEventListener("message", (event: MessageEvent<ParseRequest>) => {
     return
   }
   try {
-    const programmes = parseXmlTv(xml)
-    post({ id, programmes: Array.from(programmes.entries()) })
+    const { programmes, channelNames } = parseXmlTv(xml)
+    post({
+      id,
+      programmes: Array.from(programmes.entries()),
+      channelNames: Array.from(channelNames.entries()),
+    })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     post({ id, error: message })

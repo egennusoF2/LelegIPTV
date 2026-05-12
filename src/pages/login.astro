@@ -1,6 +1,6 @@
 ---
 import Layout from "@/layouts/Layout.astro";
-import { IconArrowLeft } from "@tabler/icons-svelte";
+import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 ---
 
 <Layout pageTitle="Add playlist">
@@ -205,6 +205,129 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 				</label>
 			</div>
 
+			<!-- Advanced: EPG sources (collapsed by default) -->
+			<details id="epg-sources" class="group rounded-xl border border-line bg-surface">
+				<summary
+					class="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer
+						hover:bg-surface-2 focus-visible:bg-surface-2 transition-colors rounded-xl
+						list-none min-h-12">
+					<span class="flex flex-col gap-0.5 min-w-0">
+						<span data-i18n="login.epg.advancedToggle" class="text-sm font-medium text-fg">
+							Custom EPG sources (optional)
+						</span>
+						<span
+							data-i18n="login.epg.advancedHelper"
+							class="text-xs text-fg-3 leading-relaxed">
+							Override the provider's XMLTV guide, or stack extra sources to fill missing channels.
+						</span>
+					</span>
+					<IconChevronDown
+						aria-hidden="true"
+						stroke={2}
+						class="size-4 shrink-0 text-fg-3 transition-[transform,color] duration-200
+							group-open:rotate-180 group-open:text-accent"
+					/>
+				</summary>
+
+				<div class="flex flex-col gap-5 px-4 pb-4 pt-1">
+					<!-- Primary override -->
+					<label class="flex flex-col gap-2">
+						<span
+							data-i18n="login.epg.primaryLabel"
+							class="text-eyebrow font-medium uppercase text-fg-3">
+							Primary EPG URL
+						</span>
+						<input
+							id="epgPrimary"
+							type="url"
+							placeholder="Leave empty to use the provider's default"
+							data-i18n-attr="placeholder:login.epg.primaryPlaceholder"
+							autocapitalize="off"
+							spellcheck="false"
+							inputmode="url"
+							class="field-input"
+						/>
+						<span
+							id="epgPrimaryStatus"
+							class="hidden text-xs leading-relaxed"></span>
+						<span data-i18n="login.epg.primaryHelper" class="text-xs text-fg-3 leading-relaxed">
+							XMLTV URL. Plain XML or gzipped (.xml.gz). Overrides the auto-detected source.
+						</span>
+					</label>
+
+					<!-- Additional sources -->
+					<div class="flex flex-col gap-2">
+						<span
+							data-i18n="login.epg.additionalLabel"
+							class="text-eyebrow font-medium uppercase text-fg-3">
+							Additional sources
+						</span>
+						<span data-i18n="login.epg.additionalHelper" class="text-xs text-fg-3 leading-relaxed">
+							Stacked in order. Each one fills channels the previous sources didn't supply - they never override the primary.
+						</span>
+						<ul id="epgAdditionalList" class="flex flex-col gap-2"></ul>
+						<button
+							id="epgAddBtn"
+							type="button"
+							class="self-start inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
+								hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors">
+							<IconPlus aria-hidden="true" stroke={2} class="size-3.5" />
+							<span data-i18n="login.epg.addSource">Add another source</span>
+						</button>
+					</div>
+
+					<!-- Test all sources without saving. Status card uses the
+					     same shell + palette as the connection-test status above
+					     (see `showStatus` / `palette`) so both "tests" feel like
+					     one component. -->
+					<div class="flex flex-col gap-2">
+						<button
+							id="epgTestBtn"
+							type="button"
+							data-i18n="login.epg.testButton"
+							class="self-start inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
+								hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors
+								disabled:opacity-50 disabled:cursor-not-allowed">
+							Test sources
+						</button>
+						<div
+							id="epgTestStatus"
+							class="hidden items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed"></div>
+					</div>
+
+					<!-- Skip provider auto-default (Xtream only).
+					     Same shell pattern as the "Sync with Live TV" row in
+					     CategoryPickerDialog so cross-page checkbox rows feel
+					     like one component. The :has(:checked) selector
+					     tinges the row accent when active so the user can
+					     see at a glance that the toggle is on, without
+					     squinting at the checkbox tick. -->
+					<label
+						id="epgDisableProviderRow"
+						class="flex items-start gap-2.5 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-fg-2 shrink-0
+							cursor-pointer hover:bg-surface-3 focus-within:border-accent transition-colors
+							has-[:checked]:border-accent has-[:checked]:bg-accent-soft/40">
+						<input
+							id="epgDisableProvider"
+							type="checkbox"
+							class="mt-0.5 size-4 accent-accent shrink-0"
+						/>
+						<span class="flex flex-col leading-tight min-w-0">
+							<span
+								data-i18n="login.epg.disableProviderLabel"
+								class="text-fg">
+								Don't use the provider's default EPG
+							</span>
+							<span
+								data-i18n="login.epg.disableProviderHelper"
+								class="text-xs text-fg-3">
+								Skip the auto-detected source. Only the URLs above will be used - lets you verify a custom EPG works on its own.
+							</span>
+						</span>
+					</label>
+				</div>
+			</details>
+
 			<!-- Status -->
 			<div
 				id="status"
@@ -253,10 +376,17 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 		readLocalM3UContent,
 		isTauri,
 	} from "@/scripts/lib/creds.js";
-	import { t } from "@/scripts/lib/i18n.js";
+	import { t, LOCALE_EVENT } from "@/scripts/lib/i18n.js";
 	import { parseM3U } from "@/scripts/lib/m3u-parser.ts";
 	import { isAndroidFsActive, pickM3UFile } from "@/scripts/lib/android-fs.js";
 	import { log } from "@/scripts/lib/log.js";
+	import {
+		invalidateEpgPlaylist,
+		EPG_SOURCE_STATUS_EVENT,
+		testEpgSource,
+	} from "@/scripts/lib/epg-data.js";
+
+	const EPG_URL_RX = /^https?:\/\/[^\s]+$/i;
 
 	const MAX_LOCAL_M3U_BYTES = 25 * 1024 * 1024; // 25 MiB
 
@@ -282,8 +412,329 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 	const pageTitle = $("page-title");
 	const pageSubtitle = $("page-subtitle");
 
+	const epgDetails = $("epg-sources");
+	const epgPrimaryEl = /** @type {HTMLInputElement} */ ($("epgPrimary"));
+	const epgPrimaryStatus = $("epgPrimaryStatus");
+	const epgListEl = $("epgAdditionalList");
+	const epgAddBtn = $("epgAddBtn");
+	const epgTestBtn = $("epgTestBtn");
+	const epgTestStatus = $("epgTestStatus");
+	const epgDisableProviderRow = $("epgDisableProviderRow");
+	const epgDisableProviderEl = /** @type {HTMLInputElement} */ ($("epgDisableProvider"));
+	let epgTestAbort = null;
+
 	/** @type {{ name: string, text: string } | null} */
 	let pickedLocal = null;
+
+	function readEpgUrlsFromForm() {
+		const primary = (epgPrimaryEl?.value || "").trim();
+		const additional = [];
+		const inputs = epgListEl?.querySelectorAll("input[data-role='epg-additional']") || [];
+		for (const input of inputs) {
+			const value = (/** @type {HTMLInputElement} */ (input).value || "").trim();
+			if (value) additional.push(value);
+		}
+		return { primary, additional };
+	}
+
+	function setEpgError(el, key) {
+		if (!el) return;
+		if (!key) {
+			el.classList.add("hidden");
+			el.textContent = "";
+			el.removeAttribute("data-i18n");
+			return;
+		}
+		el.classList.remove("hidden");
+		el.classList.add("text-bad");
+		el.setAttribute("data-i18n", key);
+		el.textContent = t(key);
+	}
+
+	function validateEpgUrlInputs() {
+		setEpgError(epgPrimaryStatus, null);
+		const primary = (epgPrimaryEl?.value || "").trim();
+		if (primary && !EPG_URL_RX.test(primary)) {
+			setEpgError(epgPrimaryStatus, "login.epg.invalidUrl");
+			return false;
+		}
+		const seen = new Set();
+		if (primary) seen.add(primary);
+		let ok = true;
+		const rows = epgListEl?.querySelectorAll("[data-role='epg-row']") || [];
+		for (const row of rows) {
+			const input = /** @type {HTMLInputElement} */ (row.querySelector("input"));
+			const statusSpan = row.querySelector("[data-role='epg-row-status']");
+			if (!input || !statusSpan) continue;
+			statusSpan.classList.add("hidden");
+			statusSpan.classList.remove("text-bad", "text-good", "text-warn");
+			statusSpan.removeAttribute("data-i18n");
+			statusSpan.textContent = "";
+			const value = input.value.trim();
+			if (!value) continue;
+			if (!EPG_URL_RX.test(value)) {
+				statusSpan.classList.remove("hidden");
+				statusSpan.classList.add("text-bad");
+				statusSpan.setAttribute("data-i18n", "login.epg.invalidUrl");
+				statusSpan.textContent = t("login.epg.invalidUrl");
+				ok = false;
+				continue;
+			}
+			if (seen.has(value)) {
+				statusSpan.classList.remove("hidden");
+				statusSpan.classList.add("text-warn");
+				statusSpan.setAttribute("data-i18n", "login.epg.duplicateUrl");
+				statusSpan.textContent = t("login.epg.duplicateUrl");
+				ok = false;
+				continue;
+			}
+			seen.add(value);
+		}
+		return ok;
+	}
+
+	function makeRemoveBtn(row) {
+		const btn = document.createElement("button");
+		btn.type = "button";
+		btn.className =
+			"shrink-0 rounded-md px-2 py-2 min-h-10 min-w-10 text-fg-3 hover:text-bad hover:bg-bad/10 focus-visible:text-bad focus-visible:bg-bad/10 inline-flex items-center justify-center transition-colors outline-none";
+		btn.setAttribute("aria-label", t("login.epg.removeSource"));
+		btn.setAttribute("data-i18n-attr", "aria-label:login.epg.removeSource");
+		btn.textContent = "×";
+		btn.addEventListener("click", () => {
+			row.remove();
+			validateEpgUrlInputs();
+		});
+		return btn;
+	}
+
+	function addEpgRow(initialValue = "") {
+		if (!epgListEl) return;
+		const row = document.createElement("li");
+		row.dataset.role = "epg-row";
+		row.className = "flex flex-col gap-1";
+
+		const inputRow = document.createElement("div");
+		inputRow.className = "flex items-center gap-2";
+
+		const input = document.createElement("input");
+		input.type = "url";
+		input.dataset.role = "epg-additional";
+		input.placeholder = "https://example.com/epg.xml.gz";
+		input.autocapitalize = "off";
+		input.spellcheck = false;
+		input.inputMode = "url";
+		input.className = "field-input flex-1 min-w-0";
+		input.value = initialValue;
+		input.addEventListener("blur", validateEpgUrlInputs);
+
+		const removeBtn = makeRemoveBtn(row);
+
+		inputRow.append(input, removeBtn);
+
+		const status = document.createElement("span");
+		status.dataset.role = "epg-row-status";
+		status.className = "hidden text-xs leading-relaxed pl-1";
+
+		row.append(inputRow, status);
+		epgListEl.appendChild(row);
+		return row;
+	}
+
+	function paintSourceBadge(target, status) {
+		if (!target) return;
+		target.classList.remove("hidden", "text-bad", "text-good", "text-warn");
+		target.removeAttribute("data-i18n");
+		if (!status) {
+			target.classList.add("hidden");
+			target.textContent = "";
+			return;
+		}
+		if (status.status === "ok") {
+			target.classList.add("text-good");
+			const key = "login.epg.sourceStatusOk";
+			target.setAttribute("data-i18n", key);
+			target.textContent = t(key, { count: (status.count || 0).toLocaleString() });
+		} else {
+			target.classList.add("text-bad");
+			target.textContent = t("login.epg.sourceStatusError", {
+				error: status.error || "Unknown error",
+			});
+		}
+	}
+
+	function applySourceStatuses(detail) {
+		if (!editing || !detail || detail.playlistId !== editing._id) return;
+		const sources = Array.isArray(detail.sources) ? detail.sources : [];
+		if (!sources.length) return;
+
+		const primary = sources.find((source) => source.kind === "primary");
+		// Only paint a primary badge when the user has actually set an override.
+		if (primary && (epgPrimaryEl?.value || "").trim() === primary.url) {
+			paintSourceBadge(epgPrimaryStatus, primary);
+		} else {
+			paintSourceBadge(epgPrimaryStatus, null);
+		}
+
+		const additional = sources.filter((source) => source.kind === "additional");
+		const rows = Array.from(
+			epgListEl?.querySelectorAll("[data-role='epg-row']") || []
+		);
+		for (const row of rows) {
+			const input = /** @type {HTMLInputElement} */ (row.querySelector("input"));
+			const statusEl = row.querySelector("[data-role='epg-row-status']");
+			const value = (input?.value || "").trim();
+			const match = additional.find((source) => source.url === value);
+			paintSourceBadge(statusEl, match || null);
+		}
+	}
+
+	epgAddBtn?.addEventListener("click", () => addEpgRow(""));
+	epgPrimaryEl?.addEventListener("blur", validateEpgUrlInputs);
+	document.addEventListener(EPG_SOURCE_STATUS_EVENT, (event) => {
+		applySourceStatuses(/** @type {CustomEvent} */ (event).detail);
+	});
+	document.addEventListener(LOCALE_EVENT, () => {
+		// Re-render i18n'd helper text on locale change.
+		validateEpgUrlInputs();
+	});
+
+	// Same palette + dot pattern as the connection-test status above so
+	// "Test sources" and "Test connection" read as one component family.
+	const EPG_TEST_PALETTE = {
+		good: "border-ok/30 bg-ok/10 text-ok",
+		warn: "border-warn/30 bg-warn/10 text-warn",
+		bad: "border-bad/30 bg-bad/10 text-bad",
+		busy: "border-line bg-surface text-fg-2",
+	};
+
+	function setEpgTestStatus(message, tone) {
+		if (!epgTestStatus) return;
+		if (!message) {
+			epgTestStatus.classList.add("hidden");
+			epgTestStatus.classList.remove("flex");
+			epgTestStatus.innerHTML = "";
+			return;
+		}
+		epgTestStatus.classList.remove("hidden");
+		epgTestStatus.classList.add("flex");
+		const palette = EPG_TEST_PALETTE[tone] || EPG_TEST_PALETTE.busy;
+		epgTestStatus.className =
+			"flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed " +
+			palette;
+		const dot = `<span aria-hidden="true" class="mt-2 inline-block h-1.5 w-1.5 rounded-full bg-current shrink-0"></span>`;
+		epgTestStatus.innerHTML = `${dot}<span>${escapeText(message)}</span>`;
+	}
+
+	async function runEpgTest() {
+		if (!validateEpgUrlInputs()) {
+			setEpgTestStatus(t("login.epg.invalidUrl"), "bad");
+			return;
+		}
+		const { primary, additional } = readEpgUrlsFromForm();
+		const targets = [];
+		if (primary) {
+			targets.push({ url: primary, badge: epgPrimaryStatus });
+		}
+		const rows = Array.from(
+			epgListEl?.querySelectorAll("[data-role='epg-row']") || []
+		);
+		for (const row of rows) {
+			const input = /** @type {HTMLInputElement} */ (row.querySelector("input"));
+			const badge = row.querySelector("[data-role='epg-row-status']");
+			const value = (input?.value || "").trim();
+			if (!value) continue;
+			if (additional.includes(value)) {
+				targets.push({ url: value, badge });
+			}
+		}
+		if (!targets.length) {
+			setEpgTestStatus(t("login.epg.testNoSources"), "warn");
+			return;
+		}
+
+		// Cancel anything in-flight from a previous click.
+		if (epgTestAbort) {
+			try { epgTestAbort.abort(); } catch {}
+		}
+		epgTestAbort = new AbortController();
+		const signal = epgTestAbort.signal;
+
+		if (epgTestBtn) {
+			epgTestBtn.disabled = true;
+			epgTestBtn.removeAttribute("data-i18n");
+			epgTestBtn.textContent = t("login.epg.testButtonBusy");
+		}
+		setEpgTestStatus(
+			t("login.epg.testing", { count: targets.length.toLocaleString() }),
+			"busy"
+		);
+
+		// Mark each badge as in-flight before any awaits.
+		for (const target of targets) {
+			if (!target.badge) continue;
+			target.badge.classList.remove("hidden", "text-bad", "text-good", "text-warn");
+			target.badge.classList.add("text-fg-3");
+			target.badge.removeAttribute("data-i18n");
+			target.badge.textContent = t("login.epg.sourceFetching");
+		}
+
+		const results = await Promise.all(
+			targets.map((target) =>
+				testEpgSource(target.url, { signal }).then((res) => ({ target, res }))
+			)
+		);
+
+		if (signal.aborted) return;
+
+		let okCount = 0;
+		let errCount = 0;
+		for (const { target, res } of results) {
+			if (!target.badge) continue;
+			target.badge.classList.remove("text-fg-3", "text-bad", "text-good", "text-warn");
+			target.badge.removeAttribute("data-i18n");
+			if (res.ok) {
+				okCount++;
+				target.badge.classList.remove("hidden");
+				target.badge.classList.add("text-good");
+				target.badge.textContent = t("login.epg.sourceStatusOk", {
+					count: (res.count || 0).toLocaleString(),
+				});
+			} else {
+				errCount++;
+				target.badge.classList.remove("hidden");
+				target.badge.classList.add("text-bad");
+				target.badge.textContent = t("login.epg.sourceStatusError", {
+					error: res.error || "Unknown error",
+				});
+			}
+		}
+
+		if (epgTestBtn) {
+			epgTestBtn.disabled = false;
+			epgTestBtn.setAttribute("data-i18n", "login.epg.testButton");
+			epgTestBtn.textContent = t("login.epg.testButton");
+		}
+		setEpgTestStatus(
+			t("login.epg.testDone", {
+				ok: okCount.toLocaleString(),
+				total: targets.length.toLocaleString(),
+			}),
+			errCount === 0 ? "good" : okCount === 0 ? "bad" : "warn"
+		);
+		epgTestAbort = null;
+	}
+	epgTestBtn?.addEventListener("click", () => {
+		runEpgTest();
+	});
+
+	function refreshDisableProviderVisibility() {
+		// Only meaningful for Xtream (auto-detected from creds). M3U/local-m3u
+		// fall back to the x-tvg-url header, which is already overridable by
+		// the primary field.
+		if (!epgDisableProviderRow) return;
+		epgDisableProviderRow.style.display = mode === "xtream" ? "" : "none";
+	}
 
 	const params = new URLSearchParams(location.search);
 	const editingId = params.get("edit");
@@ -315,6 +766,8 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 			void shown.offsetWidth;
 			shown.classList.add("fade-section");
 		}
+
+		refreshDisableProviderVisibility();
 
 		applyTabStyles(tabXtream, isX);
 		applyTabStyles(tabM3u, isM);
@@ -502,7 +955,10 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 			busy: "border-line bg-surface text-fg-2",
 		};
 		statusEl.className += palette[kind] || palette.info;
-		const dot = `<span aria-hidden="true" class="mt-1.5 inline-block h-1.5 w-1.5 rounded-full bg-current shrink-0"></span>`;
+		// `mt-2` (8px) lines the dot up with the first-line optical centre for
+		// `text-sm leading-relaxed` (line-height ~22.75px). The earlier `mt-1.5`
+		// looked too high on single-line messages.
+		const dot = `<span aria-hidden="true" class="mt-2 inline-block h-1.5 w-1.5 rounded-full bg-current shrink-0"></span>`;
 		statusEl.innerHTML = `${dot}<span>${escapeText(message)}</span>`;
 		if (wasHidden) {
 			statusEl.classList.remove("status-enter");
@@ -606,6 +1062,23 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 		e.preventDefault();
 		saveBtn.disabled = true;
 		try {
+			if (!validateEpgUrlInputs()) {
+				epgDetails?.setAttribute("open", "");
+				showStatus("unavailable", t("login.epg.invalidUrl"));
+				return;
+			}
+			const { primary: epgUrl, additional: additionalEpgUrls } =
+				readEpgUrlsFromForm();
+			const disableProviderEpg =
+				mode === "xtream" ? !!epgDisableProviderEl?.checked : false;
+			let savedId = editing?._id || null;
+			const epgChanged =
+				editing &&
+				(editing.epgUrl !== epgUrl ||
+					JSON.stringify(editing.additionalEpgUrls || []) !==
+						JSON.stringify(additionalEpgUrls) ||
+					!!editing.disableProviderEpg !== disableProviderEpg);
+
 			if (mode === "xtream") {
 				const serverUrl = serverEl.value.trim();
 				const username = userEl.value.trim();
@@ -630,9 +1103,16 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 					serverUrl,
 					username,
 					password,
+					epgUrl,
+					additionalEpgUrls,
+					disableProviderEpg,
 				};
-				if (editing) await updateEntry(editing._id, patch);
-				else await addEntry(patch);
+				if (editing) {
+					await updateEntry(editing._id, patch);
+				} else {
+					const saved = await addEntry(patch);
+					savedId = saved._id;
+				}
 			} else if (mode === "m3u") {
 				const url = m3uEl.value.trim();
 				if (!/^https?:\/\/[^\s]+\.m3u8?(\?.*)?$/i.test(url)) {
@@ -646,9 +1126,15 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 					type: "m3u",
 					title: titleEl.value.trim() || "",
 					url,
+					epgUrl,
+					additionalEpgUrls,
 				};
-				if (editing) await updateEntry(editing._id, patch);
-				else await addEntry(patch);
+				if (editing) {
+					await updateEntry(editing._id, patch);
+				} else {
+					const saved = await addEntry(patch);
+					savedId = saved._id;
+				}
 			} else {
 				if (!pickedLocal || !pickedLocal.text) {
 					showStatus("unavailable", t("login.status.localPickFirst"));
@@ -660,9 +1146,10 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 					title: titleEl.value.trim() || pickedLocal.name.replace(/\.(m3u8?|M3U8?)$/, ""),
 					content: pickedLocal.text,
 					sourceName: pickedLocal.name,
-					epgUrl: parsed.epgUrl || "",
+					// Preserve any user-supplied override
+					epgUrl: epgUrl || parsed.epgUrl || "",
+					additionalEpgUrls,
 				};
-				let savedId = editing?._id || null;
 				if (editing) {
 					await updateEntry(editing._id, patch);
 				} else {
@@ -683,6 +1170,14 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 					}
 				}
 			}
+
+			// Force a fresh EPG load on next visit if the user changed any
+			// source URL. Drops memCache + per-URL HTTP validators + IDB so
+			// the next loadProgrammes() refetches all sources cleanly.
+			if (savedId && (epgChanged || !editing)) {
+				invalidateEpgPlaylist(savedId);
+			}
+
 			location.href = editing ? "/" : "/livetv";
 		} finally {
 			saveBtn.disabled = false;
@@ -706,6 +1201,23 @@ import { IconArrowLeft } from "@tabler/icons-svelte";
 		tabLocal.disabled = editing.type !== "local-m3u";
 		setMode(editing.type);
 		titleEl.value = editing.title || "";
+		if (epgPrimaryEl) epgPrimaryEl.value = editing.epgUrl || "";
+		const additional = Array.isArray(editing.additionalEpgUrls)
+			? editing.additionalEpgUrls
+			: [];
+		for (const url of additional) addEpgRow(url);
+		if (epgDisableProviderEl) {
+			epgDisableProviderEl.checked = !!editing.disableProviderEpg;
+		}
+		// Open the disclosure when there's already something to see; keeps it
+		// out of the way on fresh-add.
+		if (
+			editing.epgUrl ||
+			additional.length ||
+			editing.disableProviderEpg
+		) {
+			epgDetails?.setAttribute("open", "");
+		}
 		if (editing.type === "xtream") {
 			serverEl.value = editing.serverUrl || "";
 			userEl.value = editing.username || "";
