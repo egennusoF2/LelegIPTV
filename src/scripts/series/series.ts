@@ -4,8 +4,8 @@ import { log } from "@/scripts/lib/log.js"
 import {
   loadCreds,
   getActiveEntry,
-  buildApiUrl,
 } from "@/scripts/lib/creds.js"
+import { xtreamApiFetch } from "@/scripts/lib/xtream-api.js"
 import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
 import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
@@ -149,7 +149,7 @@ function refreshSeriesProgressBadges(specificSeriesId) {
 // ----------------------------
 async function ensureSeriesCategoryMap() {
   if (categoryMap) return categoryMap
-  const r = await providerFetch(buildApiUrl(creds, "get_series_categories"))
+  const r = await xtreamApiFetch("get_series_categories")
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
     ? data
@@ -648,7 +648,7 @@ async function loadSeries() {
       SERIES_TTL_MS,
       async () => {
         const catMap = await ensureSeriesCategoryMap()
-        const r = await providerFetch(buildApiUrl(creds, "get_series"))
+        const r = await xtreamApiFetch("get_series")
         const body = await r.text()
         if (!r.ok) {
           log.error("Upstream error body:", body)

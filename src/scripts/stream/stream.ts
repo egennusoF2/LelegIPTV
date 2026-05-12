@@ -6,11 +6,11 @@ import {
   getActiveEntry,
   fmtBase,
   safeHttpUrl,
-  buildApiUrl,
   isLikelyM3USource,
   isLocalM3UHost,
   readLocalM3UContent,
 } from "@/scripts/lib/creds.js"
+import { xtreamApiFetch, resolveStreamUrl } from "@/scripts/lib/xtream-api.js"
 import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
 import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
@@ -78,8 +78,8 @@ function setNowPlaying(id) {
 /** @type {{host:string,port:string,user:string,pass:string}} */
 let creds = { host: "", port: "", user: "", pass: "" }
 
-function buildDirectM3U8(id) {
-  const { host, port, user, pass } = creds
+function buildDirectM3U8(id, c = creds) {
+  const { host, port, user, pass } = c
   return (
     fmtBase(host, port) +
     "/live/" +
@@ -973,7 +973,7 @@ searchEl?.addEventListener("input", debounce(applyFilter, 160))
 
 async function ensureCategoryMap() {
   if (categoryMap) return categoryMap
-  const r = await providerFetch(buildApiUrl(creds, "get_live_categories"))
+  const r = await xtreamApiFetch("get_live_categories")
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
     ? data
@@ -1140,7 +1140,7 @@ async function loadChannels() {
       CHANNELS_TTL_MS,
       async () => {
         const catMap = await ensureCategoryMap()
-        const r = await providerFetch(buildApiUrl(creds, "get_live_streams"))
+        const r = await xtreamApiFetch("get_live_streams")
         log.log("[xt:livetv] get_live_streams resp status=", r.status, "ok=", r.ok)
         const body = await r.text()
         log.log("[xt:livetv] body bytes=", body?.length ?? 0)
@@ -1470,7 +1470,7 @@ async function play(streamId, name) {
   if (!currentEl) return
   const src = hasDirectUrl(streamId)
     ? getDirectUrl(streamId)
-    : buildDirectM3U8(streamId)
+    : await resolveStreamUrl((c) => buildDirectM3U8(streamId, c))
 
   // Embedded players (Video.js + hls.js) only speak http(s). M3U sources can
   // ship rtsp/rtmp/udp/mms/... - those need MPV/VLC
@@ -1755,17 +1755,15 @@ let epgListChannelName = ""
 
 async function loadEPG(streamId) {
   if (!epgList) return
-  const url = buildApiUrl(creds, "get_short_epg", {
-    stream_id: String(streamId),
-    limit: "10",
-  })
-
   epgList.innerHTML = `<div class="text-fg-3">Loading EPG…</div>`
   epgListData = []
   epgListChannelId = streamId
   epgListChannelName = all.find((c) => c.id === streamId)?.name || ""
   try {
-    const r = await providerFetch(url)
+    const r = await xtreamApiFetch("get_short_epg", {
+      stream_id: String(streamId),
+      limit: "10",
+    })
     if (!r.ok) throw new Error(await r.text())
     const data = await r.json()
 

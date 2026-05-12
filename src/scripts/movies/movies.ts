@@ -5,8 +5,8 @@ import { log } from "@/scripts/lib/log.js"
 import {
   loadCreds,
   getActiveEntry,
-  buildApiUrl,
 } from "@/scripts/lib/creds.js"
+import { xtreamApiFetch } from "@/scripts/lib/xtream-api.js"
 import { normalize, scoreNormMatch } from "@/scripts/lib/text.js"
 import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
@@ -121,7 +121,7 @@ document.addEventListener("xt:category-mode-changed", onMovieFilterChange)
 // ----------------------------
 async function ensureVodCategoryMap() {
   if (categoryMap) return categoryMap
-  const r = await providerFetch(buildApiUrl(creds, "get_vod_categories"))
+  const r = await xtreamApiFetch("get_vod_categories")
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
     ? data
@@ -570,7 +570,7 @@ async function loadMovies() {
       VOD_TTL_MS,
       async () => {
         const catMap = await ensureVodCategoryMap()
-        const r = await providerFetch(buildApiUrl(creds, "get_vod_streams"))
+        const r = await xtreamApiFetch("get_vod_streams")
         const body = await r.text()
         if (!r.ok) {
           log.error("Upstream error body:", body)

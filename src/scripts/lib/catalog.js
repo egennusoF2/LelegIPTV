@@ -3,13 +3,13 @@
 import { cachedFetch, getCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
 import {
   loadCreds,
-  buildApiUrl,
   isLikelyM3USource,
   isLocalM3UHost,
   readLocalM3UContent,
 } from "@/scripts/lib/creds.js"
 import { normalize } from "@/scripts/lib/text.js"
 import { providerFetch, streamingText } from "@/scripts/lib/provider-fetch.js"
+import { xtreamApiFetch } from "@/scripts/lib/xtream-api.js"
 import { ensureUserInfo } from "@/scripts/lib/account-info.js"
 import { parseM3U } from "@/scripts/lib/m3u-parser.ts"
 import { t } from "@/scripts/lib/i18n.js"
@@ -58,8 +58,8 @@ function makeBytesEmitter(playlistId, kind) {
 // ---------------------------------------------------------------------------
 // Live (Xtream + M3U)
 // ---------------------------------------------------------------------------
-async function fetchLiveCategoryMap(creds) {
-  const r = await providerFetch(buildApiUrl(creds, "get_live_categories"))
+async function fetchLiveCategoryMap() {
+  const r = await xtreamApiFetch("get_live_categories")
   if (!r.ok) throw new HttpRetryError(r.status, `live_categories ${r.status}`)
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
@@ -114,8 +114,8 @@ export async function ensureLive(creds, playlistId, opts = {}) {
         a.name.localeCompare(b.name, "en", { sensitivity: "base" })
       )
     }
-    const catMap = await fetchLiveCategoryMap(creds)
-    const r = await providerFetch(buildApiUrl(creds, "get_live_streams"))
+    const catMap = await fetchLiveCategoryMap()
+    const r = await xtreamApiFetch("get_live_streams")
     const body = await streamingText(r, onBytes)
     if (!r.ok) throw new HttpRetryError(r.status, `live_streams ${r.status}`)
     const parsed = JSON.parse(body)
@@ -160,8 +160,8 @@ export async function ensureLive(creds, playlistId, opts = {}) {
 // ---------------------------------------------------------------------------
 // VOD
 // ---------------------------------------------------------------------------
-async function fetchVodCategoryMap(creds) {
-  const r = await providerFetch(buildApiUrl(creds, "get_vod_categories"))
+async function fetchVodCategoryMap() {
+  const r = await xtreamApiFetch("get_vod_categories")
   if (!r.ok) throw new HttpRetryError(r.status, `vod_categories ${r.status}`)
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
@@ -180,8 +180,8 @@ export async function ensureVod(creds, playlistId, opts = {}) {
   if (!creds?.user || !creds?.pass) return []
   const onBytes = makeBytesEmitter(playlistId, "vod")
   const { data } = await cachedFetch(playlistId, "vod", VOD_TTL_MS, () => retryWithBackoff(async () => {
-    const catMap = await fetchVodCategoryMap(creds)
-    const r = await providerFetch(buildApiUrl(creds, "get_vod_streams"))
+    const catMap = await fetchVodCategoryMap()
+    const r = await xtreamApiFetch("get_vod_streams")
     const body = await streamingText(r, onBytes)
     if (!r.ok) throw new HttpRetryError(r.status, `vod_streams ${r.status}`)
     const parsed = JSON.parse(body)
@@ -230,8 +230,8 @@ export async function ensureVod(creds, playlistId, opts = {}) {
 // ---------------------------------------------------------------------------
 // Series
 // ---------------------------------------------------------------------------
-async function fetchSeriesCategoryMap(creds) {
-  const r = await providerFetch(buildApiUrl(creds, "get_series_categories"))
+async function fetchSeriesCategoryMap() {
+  const r = await xtreamApiFetch("get_series_categories")
   if (!r.ok) throw new HttpRetryError(r.status, `series_categories ${r.status}`)
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
@@ -250,8 +250,8 @@ export async function ensureSeries(creds, playlistId, opts = {}) {
   if (!creds?.user || !creds?.pass) return []
   const onBytes = makeBytesEmitter(playlistId, "series")
   const { data } = await cachedFetch(playlistId, "series", SERIES_TTL_MS, () => retryWithBackoff(async () => {
-    const catMap = await fetchSeriesCategoryMap(creds)
-    const r = await providerFetch(buildApiUrl(creds, "get_series"))
+    const catMap = await fetchSeriesCategoryMap()
+    const r = await xtreamApiFetch("get_series")
     const body = await streamingText(r, onBytes)
     if (!r.ok) throw new HttpRetryError(r.status, `series ${r.status}`)
     const parsed = JSON.parse(body)

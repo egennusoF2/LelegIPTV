@@ -7,8 +7,8 @@ import {
   loadCreds,
   getActiveEntry,
   fmtBase,
-  buildApiUrl,
 } from "@/scripts/lib/creds.js"
+import { xtreamApiFetch, resolveStreamUrl } from "@/scripts/lib/xtream-api.js"
 import { getCached, setCached } from "@/scripts/lib/cache.js"
 import {
   ensureLoaded as ensurePrefsLoaded,
@@ -92,17 +92,17 @@ let currentPlayingEpisodeId = null
 const setAmbient = (url) => setAmbientOn(ambientEl, url)
 const paintPoster = (name, logo) => paintPosterOn(posterEl, name, logo)
 
-function buildEpisodeStreamUrl(ep) {
+function buildEpisodeStreamUrl(ep, c = creds) {
   if (ep?._directUrl) return ep._directUrl
-  if (!creds.host || !creds.user || !creds.pass) return ""
+  if (!c.host || !c.user || !c.pass) return ""
   const rawExt = ep.container_extension || "mp4"
   const ext = String(rawExt).replace(/^\.+/, "").toLowerCase() || "mp4"
   return (
-    fmtBase(creds.host, creds.port) +
+    fmtBase(c.host, c.port) +
     "/series/" +
-    encodeURIComponent(creds.user) +
+    encodeURIComponent(c.user) +
     "/" +
-    encodeURIComponent(creds.pass) +
+    encodeURIComponent(c.pass) +
     "/" +
     encodeURIComponent(ep.id) +
     "." +
@@ -669,7 +669,9 @@ function markNowPlayingEpisode(epId) {
 
 async function playEpisode(episode) {
   if (!series || !episode) return
-  const src = buildEpisodeStreamUrl(episode)
+  const src = episode?._directUrl
+    ? buildEpisodeStreamUrl(episode)
+    : await resolveStreamUrl((c) => buildEpisodeStreamUrl(episode, c))
   if (!src) return
   dismissUpNext()
 
@@ -1193,12 +1195,10 @@ async function boot() {
   let infoOk = !!cached
   if (creds.host && creds.user && creds.pass) {
     try {
-      const r = await providerFetch(
-        buildApiUrl(creds, "get_series_info", {
-          series_id: String(seriesId),
-          series: String(seriesId),
-        })
-      )
+      const r = await xtreamApiFetch("get_series_info", {
+        series_id: String(seriesId),
+        series: String(seriesId),
+      })
       if (!r.ok) throw new Error(await r.text())
       const data = await r.json()
       setCached(active._id, `series_info_${seriesId}`, data, SERIES_INFO_TTL_MS)

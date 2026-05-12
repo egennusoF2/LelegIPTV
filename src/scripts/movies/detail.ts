@@ -5,8 +5,8 @@ import {
   loadCreds,
   getActiveEntry,
   fmtBase,
-  buildApiUrl,
 } from "@/scripts/lib/creds.js"
+import { xtreamApiFetch, resolveStreamUrl } from "@/scripts/lib/xtream-api.js"
 import { getCached, setCached } from "@/scripts/lib/cache.js"
 import {
   ensureLoaded as ensurePrefsLoaded,
@@ -83,6 +83,7 @@ let activePlaylistId = ""
 let creds = { host: "", port: "", user: "", pass: "" }
 let movie = null
 let detailSrc = ""
+let detailSrcBuilder = null
 
 const setAmbient = (url) => setAmbientOn(ambientEl, url)
 const paintPoster = (name, logo) => paintPosterOn(posterEl, name, logo)
@@ -141,28 +142,32 @@ function applyVodInfo(data) {
   }
 
   let src = ""
+  let builder = null
   if (movieData.stream_url && /^https?:\/\//i.test(movieData.stream_url)) {
     src = movieData.stream_url
   } else if (movieData.stream_url) {
-    const base = fmtBase(creds.host, creds.port).replace(/\/+$/, "")
-    src = `${base}/${movieData.stream_url.replace(/^\/+/, "")}`
+    const relPath = movieData.stream_url.replace(/^\/+/, "")
+    builder = (c) => `${fmtBase(c.host, c.port).replace(/\/+$/, "")}/${relPath}`
+    src = builder(creds)
   } else if (creds.host && creds.user && creds.pass) {
     const rawExt =
       movieData.container_extension || info.container_extension || "mp4"
     const ext = String(rawExt).replace(/^\.+/, "").toLowerCase() || "mp4"
-    src =
-      fmtBase(creds.host, creds.port) +
+    builder = (c) =>
+      fmtBase(c.host, c.port) +
       "/movie/" +
-      encodeURIComponent(creds.user) +
+      encodeURIComponent(c.user) +
       "/" +
-      encodeURIComponent(creds.pass) +
+      encodeURIComponent(c.pass) +
       "/" +
       encodeURIComponent(movieId) +
       "." +
       ext
+    src = builder(creds)
   }
 
   detailSrc = src
+  detailSrcBuilder = builder
   applyDownloadState()
   externalBtnHandle?.refresh()
 
@@ -321,6 +326,12 @@ async function startPlayback() {
   if (!detailSrc) {
     if (plotEl) plotEl.textContent = t("detail.error.noStream")
     return
+  }
+
+  // Probe the URL against the configured backup domains
+  if (detailSrcBuilder) {
+    const resolved = await resolveStreamUrl(detailSrcBuilder)
+    if (resolved) detailSrc = resolved
   }
 
   if (activePlaylistId) {
@@ -670,6 +681,7 @@ async function boot() {
 
   movie = null
   detailSrc = ""
+  detailSrcBuilder = null
   if (metaEl) metaEl.textContent = ""
   if (plotEl) plotEl.textContent = t("detail.loading")
 
@@ -734,9 +746,7 @@ async function boot() {
   // Refresh from network when reachable.
   if (creds.host && creds.user && creds.pass) {
     try {
-      const r = await providerFetch(
-        buildApiUrl(creds, "get_vod_info", { vod_id: String(movieId) })
-      )
+      const r = await xtreamApiFetch("get_vod_info", { vod_id: String(movieId) })
       if (!r.ok) throw new Error(await r.text())
       const data = await r.json()
       setCached(active._id, `vod_info_${movieId}`, data, VOD_INFO_TTL_MS)

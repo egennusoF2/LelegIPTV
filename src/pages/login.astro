@@ -149,6 +149,45 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 						/>
 					</label>
 				</div>
+
+				<!-- Backup domains (Xtream only). Same disclosure pattern as the
+				     EPG sources block below so both advanced sections feel like
+				     one family. -->
+				<details id="mirrors-section" class="group rounded-xl border border-line bg-surface">
+					<summary
+						class="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer
+							hover:bg-surface-2 focus-visible:bg-surface-2 transition-colors rounded-xl
+							list-none min-h-12">
+						<span class="flex flex-col gap-0.5 min-w-0">
+							<span data-i18n="login.mirrors.toggle" class="text-sm font-medium text-fg">
+								Backup domains (optional)
+							</span>
+							<span
+								data-i18n="login.mirrors.helper"
+								class="text-xs text-fg-3 leading-relaxed">
+								Providers often give a couple of domains. We'll fall back automatically when the primary stops responding.
+							</span>
+						</span>
+						<IconChevronDown
+							aria-hidden="true"
+							stroke={2}
+							class="size-4 shrink-0 text-fg-3 transition-[transform,color] duration-200
+								group-open:rotate-180 group-open:text-accent"
+						/>
+					</summary>
+
+					<div class="flex flex-col gap-3 px-4 pb-4 pt-1">
+						<ul id="mirrorsList" class="flex flex-col gap-3"></ul>
+						<button
+							id="mirrorsAddBtn"
+							type="button"
+							class="self-start inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
+								hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors">
+							<IconPlus aria-hidden="true" stroke={2} class="size-3.5" />
+							<span data-i18n="login.mirrors.add">Add backup domain</span>
+						</button>
+					</div>
+				</details>
 			</div>
 
 			<!-- M3U fields -->
@@ -385,6 +424,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		EPG_SOURCE_STATUS_EVENT,
 		testEpgSource,
 	} from "@/scripts/lib/epg-data.js";
+	import { ICON_X } from "@/scripts/lib/icons.ts";
 
 	const EPG_URL_RX = /^https?:\/\/[^\s]+$/i;
 
@@ -417,6 +457,10 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	const epgPrimaryStatus = $("epgPrimaryStatus");
 	const epgListEl = $("epgAdditionalList");
 	const epgAddBtn = $("epgAddBtn");
+
+	const mirrorsDetails = $("mirrors-section");
+	const mirrorsListEl = $("mirrorsList");
+	const mirrorsAddBtn = $("mirrorsAddBtn");
 	const epgTestBtn = $("epgTestBtn");
 	const epgTestStatus = $("epgTestStatus");
 	const epgDisableProviderRow = $("epgDisableProviderRow");
@@ -590,6 +634,101 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	}
 
 	epgAddBtn?.addEventListener("click", () => addEpgRow(""));
+
+	function readMirrorsFromForm() {
+		const rows = mirrorsListEl?.querySelectorAll("[data-role='mirror-row']") || [];
+		const out = [];
+		const primaryUser = (userEl?.value || "").trim();
+		const primaryPass = (passEl?.value || "").trim();
+		for (const row of rows) {
+			const serverInput = /** @type {HTMLInputElement} */ (row.querySelector("[data-role='mirror-server']"));
+			const userInput = /** @type {HTMLInputElement} */ (row.querySelector("[data-role='mirror-user']"));
+			const passInput = /** @type {HTMLInputElement} */ (row.querySelector("[data-role='mirror-pass']"));
+			const serverUrl = (serverInput?.value || "").trim();
+			if (!serverUrl) continue;
+			const username = (userInput?.value || "").trim() || primaryUser;
+			const password = (passInput?.value || "").trim() || primaryPass;
+			if (!username || !password) continue;
+			out.push({ serverUrl, username, password });
+		}
+		return out;
+	}
+
+	function addMirrorRow(initial = {}) {
+		if (!mirrorsListEl) return;
+		const row = document.createElement("li");
+		row.dataset.role = "mirror-row";
+		row.className = "flex flex-col gap-2 rounded-lg border border-line bg-surface-2 p-3";
+
+		const header = document.createElement("div");
+		header.className = "flex items-center justify-between gap-2";
+		const label = document.createElement("span");
+		label.className = "text-eyebrow font-medium uppercase text-fg-3";
+		label.setAttribute("data-i18n", "login.mirrors.rowLabel");
+		label.textContent = t("login.mirrors.rowLabel");
+		header.appendChild(label);
+
+		const removeBtn = document.createElement("button");
+		removeBtn.type = "button";
+		removeBtn.className =
+			"shrink-0 rounded-md min-h-11 min-w-11 text-base text-fg-3 hover:text-bad hover:bg-bad/10 focus-visible:text-bad focus-visible:bg-bad/10 inline-flex items-center justify-center transition-colors outline-none";
+		removeBtn.setAttribute("aria-label", t("login.mirrors.remove"));
+		removeBtn.setAttribute("data-i18n-attr", "aria-label:login.mirrors.remove");
+		removeBtn.innerHTML = ICON_X;
+		removeBtn.addEventListener("click", () => row.remove());
+		header.appendChild(removeBtn);
+
+		const serverInput = document.createElement("input");
+		serverInput.type = "text";
+		serverInput.dataset.role = "mirror-server";
+		serverInput.placeholder = "http://backup.example.com:8080";
+		serverInput.autocapitalize = "off";
+		serverInput.spellcheck = false;
+		serverInput.className = "field-input";
+		serverInput.value = initial.serverUrl || "";
+
+		const credRow = document.createElement("div");
+		credRow.className = "grid grid-cols-1 sm:grid-cols-2 gap-3";
+
+		const userInput = document.createElement("input");
+		userInput.type = "text";
+		userInput.dataset.role = "mirror-user";
+		userInput.autocapitalize = "off";
+		userInput.spellcheck = false;
+		userInput.placeholder = t("login.mirrors.userPlaceholder");
+		userInput.setAttribute("data-i18n-attr", "placeholder:login.mirrors.userPlaceholder");
+		userInput.className = "field-input";
+		userInput.value = initial.username || "";
+
+		const passInput = document.createElement("input");
+		passInput.type = "password";
+		passInput.dataset.role = "mirror-pass";
+		passInput.placeholder = t("login.mirrors.passPlaceholder");
+		passInput.setAttribute("data-i18n-attr", "placeholder:login.mirrors.passPlaceholder");
+		passInput.className = "field-input";
+		passInput.value = initial.password || "";
+
+		credRow.append(userInput, passInput);
+
+		// Mirror the primary "paste full player_api URL" auto-split behaviour.
+		serverInput.addEventListener("input", () => {
+			const parsed = parseXtreamUrl(serverInput.value.trim());
+			if (parsed) {
+				serverInput.value = parsed.serverUrl;
+				if (!userInput.value) userInput.value = parsed.username;
+				if (!passInput.value) passInput.value = parsed.password;
+			}
+		});
+
+		row.append(header, serverInput, credRow);
+		mirrorsListEl.appendChild(row);
+		return row;
+	}
+
+	mirrorsAddBtn?.addEventListener("click", () => {
+		const row = addMirrorRow();
+		row?.querySelector("input[data-role='mirror-server']")?.focus();
+	});
 	epgPrimaryEl?.addEventListener("blur", validateEpgUrlInputs);
 	document.addEventListener(EPG_SOURCE_STATUS_EVENT, (event) => {
 		applySourceStatuses(/** @type {CustomEvent} */ (event).detail);
@@ -959,7 +1098,9 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		// `text-sm leading-relaxed` (line-height ~22.75px). The earlier `mt-1.5`
 		// looked too high on single-line messages.
 		const dot = `<span aria-hidden="true" class="mt-2 inline-block h-1.5 w-1.5 rounded-full bg-current shrink-0"></span>`;
-		statusEl.innerHTML = `${dot}<span>${escapeText(message)}</span>`;
+		const isMultiline = typeof message === "string" && message.includes("\n");
+		const bodyClass = isMultiline ? ' class="whitespace-pre-line"' : "";
+		statusEl.innerHTML = `${dot}<span${bodyClass}>${escapeText(message)}</span>`;
 		if (wasHidden) {
 			statusEl.classList.remove("status-enter");
 			void statusEl.offsetWidth;
@@ -993,6 +1134,32 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		return "";
 	}
 
+	function describeCandidateResult(result, serverUrl) {
+		const exp = result.expDate
+			? t("login.status.expiresOn", { date: new Date(result.expDate).toLocaleDateString() })
+			: "";
+		switch (result.status) {
+			case "active":
+				return t("login.status.connected") + exp;
+			case "expired":
+				return t("login.status.expired") + exp;
+			case "inactive":
+				return t("login.status.inactive") + exp;
+			default:
+				return t("login.status.serverUnreachable")
+					+ (result.message ? ` - ${result.message}` : ".")
+					+ privateHostHint(serverUrl);
+		}
+	}
+
+	// Rank candidate verdicts: active > expired > inactive > unavailable.
+	function statusRank(status) {
+		if (status === "active") return 3;
+		if (status === "expired") return 2;
+		if (status === "inactive") return 1;
+		return 0;
+	}
+
 	testBtn.addEventListener("click", async () => {
 		testBtn.disabled = true;
 		try {
@@ -1007,30 +1174,49 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					);
 					return;
 				}
+				const candidates = [
+					{ label: t("login.mirrors.primaryLabel"), serverUrl, username, password },
+					...readMirrorsFromForm().map((mirror, idx) => ({
+						label: t("login.mirrors.candidateLabel", { n: idx + 1 }),
+						...mirror,
+					})),
+				];
 				showStatus("busy", t("login.status.testing"));
-				const r = await testXtreamConnection({
-					serverUrl,
-					username,
-					password,
-				});
-				const exp = r.expDate
-					? t("login.status.expiresOn", { date: new Date(r.expDate).toLocaleDateString() })
-					: "";
-				switch (r.status) {
-					case "active":
-						showStatus("active", t("login.status.connected") + exp);
-						break;
-					case "expired":
-						showStatus("expired", t("login.status.expired") + exp);
-						break;
-					case "inactive":
-						showStatus("inactive", t("login.status.inactive") + exp);
-						break;
-					default:
-						showStatus(
-							"unavailable",
-							t("login.status.serverUnreachable") + (r.message ? ` - ${r.message}` : ".") + privateHostHint(serverUrl)
-						);
+				const results = await Promise.all(
+					candidates.map((cand) =>
+						testXtreamConnection({
+							serverUrl: cand.serverUrl,
+							username: cand.username,
+							password: cand.password,
+						})
+					)
+				);
+
+				// Single-candidate path keeps the old single-line message.
+				if (candidates.length === 1) {
+					const result = results[0];
+					showStatus(
+						result.status === "active" ? "active"
+							: result.status === "expired" ? "expired"
+							: result.status === "inactive" ? "inactive"
+							: "unavailable",
+						describeCandidateResult(result, candidates[0].serverUrl)
+					);
+				} else {
+					// Aggregate verdict = best candidate. Body lists each.
+					let bestRank = -1;
+					let bestStatus = "unavailable";
+					for (const result of results) {
+						const rank = statusRank(result.status);
+						if (rank > bestRank) {
+							bestRank = rank;
+							bestStatus = result.status === "unavailable" ? "unavailable" : result.status;
+						}
+					}
+					const lines = candidates.map((cand, idx) =>
+						`${cand.label}: ${describeCandidateResult(results[idx], cand.serverUrl)}`
+					);
+					showStatus(bestStatus, lines.join("\n"));
 				}
 			} else {
 				const url = m3uEl.value.trim();
@@ -1097,12 +1283,14 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					);
 					return;
 				}
+				const mirrors = readMirrorsFromForm();
 				const patch = {
 					type: "xtream",
 					title: titleEl.value.trim() || "",
 					serverUrl,
 					username,
 					password,
+					mirrors,
 					epgUrl,
 					additionalEpgUrls,
 					disableProviderEpg,
@@ -1222,6 +1410,9 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 			serverEl.value = editing.serverUrl || "";
 			userEl.value = editing.username || "";
 			passEl.value = editing.password || "";
+			const mirrors = Array.isArray(editing.mirrors) ? editing.mirrors : [];
+			for (const mirror of mirrors) addMirrorRow(mirror);
+			if (mirrors.length) mirrorsDetails?.setAttribute("open", "");
 		} else if (editing.type === "m3u") {
 			m3uEl.value = editing.url || "";
 		} else {

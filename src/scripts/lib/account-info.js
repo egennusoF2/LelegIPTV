@@ -1,7 +1,6 @@
 import { log } from "@/scripts/lib/log.js"
 import { cachedFetch, getCached } from "@/scripts/lib/cache.js"
-import { buildApiUrl, safeHttpUrl } from "@/scripts/lib/creds.js"
-import { providerFetch } from "@/scripts/lib/provider-fetch.js"
+import { xtreamApiFetch } from "@/scripts/lib/xtream-api.js"
 import { retryWithBackoff, HttpRetryError } from "@/scripts/lib/retry.ts"
 
 const USER_INFO_TTL_MS = 60 * 60 * 1000 // 1 hour
@@ -19,8 +18,6 @@ const EVT_INFO_LOADED = "xt:user-info-loaded"
  */
 export async function ensureUserInfo(creds, playlistId, opts = {}) {
   if (!creds?.host || !creds?.user || !creds?.pass || !playlistId) return null
-  const apiUrl = buildApiUrl(creds, "")
-  if (!safeHttpUrl(apiUrl)) return null
   try {
     const { data } = await cachedFetch(
       playlistId,
@@ -28,7 +25,7 @@ export async function ensureUserInfo(creds, playlistId, opts = {}) {
       USER_INFO_TTL_MS,
       () =>
         retryWithBackoff(async () => {
-          const response = await providerFetch(apiUrl)
+          const response = await xtreamApiFetch("")
           if (!response.ok) {
             throw new HttpRetryError(
               response.status,

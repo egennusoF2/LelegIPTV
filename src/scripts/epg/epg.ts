@@ -4,9 +4,9 @@ import { log } from "@/scripts/lib/log.js"
 import {
   loadCreds,
   getActiveEntry,
-  buildApiUrl,
   isLikelyM3USource,
 } from "@/scripts/lib/creds.js"
+import { xtreamApiFetch } from "@/scripts/lib/xtream-api.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
 import { getCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js"
 import { providerFetch } from "@/scripts/lib/provider-fetch.js"
@@ -695,7 +695,7 @@ function pickChannels(cachedChannels) {
 
 async function fetchXtreamChannels() {
   // Categories first so we can resolve `category_id → name` for streams.
-  const catRes = await providerFetch(buildApiUrl(creds, "get_live_categories"))
+  const catRes = await xtreamApiFetch("get_live_categories")
   if (!catRes.ok) throw new Error(`HTTP ${catRes.status}`)
   const catData = await catRes.json().catch(() => [])
   const catArr = Array.isArray(catData)
@@ -712,7 +712,7 @@ async function fetchXtreamChannels() {
       ])
   )
 
-  const r = await providerFetch(buildApiUrl(creds, "get_live_streams"))
+  const r = await xtreamApiFetch("get_live_streams")
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   const data = await r.json().catch(() => [])
   const arr = Array.isArray(data)
