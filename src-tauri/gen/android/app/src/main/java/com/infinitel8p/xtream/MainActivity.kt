@@ -10,6 +10,7 @@ import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.OnBackPressedCallback
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import android.app.PictureInPictureParams
 import android.util.Log
@@ -173,6 +174,9 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // installSplashScreen() must run before super.onCreate so Theme.App.Starting
+    // can hand control back to Theme.app once the WebView is ready to paint.
+    installSplashScreen()
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 

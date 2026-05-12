@@ -25,6 +25,11 @@ const documentTitle = pageTitle
     <meta name="theme-color" content="#0e1628" media="(prefers-color-scheme: dark)" />
     <script is:inline>
       try {
+        if (sessionStorage.getItem("xt_splash_done") === "1") {
+          document.documentElement.setAttribute("data-splash-done", "");
+        }
+      } catch (e) {}
+      try {
         var fontScale = parseFloat(localStorage.getItem("xt_font_scale") || "1");
         if (!isFinite(fontScale) || fontScale < 0.75 || fontScale > 2) fontScale = 1;
         document.documentElement.style.setProperty("--xt-font-scale", String(fontScale));
@@ -179,6 +184,32 @@ const documentTitle = pageTitle
            pt-[env(safe-area-inset-top)]
            pr-[env(safe-area-inset-right)]"
   >
+    <div id="xt-app-splash" aria-hidden="true">
+      <canvas id="xt-app-splash-bg" aria-hidden="true"></canvas>
+      <div class="xt-app-splash__inner">
+        <div class="xt-app-splash__mark-wrap">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="xt-app-splash__svg"
+            aria-hidden="true"
+          >
+            <path
+              id="xt-app-splash-path"
+              class="xt-app-splash__base"
+              d="M18.1777 8C23.2737 8 23.2737 16 18.1777 16C13.0827 16 11.0447 8 5.43875 8C0.85375 8 0.85375 16 5.43875 16C11.0447 16 13.0828 8 18.1788 8H18.1777Z"
+            />
+          </svg>
+          <canvas class="xt-app-splash__comet" aria-hidden="true"></canvas>
+        </div>
+        <span class="xt-app-splash__wordmark">
+          <span class="xt-app-splash__wordmark-1">Extreme&nbsp;Infini</span><span class="xt-app-splash__wordmark-2">TV</span>
+        </span>
+      </div>
+    </div>
     <Sidebar />
     <div class="flex-1 min-w-0 min-h-0 flex flex-col order-first md:order-0
                 overflow-x-clip overflow-y-auto">
@@ -204,6 +235,145 @@ const documentTitle = pageTitle
     outline: 2px solid var(--color-accent);
     outline-offset: 0;
   }
+
+  #xt-app-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      radial-gradient(
+        ellipse 92vmin 64vmin at 50% 48%,
+        color-mix(in oklch, var(--color-accent) 5%, var(--color-bg)),
+        var(--color-bg) 78%
+      ),
+      var(--color-bg);
+    opacity: 1;
+    transition: opacity 360ms cubic-bezier(0.16, 1, 0.3, 1);
+    pointer-events: none;
+  }
+  :root[data-splash-done] #xt-app-splash {
+    display: none;
+  }
+  #xt-app-splash[data-hiding="true"] {
+    opacity: 0;
+  }
+
+  #xt-app-splash-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+    display: block;
+    opacity: 0;
+    animation: xt-app-splash-bg-in 720ms cubic-bezier(0.16, 1, 0.3, 1) 80ms forwards;
+  }
+  @keyframes xt-app-splash-bg-in {
+    to { opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #xt-app-splash-bg { display: none; }
+  }
+  :root[data-perf-mode="on"] #xt-app-splash-bg { display: none; }
+
+  .xt-app-splash__inner {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.75rem;
+  }
+
+  .xt-app-splash__mark-wrap {
+    position: relative;
+    display: grid;
+    place-items: center;
+    box-sizing: content-box;
+    padding: 0 1.5rem;
+    width: clamp(6.5rem, 18vmin, 9rem);
+    aspect-ratio: 1 / 1;
+  }
+
+  .xt-app-splash__svg {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    animation: xt-app-splash-mark-in 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .xt-app-splash__base {
+    stroke: var(--color-accent);
+    stroke-width: 0.27;
+    opacity: 0.55;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .xt-app-splash__base {
+      stroke-dasharray: none;
+      stroke-dashoffset: 0;
+    }
+  }
+  .xt-app-splash__comet {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 2;
+    animation: xt-app-splash-comet-in 320ms ease-out 800ms backwards;
+  }
+  @keyframes xt-app-splash-comet-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  .xt-app-splash__wordmark {
+    font-size: clamp(1.125rem, 2.6vmin, 1.5rem);
+    letter-spacing: -0.02em;
+    display: inline-flex;
+    align-items: baseline;
+    animation: xt-app-splash-word-in 480ms cubic-bezier(0.16, 1, 0.3, 1) 980ms backwards;
+  }
+  .xt-app-splash__wordmark-1 {
+    font-weight: 500;
+    color: var(--color-fg);
+  }
+  .xt-app-splash__wordmark-2 {
+    font-weight: 800;
+    color: var(--color-accent);
+    letter-spacing: 0.06em;
+    margin-left: 0.08em;
+  }
+
+  @keyframes xt-app-splash-mark-in {
+    from { opacity: 0; transform: scale(0.94) translateY(6px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  @keyframes xt-app-splash-word-in {
+    from { opacity: 0; transform: translateY(6px); letter-spacing: 0.04em; }
+    to   { opacity: 1; transform: translateY(0); letter-spacing: -0.02em; }
+  }
+
+  :root[data-perf-mode="on"] #xt-app-splash {
+    transition: none;
+    background: var(--color-bg);
+  }
+  :root[data-perf-mode="on"] .xt-app-splash__svg,
+  :root[data-perf-mode="on"] .xt-app-splash__wordmark {
+    animation: none;
+  }
+  :root[data-perf-mode="on"] .xt-app-splash__base {
+    stroke-dasharray: none;
+    stroke-dashoffset: 0;
+  }
+  :root[data-perf-mode="on"] .xt-app-splash__comet { display: none; }
 </style>
 
 <script>
@@ -212,8 +382,81 @@ const documentTitle = pageTitle
   import { initKeyboardHelp } from "@/scripts/lib/keyboard-help.js"
   import { initI18n } from "@/scripts/lib/i18n.js"
   import { initConnectivity } from "@/scripts/lib/connectivity.js"
+  import { setupSplashBackdrop } from "@/scripts/lib/splash-backdrop"
+  import { setupSplashComet } from "@/scripts/lib/splash-comet"
   initI18n()
   initConnectivity()
+
+  ;(function dismissSplash() {
+    if (document.documentElement.hasAttribute("data-splash-done")) return
+    const splash = document.getElementById("xt-app-splash")
+    if (!splash) return
+
+    const backdropCleanup = setupSplashBackdrop(splash)
+    const cometCleanup = setupSplashComet(splash)
+
+    const infinityPath = splash.querySelector(
+      "#xt-app-splash-path"
+    ) as SVGPathElement | null
+    let pathLen = 0
+    if (infinityPath) {
+      try { pathLen = infinityPath.getTotalLength() } catch {}
+    }
+    if (infinityPath && pathLen > 0) {
+      const reduce =
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+        document.documentElement.getAttribute("data-perf-mode") === "on"
+      if (reduce) {
+        infinityPath.style.strokeDasharray = "none"
+        infinityPath.style.strokeDashoffset = "0"
+      } else {
+        infinityPath.style.strokeDasharray = `${pathLen}`
+        infinityPath.style.strokeDashoffset = `${pathLen}`
+        infinityPath.animate(
+          [{ strokeDashoffset: `${pathLen}` }, { strokeDashoffset: "0" }],
+          {
+            duration: 800,
+            delay: 200,
+            easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+            fill: "forwards",
+          }
+        )
+      }
+    }
+
+    const MIN_DISPLAY_MS = 1500
+    const start = performance.now()
+    const remove = () => {
+      cometCleanup()
+      backdropCleanup()
+      document.documentElement.setAttribute("data-splash-done", "")
+      try { sessionStorage.setItem("xt_splash_done", "1") } catch {}
+      splash.remove()
+    }
+    const finish = () => {
+      const elapsed = performance.now() - start
+      const wait = Math.max(0, MIN_DISPLAY_MS - elapsed)
+      setTimeout(() => {
+        const skipAnim =
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+          document.documentElement.getAttribute("data-perf-mode") === "on"
+        if (skipAnim) {
+          remove()
+          return
+        }
+        splash.setAttribute("data-hiding", "true")
+        let removed = false
+        splash.addEventListener(
+          "transitionend",
+          () => { if (!removed) { removed = true; remove() } },
+          { once: true }
+        )
+        setTimeout(() => { if (!removed) { removed = true; remove() } }, 600)
+      }, wait)
+    }
+    if (document.readyState === "complete") finish()
+    else window.addEventListener("load", finish, { once: true })
+  })()
   const SpatialNavigation = window.SpatialNavigation
 
   console.log(
