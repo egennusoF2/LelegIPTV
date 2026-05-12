@@ -752,6 +752,8 @@
   "common.tomorrow": "Demain",
   "epg.subtitleAll": "EPG · Toutes les catégories",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "Synchroniser avec la TV en direct",
+  "epg.cat.syncWithLiveHelp": "Utiliser les mêmes catégories masquées / autorisées définies dans la TV en direct.",
   "settings.update.checking": "Vérification…",
   "settings.update.upToDateMsg": "Vous êtes sur la dernière version.",
   "settings.update.available": "Disponible",

@@ -752,6 +752,8 @@
   "common.tomorrow": "明日",
   "epg.subtitleAll": "EPG · すべてのカテゴリー",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "ライブTVと同期",
+  "epg.cat.syncWithLiveHelp": "ライブTVで設定した非表示 / 許可カテゴリと同じものを使用します。",
   "settings.update.checking": "確認中…",
   "settings.update.upToDateMsg": "最新バージョンを使用しています。",
   "settings.update.available": "利用可能",

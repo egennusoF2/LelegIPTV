@@ -752,6 +752,8 @@
   "common.tomorrow": "Besok",
   "epg.subtitleAll": "EPG · semua kategori",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "Sinkronkan dengan TV Langsung",
+  "epg.cat.syncWithLiveHelp": "Gunakan kategori tersembunyi / diizinkan yang sama seperti di TV Langsung.",
   "settings.update.checking": "Memeriksa…",
   "settings.update.upToDateMsg": "Anda menggunakan versi terbaru.",
   "settings.update.available": "Tersedia",

@@ -752,6 +752,8 @@
   "common.tomorrow": "Morgen",
   "epg.subtitleAll": "EPG · alle categorieën",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "Synchroniseren met Live-tv",
+  "epg.cat.syncWithLiveHelp": "Gebruik dezelfde verborgen / toegestane categorieën als in Live-tv.",
   "settings.update.checking": "Controleren…",
   "settings.update.upToDateMsg": "Je hebt de nieuwste versie.",
   "settings.update.available": "Beschikbaar",

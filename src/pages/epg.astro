@@ -1,6 +1,6 @@
 ---
 import Layout from "@/layouts/Layout.astro";
-import SearchInput from "@/components/SearchInput.astro";
+import CategoryPickerDialog from "@/components/CategoryPickerDialog.astro";
 import { IconRefresh, IconArrowLeft, IconChevronDown, IconClockHour3 } from "@tabler/icons-svelte";
 ---
 
@@ -30,15 +30,16 @@ import { IconRefresh, IconArrowLeft, IconChevronDown, IconClockHour3 } from "@ta
 				<span data-i18n="page.livetv.title">Live TV</span>
 			</a>
 			<button
-				id="epg-category-trigger"
+				id="epg-category-picker-trigger"
 				type="button"
 				aria-haspopup="dialog"
-				aria-controls="epg-category-dialog"
+				aria-controls="epg-category-picker-dialog"
 				class="rounded-xl border border-line bg-surface px-3 py-2 text-sm flex items-center gap-2 text-left max-w-[18rem] min-w-0
 					hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent transition-colors">
 				<span data-i18n="list.category" class="text-fg-3 shrink-0">Category</span>
 				<span
-					id="epg-category-label"
+					id="epg-category-picker-label"
+					data-i18n="list.allCategories"
 					class="text-fg truncate flex-1">All categories</span>
 				<IconChevronDown
 					aria-hidden="true"
@@ -100,88 +101,10 @@ import { IconRefresh, IconArrowLeft, IconChevronDown, IconClockHour3 } from "@ta
 			</div>
 		</section>
 
-		<dialog
-			id="epg-category-dialog"
-			aria-labelledby="epg-category-title"
-			class="fixed inset-0 m-auto rounded-2xl border border-line bg-surface text-fg p-0
-				w-[min(34rem,calc(100vw-2rem))] h-[min(80dvh,42rem)]
-				backdrop:bg-black/60">
-			<div class="flex flex-col h-full p-4 gap-3">
-				<div class="flex items-center justify-between gap-3 shrink-0">
-					<h2 id="epg-category-title" data-i18n="list.chooseCategory" class="text-base font-semibold">
-						Choose a category
-					</h2>
-					<button
-						id="epg-category-close"
-						type="button"
-						data-i18n="common.close"
-						class="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-2
-							hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent">
-						Close
-					</button>
-				</div>
-
-				<SearchInput
-					id="epg-category-search"
-					label="Search categories"
-					placeholder="Search categories…"
-					labelKey="list.searchCategories"
-					placeholderKey="list.searchCategoriesPlaceholder"
-				/>
-
-				<div
-					id="epg-category-list"
-					class="relative flex-1 min-h-0 overflow-auto custom-scroll">
-				</div>
-
-				<div
-					id="epg-category-list-status"
-					class="px-2.5 text-sm text-fg-3 tabular-nums shrink-0">
-				</div>
-			</div>
-		</dialog>
+		<CategoryPickerDialog idPrefix="epg-category-picker" showSyncToggle={true} />
 	</main>
 
 	<script>
 		import "../scripts/epg/epg.ts";
-		import { attachDialogSpatialNav } from "../scripts/lib/dialog-spatial-nav.js";
-
-		const trigger = document.getElementById("epg-category-trigger");
-		const dlg = /** @type {HTMLDialogElement|null} */ (
-			document.getElementById("epg-category-dialog")
-		);
-		if (dlg) attachDialogSpatialNav(dlg, { defaultElement: "#epg-category-search" });
-		const closeBtn = document.getElementById("epg-category-close");
-		const list = document.getElementById("epg-category-list");
-		const search = /** @type {HTMLInputElement|null} */ (
-			document.getElementById("epg-category-search")
-		);
-
-		trigger?.addEventListener("click", () => {
-			if (!dlg) return;
-			if (typeof dlg.showModal === "function") dlg.showModal();
-			else dlg.setAttribute("open", "");
-			setTimeout(() => {
-				window.SpatialNavigation?.makeFocusable?.();
-				search?.focus();
-				search?.select?.();
-			}, 0);
-		});
-
-		closeBtn?.addEventListener("click", () => dlg?.close?.());
-
-		list?.addEventListener("click", (e) => {
-			const t = /** @type {HTMLElement} */ (e.target);
-			if (!t.closest("button[role='option']")) return;
-			queueMicrotask(() => {
-				if (dlg?.open) dlg.close();
-			});
-		});
-
-		dlg?.addEventListener("click", (e) => {
-			if (e.target === dlg) dlg.close();
-		});
-
-		dlg?.addEventListener("close", () => trigger?.focus());
 	</script>
 </Layout>

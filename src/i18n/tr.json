@@ -752,6 +752,8 @@
   "common.tomorrow": "Yarın",
   "epg.subtitleAll": "EPG · Tüm kategoriler",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "Canlı TV ile eşitle",
+  "epg.cat.syncWithLiveHelp": "Canlı TV'de ayarladığınız aynı gizli / izin verilen kategorileri kullan.",
   "settings.update.checking": "Denetleniyor…",
   "settings.update.upToDateMsg": "En son sürümdesiniz.",
   "settings.update.available": "Mevcut",

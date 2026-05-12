@@ -964,11 +964,12 @@ dialog[open]::backdrop {
 }
 
 /* "Show selected only" toggle in the category picker - tick is hidden until
-   pressed; pressed fills the box with the accent. */
-#category-show-selected:not([aria-pressed="true"]) .cat-show-selected-tick {
+   pressed; pressed fills the box with the accent. Suffix selector so every
+   per-page picker prefix matches (category-picker-, movie-category-picker-, ...). */
+[id$="-show-selected"]:not([aria-pressed="true"]) .cat-show-selected-tick {
     display: none;
 }
-#category-show-selected[aria-pressed="true"] .cat-show-selected-box {
+[id$="-show-selected"][aria-pressed="true"] .cat-show-selected-box {
     background: var(--color-accent);
     border-color: var(--color-accent);
     color: var(--color-bg);

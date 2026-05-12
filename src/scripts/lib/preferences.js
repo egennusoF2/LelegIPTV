@@ -18,6 +18,7 @@ const EVT_PROGRESS_CHANGED = "xt:progress-changed"
 const EVT_HIDDEN_CHANGED = "xt:hidden-categories-changed"
 const EVT_ALLOWED_CHANGED = "xt:allowed-categories-changed"
 const EVT_CAT_MODE_CHANGED = "xt:category-mode-changed"
+const EVT_EPG_SYNC_CHANGED = "xt:epg-sync-changed"
 const EVT_VIEW_CHANGED = "xt:view-prefs-changed"
 const EVT_FAV_ORDER_CHANGED = "xt:favorites-order-changed"
 const EVT_WATCHLIST_CHANGED = "xt:watchlist-changed"
@@ -115,12 +116,16 @@ function emptyEntry() {
     hiddenLive: new Set(),
     hiddenVod: new Set(),
     hiddenSeries: new Set(),
+    hiddenEpg: new Set(),
     allowedLive: new Set(),
     allowedVod: new Set(),
     allowedSeries: new Set(),
+    allowedEpg: new Set(),
     catModeLive: "hide",
     catModeVod: "hide",
     catModeSeries: "hide",
+    catModeEpg: "hide",
+    syncEpgWithLive: true,
     favOrderLive: [],
     favOrderVod: [],
     favOrderSeries: [],
@@ -180,6 +185,9 @@ function hydrate(raw) {
       hiddenSeries: new Set(
         Array.isArray(val.hiddenSeries) ? val.hiddenSeries.map(String) : []
       ),
+      hiddenEpg: new Set(
+        Array.isArray(val.hiddenEpg) ? val.hiddenEpg.map(String) : []
+      ),
       allowedLive: new Set(
         Array.isArray(val.allowedLive) ? val.allowedLive.map(String) : []
       ),
@@ -189,9 +197,14 @@ function hydrate(raw) {
       allowedSeries: new Set(
         Array.isArray(val.allowedSeries) ? val.allowedSeries.map(String) : []
       ),
+      allowedEpg: new Set(
+        Array.isArray(val.allowedEpg) ? val.allowedEpg.map(String) : []
+      ),
       catModeLive: val.catModeLive === "select" ? "select" : "hide",
       catModeVod: val.catModeVod === "select" ? "select" : "hide",
       catModeSeries: val.catModeSeries === "select" ? "select" : "hide",
+      catModeEpg: val.catModeEpg === "select" ? "select" : "hide",
+      syncEpgWithLive: val.syncEpgWithLive !== false,
       favOrderLive: Array.isArray(val.favOrderLive)
         ? val.favOrderLive.map(Number).filter(Number.isFinite)
         : [],
@@ -240,12 +253,16 @@ function dehydrate() {
       hiddenLive: [...v.hiddenLive],
       hiddenVod: [...v.hiddenVod],
       hiddenSeries: [...v.hiddenSeries],
+      hiddenEpg: [...v.hiddenEpg],
       allowedLive: [...v.allowedLive],
       allowedVod: [...v.allowedVod],
       allowedSeries: [...v.allowedSeries],
+      allowedEpg: [...v.allowedEpg],
       catModeLive: v.catModeLive,
       catModeVod: v.catModeVod,
       catModeSeries: v.catModeSeries,
+      catModeEpg: v.catModeEpg,
+      syncEpgWithLive: v.syncEpgWithLive,
       favOrderLive: v.favOrderLive.slice(),
       favOrderVod: v.favOrderVod.slice(),
       favOrderSeries: v.favOrderSeries.slice(),
@@ -790,20 +807,21 @@ export function getSeriesProgressSummary(playlistId, seriesId) {
 // ---------------------------------------------------------------------------
 // Hidden categories
 // ---------------------------------------------------------------------------
-/** @param {"live"|"vod"|"series"} kind */
+/** @param {"live"|"vod"|"series"|"epg"} kind */
 function hiddenKey(kind) {
   if (kind === "vod") return "hiddenVod"
   if (kind === "series") return "hiddenSeries"
+  if (kind === "epg") return "hiddenEpg"
   return "hiddenLive"
 }
 
-/** @param {string} playlistId @param {"live"|"vod"|"series"} kind */
+/** @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind */
 export function getHiddenCategories(playlistId, kind) {
   const e = cache.get(playlistId)
   return e ? e[hiddenKey(kind)] : new Set()
 }
 
-/** @param {string} playlistId @param {"live"|"vod"|"series"} kind @param {string|number} categoryId */
+/** @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind @param {string|number} categoryId */
 export function isCategoryHidden(playlistId, kind, categoryId) {
   if (categoryId == null) return false
   const e = cache.get(playlistId)
@@ -812,7 +830,7 @@ export function isCategoryHidden(playlistId, kind, categoryId) {
 
 /**
  * @param {string} playlistId
- * @param {"live"|"vod"|"series"} kind
+ * @param {"live"|"vod"|"series"|"epg"} kind
  * @param {string|number} categoryId
  * @param {boolean} hidden
  */
@@ -830,7 +848,8 @@ export function setCategoryHidden(playlistId, kind, categoryId, hidden) {
 }
 
 /** Filter a category list, dropping hidden ones. Each item must expose
- *  `category_id` (Xtream) or `id` (our M3U-shape category). */
+ *  `category_id` (Xtream) or `id` (our M3U-shape category).
+ *  @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind */
 export function filterVisibleCategories(playlistId, kind, categories) {
   if (!Array.isArray(categories) || !categories.length) return categories || []
   const set = getHiddenCategories(playlistId, kind)
@@ -843,27 +862,29 @@ export function filterVisibleCategories(playlistId, kind, categories) {
 // ---------------------------------------------------------------------------
 // Allowed categories (allowlist mode) + category filter mode
 // ---------------------------------------------------------------------------
-/** @param {"live"|"vod"|"series"} kind */
+/** @param {"live"|"vod"|"series"|"epg"} kind */
 function allowedKey(kind) {
   if (kind === "vod") return "allowedVod"
   if (kind === "series") return "allowedSeries"
+  if (kind === "epg") return "allowedEpg"
   return "allowedLive"
 }
 
-/** @param {"live"|"vod"|"series"} kind */
+/** @param {"live"|"vod"|"series"|"epg"} kind */
 function catModeKey(kind) {
   if (kind === "vod") return "catModeVod"
   if (kind === "series") return "catModeSeries"
+  if (kind === "epg") return "catModeEpg"
   return "catModeLive"
 }
 
-/** @param {string} playlistId @param {"live"|"vod"|"series"} kind */
+/** @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind */
 export function getAllowedCategories(playlistId, kind) {
   const entry = cache.get(playlistId)
   return entry ? entry[allowedKey(kind)] : new Set()
 }
 
-/** @param {string} playlistId @param {"live"|"vod"|"series"} kind @param {string|number} categoryId */
+/** @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind @param {string|number} categoryId */
 export function isCategoryAllowed(playlistId, kind, categoryId) {
   if (categoryId == null) return false
   const entry = cache.get(playlistId)
@@ -872,7 +893,7 @@ export function isCategoryAllowed(playlistId, kind, categoryId) {
 
 /**
  * @param {string} playlistId
- * @param {"live"|"vod"|"series"} kind
+ * @param {"live"|"vod"|"series"|"epg"} kind
  * @param {string|number} categoryId
  * @param {boolean} allowed
  */
@@ -893,7 +914,7 @@ export function setCategoryAllowed(playlistId, kind, categoryId, allowed) {
  * Replace the entire allowed set for a kind. Useful for "select all visible"
  * in the picker.
  * @param {string} playlistId
- * @param {"live"|"vod"|"series"} kind
+ * @param {"live"|"vod"|"series"|"epg"} kind
  * @param {Iterable<string|number>} categoryIds
  */
 export function setAllowedCategories(playlistId, kind, categoryIds) {
@@ -909,14 +930,14 @@ export function setAllowedCategories(playlistId, kind, categoryIds) {
   dispatch(EVT_ALLOWED_CHANGED, { playlistId, kind })
 }
 
-/** @param {string} playlistId @param {"live"|"vod"|"series"} kind */
+/** @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind */
 export function getCategoryMode(playlistId, kind) {
   const entry = cache.get(playlistId)
   if (!entry) return "hide"
   return entry[catModeKey(kind)] === "select" ? "select" : "hide"
 }
 
-/** @param {string} playlistId @param {"live"|"vod"|"series"} kind @param {"hide"|"select"} mode */
+/** @param {string} playlistId @param {"live"|"vod"|"series"|"epg"} kind @param {"hide"|"select"} mode */
 export function setCategoryMode(playlistId, kind, mode) {
   if (!playlistId) return
   const next = mode === "select" ? "select" : "hide"
@@ -925,6 +946,40 @@ export function setCategoryMode(playlistId, kind, mode) {
   entry[catModeKey(kind)] = next
   scheduleSave()
   dispatch(EVT_CAT_MODE_CHANGED, { playlistId, kind, mode: next })
+}
+
+/**
+ * When true (default), EPG reads/writes its hide/allow/mode through Live TV's
+ * state so the user only configures category visibility once. Off lets EPG
+ * keep its own independent filter.
+ *
+ * @param {string} playlistId
+ */
+export function getSyncEpgWithLive(playlistId) {
+  const entry = cache.get(playlistId)
+  if (!entry) return true
+  return entry.syncEpgWithLive !== false
+}
+
+/** @param {string} playlistId @param {boolean} on */
+export function setSyncEpgWithLive(playlistId, on) {
+  if (!playlistId) return
+  const entry = getOrCreate(playlistId)
+  const next = on !== false
+  if (entry.syncEpgWithLive === next) return
+  entry.syncEpgWithLive = next
+  scheduleSave()
+  dispatch(EVT_EPG_SYNC_CHANGED, { playlistId, on: next })
+}
+
+/**
+ * The kind whose hide/allow/mode the EPG actually consults right now: "live"
+ * when the per-playlist sync toggle is on (default), "epg" otherwise.
+ * @param {string} playlistId
+ * @returns {"live"|"epg"}
+ */
+export function resolveEpgKind(playlistId) {
+  return getSyncEpgWithLive(playlistId) ? "live" : "epg"
 }
 
 // ---------------------------------------------------------------------------

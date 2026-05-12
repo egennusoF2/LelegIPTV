@@ -17,18 +17,10 @@ import {
   isOnWatchlist,
   getFavorites,
   getRecents,
-  getHiddenCategories,
-  setCategoryHidden,
-  getAllowedCategories,
-  setCategoryAllowed,
-  setAllowedCategories,
-  getCategoryMode,
-  setCategoryMode,
   getViewSort,
   setViewSort,
 } from "@/scripts/lib/preferences.js"
-import { toast } from "@/scripts/lib/toast.js"
-import { ICON_X } from "@/scripts/lib/icons.js"
+import { mountCategoryPicker } from "@/scripts/lib/category-picker.ts"
 import { providerFetch } from "@/scripts/lib/provider-fetch.js"
 import { renderProviderError } from "@/scripts/lib/provider-error.js"
 import { fmtImdbRating } from "@/scripts/lib/format.js"
@@ -58,17 +50,6 @@ let creds = { host: "", port: "", user: "", pass: "" }
 const gridEl = document.getElementById("movie-grid")
 const listStatus = document.getElementById("movie-list-status")
 
-const categoryListEl = document.getElementById("movie-category-list")
-const categoryListStatus = document.getElementById("movie-category-list-status")
-const categorySearchEl = document.getElementById("movie-category-search")
-const categoryModeHideBtn = document.getElementById("movie-category-mode-hide")
-const categoryModeSelectBtn = document.getElementById("movie-category-mode-select")
-const categorySelectActions = document.getElementById("movie-category-select-actions")
-const categoryShowSelectedBtn = document.getElementById("movie-category-show-selected")
-const categorySelectAllBtn = document.getElementById("movie-category-select-all")
-const categorySelectClearBtn = document.getElementById("movie-category-select-clear")
-let showSelectedOnly = false
-
 const searchEl = /** @type {HTMLInputElement|null} */ (
   document.getElementById("movie-search")
 )
@@ -83,34 +64,21 @@ let filtered = []
 /** @type {Map<string,string> | null} */
 let categoryMap = null
 
-let activeCat = ""
-try {
-  activeCat = localStorage.getItem("xt_vod_active_cat") || ""
-} catch {}
-
 let activePlaylistId = ""
 let activePlaylistTitle = ""
-
-let showHidden = false
 
 const CAT_FAVORITES = "__favorites__"
 const CAT_RECENTS = "__recents__"
 
-function hiddenSet() {
-  return activePlaylistId
-    ? getHiddenCategories(activePlaylistId, "vod")
-    : new Set()
-}
-
-function allowedSet() {
-  return activePlaylistId
-    ? getAllowedCategories(activePlaylistId, "vod")
-    : new Set()
-}
-
-function categoryMode() {
-  return activePlaylistId ? getCategoryMode(activePlaylistId, "vod") : "hide"
-}
+const picker = mountCategoryPicker({
+  kind: "vod",
+  idPrefix: "movie-category-picker",
+  activeCatStorageKey: "xt_vod_active_cat",
+  activeCatChangedEvent: "xt:movie-cat-changed",
+  getActivePlaylistId: () => activePlaylistId,
+  getItems: () => all,
+})
+document.addEventListener("xt:movie-cat-changed", () => applyFilter())
 
 // STAR_OUTLINE / STAR_FILLED / BOOKMARK_FILLED are imported from entry-card.
 
@@ -118,9 +86,9 @@ document.addEventListener("xt:favorites-changed", (ev) => {
   const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
-  if (activeCat === CAT_FAVORITES) applyFilter()
+  if (picker.getActiveCat() === CAT_FAVORITES) applyFilter()
   else updateGridStarFor(detail.id)
-  syncPseudoCategoryRows()
+  picker.refreshPseudoRows()
 })
 
 document.addEventListener("xt:watchlist-changed", (ev) => {
@@ -134,34 +102,19 @@ document.addEventListener("xt:recents-changed", (ev) => {
   const detail = /** @type {CustomEvent} */ (ev).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
-  if (activeCat === CAT_RECENTS) applyFilter()
-  syncPseudoCategoryRows()
+  if (picker.getActiveCat() === CAT_RECENTS) applyFilter()
+  picker.refreshPseudoRows()
 })
 
-document.addEventListener("xt:hidden-categories-changed", (ev) => {
-  const detail = /** @type {CustomEvent} */ (ev).detail
+const onMovieFilterChange = (ev: Event) => {
+  const detail = /** @type {CustomEvent} */ (ev as any).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "vod") return
-  renderCategoryPicker(all)
   applyFilter()
-})
-
-document.addEventListener("xt:allowed-categories-changed", (ev) => {
-  const detail = /** @type {CustomEvent} */ (ev).detail
-  if (!detail || detail.playlistId !== activePlaylistId) return
-  if (detail.kind !== "vod") return
-  renderCategoryPicker(all)
-  applyFilter()
-})
-
-document.addEventListener("xt:category-mode-changed", (ev) => {
-  const detail = /** @type {CustomEvent} */ (ev).detail
-  if (!detail || detail.playlistId !== activePlaylistId) return
-  if (detail.kind !== "vod") return
-  syncCategoryModeToggle()
-  renderCategoryPicker(all)
-  applyFilter()
-})
+}
+document.addEventListener("xt:hidden-categories-changed", onMovieFilterChange)
+document.addEventListener("xt:allowed-categories-changed", onMovieFilterChange)
+document.addEventListener("xt:category-mode-changed", onMovieFilterChange)
 
 // ----------------------------
 // Categories
@@ -183,330 +136,6 @@ async function ensureVodCategoryMap() {
   return categoryMap
 }
 
-function computeCategoryCounts(items) {
-  const map = new Map()
-  for (const m of items) {
-    const k = (m.category || "").trim() || t("list.uncategorized")
-    map.set(k, (map.get(k) || 0) + 1)
-  }
-  return map
-}
-
-function renderCategoryPicker(items) {
-  if (!categoryListEl) return
-  const counts = computeCategoryCounts(items)
-  const names = Array.from(counts.keys()).sort((a, b) =>
-    a.localeCompare(b, "en", { sensitivity: "base" })
-  )
-  const mode = categoryMode()
-  const hidden = hiddenSet()
-  const allowed = allowedSet()
-  const visibleNames = mode === "hide" ? names.filter((name) => !hidden.has(name)) : names
-  const hiddenNames = mode === "hide" ? names.filter((name) => hidden.has(name)) : []
-
-  const frag = document.createDocumentFragment()
-
-  const highlightActiveInList = () => {
-    for (const el of categoryListEl.querySelectorAll('button[role="option"]')) {
-      el.classList.toggle("bg-surface-2", (el.dataset.val || "") === activeCat)
-    }
-  }
-
-  const addRow = (val, label, count = null, extraClass = "", opts = {}) => {
-    const btn = document.createElement("button")
-    btn.type = "button"
-    btn.setAttribute("role", "option")
-    btn.dataset.val = val
-    btn.className =
-      "group/cat relative w-full px-3 py-2 text-sm flex items-center justify-between hover:bg-surface-2 focus:bg-surface-2 outline-none text-fg" +
-      (extraClass ? " " + extraClass : "") +
-      (opts.dim ? " opacity-60" : "")
-    const left = document.createElement("span")
-    left.className = "truncate"
-    left.textContent = label
-    btn.appendChild(left)
-
-    const right = document.createElement("span")
-    right.className = "ml-3 shrink-0 flex items-center gap-1.5"
-
-    let rightAction = null
-    if (opts.hideAction === "hide" || opts.hideAction === "unhide") {
-      rightAction = document.createElement("button")
-      rightAction.type = "button"
-      rightAction.tabIndex = 0
-      rightAction.className =
-        "category-hide-btn shrink-0 size-6 inline-flex items-center justify-center rounded-md text-fg-3 hover:text-fg hover:bg-surface-3 focus-visible:bg-surface-3 focus-visible:text-fg outline-none opacity-0 group-hover/cat:opacity-100 group-focus-within/cat:opacity-100 focus-visible:opacity-100 transition-opacity"
-      rightAction.setAttribute(
-        "aria-label",
-        opts.hideAction === "hide"
-          ? `Hide category "${label}"`
-          : `Unhide category "${label}"`
-      )
-      rightAction.title = opts.hideAction === "hide" ? t("list.hideCategory") : t("list.unhideCategory")
-      rightAction.innerHTML =
-        opts.hideAction === "hide"
-          ? ICON_X
-          : '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7"/><circle cx="12" cy="12" r="3"/></svg>'
-      rightAction.addEventListener("click", (ev) => {
-        ev.stopPropagation()
-        ev.preventDefault()
-        if (!activePlaylistId) return
-        const willHide = opts.hideAction === "hide"
-        setCategoryHidden(activePlaylistId, "vod", val, willHide)
-        if (willHide) {
-          toast({
-            title: t("list.toast.hidCategory", { label }),
-            description: t("stream.toast.hiddenInSettings"),
-            duration: 4000,
-          })
-          if (activeCat === val) {
-            setActiveCat("")
-          }
-        }
-      })
-    } else if (opts.selectAction) {
-      const checked = !!opts.selectChecked
-      rightAction = document.createElement("button")
-      rightAction.type = "button"
-      rightAction.tabIndex = 0
-      rightAction.setAttribute("role", "checkbox")
-      rightAction.setAttribute("aria-checked", String(checked))
-      rightAction.setAttribute(
-        "aria-label",
-        checked
-          ? `Remove "${label}" from shown categories`
-          : `Show only checked categories - include "${label}"`
-      )
-      rightAction.title = checked ? "Showing this category" : "Show this category"
-      rightAction.className =
-        "category-select-btn shrink-0 size-6 inline-flex items-center justify-center rounded-md " +
-        "border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent " +
-        (checked
-          ? "bg-accent border-accent text-bg"
-          : "border-line text-fg-3 hover:text-fg hover:border-fg-3 focus-visible:border-fg-3")
-      rightAction.innerHTML = checked
-        ? '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>'
-        : ""
-      rightAction.addEventListener("click", (ev) => {
-        ev.stopPropagation()
-        ev.preventDefault()
-        if (!activePlaylistId) return
-        setCategoryAllowed(activePlaylistId, "vod", val, !checked)
-      })
-    }
-
-    const countEl = document.createElement("span")
-    countEl.className = "category-count text-xs text-fg-3 tabular-nums min-w-8 text-right"
-    countEl.textContent = count != null ? String(count) : ""
-    right.appendChild(countEl)
-    if (rightAction) {
-      right.appendChild(rightAction)
-    } else {
-      const spacer = document.createElement("span")
-      spacer.className = "category-hide-btn shrink-0 size-6"
-      spacer.setAttribute("aria-hidden", "true")
-      right.appendChild(spacer)
-    }
-
-    btn.appendChild(right)
-    btn.addEventListener("click", () => {
-      setActiveCat(val)
-      highlightActiveInList()
-    })
-    frag.appendChild(btn)
-    return btn
-  }
-
-  const favs = activePlaylistId
-    ? getFavorites(activePlaylistId, "vod")
-    : new Set()
-  const recs = activePlaylistId ? getRecents(activePlaylistId, "vod") : []
-  const favRow = addRow(CAT_FAVORITES, "★ Favorites", favs.size, "text-accent")
-  if (favs.size === 0) favRow.style.display = "none"
-  const recRow = addRow(CAT_RECENTS, "🕒 Recently watched", recs.length)
-  if (recs.length === 0) recRow.style.display = "none"
-
-  addRow("", t("list.allCategories"))
-  if (mode === "select") {
-    for (const name of visibleNames) {
-      addRow(name, name, counts.get(name), "", {
-        selectAction: true,
-        selectChecked: allowed.has(name),
-      })
-    }
-  } else {
-    for (const name of visibleNames) {
-      addRow(name, name, counts.get(name), "", { hideAction: "hide" })
-    }
-  }
-
-  if (hiddenNames.length) {
-    const toggle = document.createElement("button")
-    toggle.type = "button"
-    toggle.className =
-      "w-full px-3 py-2 text-xs text-fg-3 hover:text-fg hover:bg-surface-2 focus:bg-surface-2 outline-none flex items-center justify-between"
-    toggle.innerHTML =
-      `<span class="truncate">${showHidden ? "Hide" : "Show"} ${hiddenNames.length} hidden ${hiddenNames.length === 1 ? "category" : "categories"}</span>` +
-      `<span class="ml-3 shrink-0 tabular-nums">${showHidden ? "▴" : "▾"}</span>`
-    toggle.addEventListener("click", () => {
-      showHidden = !showHidden
-      renderCategoryPicker(items)
-    })
-    frag.appendChild(toggle)
-    if (showHidden) {
-      for (const name of hiddenNames) {
-        addRow(name, name, counts.get(name), "", {
-          hideAction: "unhide",
-          dim: true,
-        })
-      }
-    }
-  }
-
-  categoryListEl.innerHTML = ""
-  if (categoryListStatus) {
-    if (mode === "select") {
-      const totalCats = names.length
-      const pickedCount = names.reduce(
-        (acc, name) => (allowed.has(name) ? acc + 1 : acc),
-        0
-      )
-      categoryListStatus.textContent =
-        pickedCount === 0
-          ? `Tick categories to include - ${totalCats.toLocaleString()} total`
-          : `Showing ${pickedCount.toLocaleString()} of ${totalCats.toLocaleString()} categories`
-    } else {
-      const total = visibleNames.length
-      categoryListStatus.textContent = `${total.toLocaleString()} ${total === 1 ? "category" : "categories"}${hiddenNames.length ? ` · ${hiddenNames.length} hidden` : ""}`
-    }
-  }
-  categoryListEl.appendChild(frag)
-  highlightActiveInList()
-  filterCategories()
-}
-
-function syncPseudoCategoryRows() {
-  if (!categoryListEl || !activePlaylistId) return
-  const favs = getFavorites(activePlaylistId, "vod")
-  const recs = getRecents(activePlaylistId, "vod")
-  for (const [val, n] of [
-    [CAT_FAVORITES, favs.size],
-    [CAT_RECENTS, recs.length],
-  ]) {
-    const btn = /** @type {HTMLButtonElement|null} */ (
-      categoryListEl.querySelector(`button[role="option"][data-val="${val}"]`)
-    )
-    if (!btn) continue
-    const countEl = btn.querySelector(".category-count")
-    if (countEl) countEl.textContent = String(n)
-    btn.style.display = n > 0 ? "" : "none"
-  }
-}
-
-function filterCategories() {
-  if (!categoryListEl || !categoryListStatus || !categorySearchEl) return
-  const qnorm = normalize(categorySearchEl.value || "")
-  const tokens = qnorm.length ? qnorm.split(" ") : []
-  const mode = categoryMode()
-  const allowed = mode === "select" ? allowedSet() : null
-  const filterToSelected = mode === "select" && showSelectedOnly
-
-  let visibleCount = 0
-  let totalCount = 0
-
-  for (const btn of categoryListEl.querySelectorAll('button[role="option"]')) {
-    const val = btn.dataset.val || ""
-    const isPseudo = val.startsWith("__")
-    const isAllButton = val === ""
-    const isRegularRow = !isAllButton && !isPseudo
-    if (isRegularRow) totalCount++
-    const label = normalize(val || btn.textContent || "")
-    const searchMatches = !tokens.length || tokens.every((token) => label.includes(token))
-    let show = searchMatches
-    if (show && filterToSelected && isRegularRow) {
-      show = !!allowed && allowed.has(val)
-    }
-    btn.style.display = show ? "" : "none"
-    if (show && isRegularRow) visibleCount++
-  }
-
-  if (mode === "select") {
-    const pickedCount = allowed ? allowed.size : 0
-    categoryListStatus.textContent = filterToSelected
-      ? `${visibleCount.toLocaleString()} of ${pickedCount.toLocaleString()} selected (filtered)`
-      : pickedCount === 0
-        ? `Tick categories to include - ${totalCount.toLocaleString()} total`
-        : `${pickedCount.toLocaleString()} of ${totalCount.toLocaleString()} selected`
-  } else {
-    categoryListStatus.textContent = `${visibleCount.toLocaleString()} of ${totalCount.toLocaleString()} categories`
-  }
-}
-
-function syncCategoryModeToggle() {
-  if (!categoryModeHideBtn || !categoryModeSelectBtn) return
-  const mode = categoryMode()
-  categoryModeHideBtn.setAttribute("aria-checked", String(mode === "hide"))
-  categoryModeSelectBtn.setAttribute("aria-checked", String(mode === "select"))
-  if (categorySelectActions) {
-    if (mode === "select") categorySelectActions.removeAttribute("hidden")
-    else categorySelectActions.setAttribute("hidden", "")
-  }
-  if (mode !== "select" && showSelectedOnly) {
-    showSelectedOnly = false
-    syncShowSelectedToggle()
-  }
-}
-
-function syncShowSelectedToggle() {
-  if (!categoryShowSelectedBtn) return
-  categoryShowSelectedBtn.setAttribute("aria-pressed", String(showSelectedOnly))
-}
-
-const onCategoryModeClick = (event) => {
-  const mode = /** @type {HTMLElement} */ (event.currentTarget)?.dataset?.mode
-  if (!activePlaylistId || (mode !== "hide" && mode !== "select")) return
-  setCategoryMode(activePlaylistId, "vod", mode)
-}
-categoryModeHideBtn?.addEventListener("click", onCategoryModeClick)
-categoryModeSelectBtn?.addEventListener("click", onCategoryModeClick)
-
-categoryShowSelectedBtn?.addEventListener("click", () => {
-  showSelectedOnly = !showSelectedOnly
-  syncShowSelectedToggle()
-  filterCategories()
-})
-
-categorySelectAllBtn?.addEventListener("click", () => {
-  if (!activePlaylistId || !categoryListEl) return
-  const allowed = new Set(allowedSet())
-  for (const btn of categoryListEl.querySelectorAll('button[role="option"]')) {
-    const val = /** @type {HTMLElement} */ (btn).dataset?.val
-    if (!val) continue
-    if (val.startsWith("__")) continue
-    if (/** @type {HTMLElement} */ (btn).style.display === "none") continue
-    allowed.add(val)
-  }
-  setAllowedCategories(activePlaylistId, "vod", allowed)
-})
-
-categorySelectClearBtn?.addEventListener("click", () => {
-  if (!activePlaylistId) return
-  setAllowedCategories(activePlaylistId, "vod", [])
-})
-
-categorySearchEl?.addEventListener("input", debounce(filterCategories, 120))
-
-function setActiveCat(next) {
-  activeCat = next || ""
-  try {
-    if (activeCat) localStorage.setItem("xt_vod_active_cat", activeCat)
-    else localStorage.removeItem("xt_vod_active_cat")
-  } catch {}
-  applyFilter()
-  document.dispatchEvent(
-    new CustomEvent("xt:movie-cat-changed", { detail: activeCat })
-  )
-}
 
 // ----------------------------
 // Poster grid
@@ -673,7 +302,7 @@ function renderGridInner() {
   if (!filtered.length) {
     const empty = document.createElement("div")
     empty.className = "col-span-full text-fg-3 text-sm py-8 text-center"
-    empty.textContent = activeCat
+    empty.textContent = picker.getActiveCat()
       ? t("movies.noResultsCategory")
       : t("movies.empty.simple")
     gridEl.appendChild(empty)
@@ -776,6 +405,7 @@ function applyFilter() {
   const qnorm = normalize(searchEl?.value || "")
   const tokens = qnorm.length ? qnorm.split(" ") : []
 
+  const activeCat = picker.getActiveCat()
   let out
   if (activeCat === CAT_FAVORITES && activePlaylistId) {
     const favs = getFavorites(activePlaylistId, "vod")
@@ -789,19 +419,9 @@ function applyFilter() {
       if (m) out.push(m)
     }
   } else {
-    const mode = categoryMode()
-    const hidden = mode === "hide" ? hiddenSet() : null
-    const allowed = mode === "select" ? allowedSet() : null
-    const allowlistActive = mode === "select" && allowed.size > 0
     out = all.filter((m) => {
       if (activeCat && (m.category || "") !== activeCat) return false
-      const cat = (m.category || "").toString()
-      if (mode === "hide") {
-        if (cat && hidden.has(cat)) return false
-        return true
-      }
-      if (!allowlistActive) return true
-      return cat ? allowed.has(cat) : false
+      return picker.categoryPassesFilter((m.category || "").toString())
     })
   }
 
@@ -854,7 +474,7 @@ function applyFilter() {
         ? t("list.heroFavorites")
         : activeCat === CAT_RECENTS
           ? t("list.heroRecents")
-          : activeCat || t("list.allCategories")
+          : (activeCat as string) || t("list.allCategories")
   }
   renderGrid()
 }
@@ -894,9 +514,6 @@ function showEmptyState() {
   if (listStatus) {
     listStatus.innerHTML = `${t("list.noPlaylistAddOne")} <a href="/login" class="text-accent underline">${t("list.addOne")}</a>.`
   }
-  if (categoryListStatus) {
-    categoryListStatus.innerHTML = `<a href="/login" class="text-accent underline">Add a playlist</a> first.`
-  }
   filtered = []
   renderGrid()
 }
@@ -908,8 +525,7 @@ function paintMovies(data, fromCache, age) {
       t("movies.totalMovies", { count: all.length.toLocaleString() }) +
       (fromCache ? ` · ${fmtAge(age)}` : "")
   }
-  syncCategoryModeToggle()
-  renderCategoryPicker(all)
+  picker.rerender()
   applyFilter()
 }
 

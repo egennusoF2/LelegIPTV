@@ -752,6 +752,8 @@
   "common.tomorrow": "غداً",
   "epg.subtitleAll": "EPG · جميع الفئات",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "المزامنة مع البث المباشر",
+  "epg.cat.syncWithLiveHelp": "استخدام نفس الفئات المخفية / المسموح بها التي ضبطتها في البث المباشر.",
   "settings.update.checking": "جارٍ التحقق…",
   "settings.update.upToDateMsg": "أنت على أحدث إصدار.",
   "settings.update.available": "متاح",

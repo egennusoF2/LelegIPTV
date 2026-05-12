@@ -752,6 +752,8 @@
   "common.tomorrow": "Завтра",
   "epg.subtitleAll": "EPG · Все категории",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "Синхронизировать с ТВ",
+  "epg.cat.syncWithLiveHelp": "Использовать те же скрытые / разрешённые категории, что и в ТВ.",
   "settings.update.checking": "Проверка…",
   "settings.update.upToDateMsg": "У вас установлена последняя версия.",
   "settings.update.available": "Доступно",

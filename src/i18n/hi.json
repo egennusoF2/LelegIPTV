@@ -752,6 +752,8 @@
   "common.tomorrow": "कल",
   "epg.subtitleAll": "EPG · सभी श्रेणियाँ",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "लाइव टीवी से सिंक करें",
+  "epg.cat.syncWithLiveHelp": "लाइव टीवी पर सेट की गई वही छिपी / अनुमत श्रेणियों का उपयोग करें।",
   "settings.update.checking": "जाँच रहा है…",
   "settings.update.upToDateMsg": "आप नवीनतम संस्करण पर हैं।",
   "settings.update.available": "उपलब्ध",

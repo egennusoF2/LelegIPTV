@@ -7,8 +7,6 @@ import {
   buildApiUrl,
   isLikelyM3USource,
 } from "@/scripts/lib/creds.js"
-import { normalize } from "@/scripts/lib/text.js"
-import { debounce } from "@/scripts/lib/debounce.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
 import { getCached } from "@/scripts/lib/cache.js"
 import { providerFetch } from "@/scripts/lib/provider-fetch.js"
@@ -24,6 +22,7 @@ import {
   getFavorites,
   getRecents,
 } from "@/scripts/lib/preferences.js"
+import { mountCategoryPicker } from "@/scripts/lib/category-picker.ts"
 
 const CAT_FAVORITES = "__favorites__"
 const CAT_RECENTS = "__recents__"
@@ -44,15 +43,6 @@ const bodyEl = document.getElementById("epg-body")
 const titleEl = document.getElementById("epg-title")
 const refreshBtn = document.getElementById("epg-refresh")
 const nowBtn = document.getElementById("epg-now")
-const categoryLabelEl = document.getElementById("epg-category-label")
-const categoryListEl = document.getElementById("epg-category-list")
-const categoryListStatus = document.getElementById("epg-category-list-status")
-const categorySearchEl = /** @type {HTMLInputElement|null} */ (
-  document.getElementById("epg-category-search")
-)
-const categoryDialog = /** @type {HTMLDialogElement|null} */ (
-  document.getElementById("epg-category-dialog")
-)
 
 // ----------------------------
 // State
@@ -61,7 +51,6 @@ const categoryDialog = /** @type {HTMLDialogElement|null} */ (
 let creds = { host: "", port: "", user: "", pass: "" }
 let activePlaylistId = ""
 let activePlaylistTitle = ""
-let activeCat = ""
 /** @type {Array<{id:number,name:string,logo?:string|null,tvgId?:string,category?:string}>} */
 let channels = []
 /** @type {Array<{id:number,name:string,logo?:string|null,tvgId?:string,category?:string}>} */
@@ -69,6 +58,18 @@ let allChannels = []
 /** @type {Map<string, Array<{start:number,stop:number,title:string,desc:string}>>} channel id (tvg-id, lower-cased) → sorted programmes */
 const programmes = new Map()
 let viewStart = 0
+
+const picker = mountCategoryPicker({
+  kind: "epg",
+  idPrefix: "epg-category-picker",
+  activeCatStorageKey: "xt_epg_active_cat",
+  activeCatChangedEvent: "xt:epg-cat-changed",
+  getActivePlaylistId: () => activePlaylistId,
+  // pickChannels filters allChannels (live-channel shape), so the picker
+  // counts every entry — not just ones with a tvg-id. The schedule grid
+  // continues to drop tvg-id-less rows downstream.
+  getItems: () => allChannels,
+})
 
 function setStatus(text) {
   if (statusEl) statusEl.textContent = text
@@ -645,6 +646,7 @@ function render() {
 // Loaders
 // ----------------------------
 function pickChannels(cachedChannels) {
+  const activeCat = picker.getActiveCat()
   let filtered
   if (activeCat === CAT_FAVORITES && activePlaylistId) {
     const favs = getFavorites(activePlaylistId, "live")
@@ -660,7 +662,11 @@ function pickChannels(cachedChannels) {
   } else if (activeCat) {
     filtered = cachedChannels.filter((channel) => (channel.category || "") === activeCat)
   } else {
-    filtered = cachedChannels.slice()
+    // Honor the resolved hide / allow filter (issue #62). Sync defaults on
+    // so EPG starts out aligned with Live TV's category choices.
+    filtered = cachedChannels.filter((channel) =>
+      picker.categoryPassesFilter((channel.category || "").toString())
+    )
   }
   // Drop channels with no tvg-id - they have no EPG match in XMLTV anyway.
   const withEpg = filtered.filter((channel) => channel.tvgId)
@@ -728,49 +734,24 @@ async function fetchXtreamChannels() {
 // ----------------------------
 // Category picker
 // ----------------------------
-function syncCategoryUI() {
+function syncCategoryTitle() {
+  if (!titleEl) return
+  const activeCat = picker.getActiveCat()
   const display =
-    activeCat === "__favorites__"
+    activeCat === CAT_FAVORITES
       ? t("list.specialFavorites")
-      : activeCat === "__recents__"
+      : activeCat === CAT_RECENTS
         ? t("list.specialRecents")
         : activeCat
-  if (titleEl) {
-    titleEl.textContent = display
-      ? t("epg.subtitleWith", { category: display })
-      : t("epg.subtitleAll")
-  }
-  if (categoryLabelEl) {
-    categoryLabelEl.textContent = display || t("list.allCategories")
-  }
-  if (categoryListEl) {
-    for (const el of categoryListEl.querySelectorAll('button[role="option"]')) {
-      el.classList.toggle("bg-surface-2", (el.dataset.val || "") === activeCat)
-    }
-  }
-}
-
-function setActiveCat(next) {
-  const cleaned = next || ""
-  if (cleaned === activeCat) {
-    syncCategoryUI()
-    return
-  }
-  activeCat = cleaned
-  try {
-    if (activeCat) localStorage.setItem("xt_active_cat", activeCat)
-    else localStorage.removeItem("xt_active_cat")
-  } catch {}
-  syncCategoryUI()
-  document.dispatchEvent(
-    new CustomEvent("xt:cat-changed", { detail: activeCat })
-  )
-  applyCategory()
+  titleEl.textContent = display
+    ? t("epg.subtitleWith", { category: display })
+    : t("epg.subtitleAll")
 }
 
 function applyCategory() {
   if (!allChannels.length) return
   channels = pickChannels(allChannels)
+  const activeCat = picker.getActiveCat()
   if (!channels.length) {
     if (activeCat === CAT_FAVORITES) {
       showStatus(t("epg.noFavoritesEpg"))
@@ -790,95 +771,21 @@ function applyCategory() {
   render()
 }
 
-function renderCategoryPicker(items) {
-  if (!categoryListEl) return
-  const counts = new Map()
-  for (const channel of items) {
-    if (!channel.tvgId) continue
-    const key = (channel.category || "").trim() || t("list.uncategorized")
-    counts.set(key, (counts.get(key) || 0) + 1)
-  }
-  const names = Array.from(counts.keys()).sort((a, b) =>
-    a.localeCompare(b, "en", { sensitivity: "base" })
-  )
-  const frag = document.createDocumentFragment()
+document.addEventListener("xt:epg-cat-changed", () => {
+  syncCategoryTitle()
+  applyCategory()
+})
 
-  const addRow = (val, label, count = null, extraClass = "") => {
-    const btn = document.createElement("button")
-    btn.type = "button"
-    btn.setAttribute("role", "option")
-    btn.dataset.val = val
-    btn.className =
-      "w-full py-2 px-2 text-sm flex items-center justify-between hover:bg-surface-2 focus:bg-surface-2 outline-none text-fg" +
-      (extraClass ? " " + extraClass : "")
-    const left = document.createElement("span")
-    left.className = "truncate"
-    left.textContent = label
-    const right = document.createElement("span")
-    right.className =
-      "category-count ml-3 shrink-0 text-xs text-fg-3 tabular-nums"
-    right.textContent = count != null ? String(count) : ""
-    btn.append(left, right)
-    btn.addEventListener("click", () => setActiveCat(val))
-    frag.appendChild(btn)
-    return btn
-  }
-
-  // Favorites + Recents pseudo-rows. Only counted against channels that have a
-  // tvg-id, since the EPG grid drops the rest anyway.
-  const favSet = activePlaylistId
-    ? getFavorites(activePlaylistId, "live")
-    : new Set()
-  const recents = activePlaylistId
-    ? getRecents(activePlaylistId, "live")
-    : []
-  const favEpgCount = items.reduce(
-    (acc, channel) =>
-      channel.tvgId && favSet.has(channel.id) ? acc + 1 : acc,
-    0
-  )
-  const recentIds = new Set(recents.map((entry) => entry.id))
-  const recEpgCount = items.reduce(
-    (acc, channel) =>
-      channel.tvgId && recentIds.has(channel.id) ? acc + 1 : acc,
-    0
-  )
-  const favRow = addRow(CAT_FAVORITES, "★ Favorites", favEpgCount, "text-accent")
-  if (favEpgCount === 0) favRow.style.display = "none"
-  const recRow = addRow(CAT_RECENTS, "🕒 Recently watched", recEpgCount)
-  if (recEpgCount === 0) recRow.style.display = "none"
-
-  addRow("", t("list.allCategories"))
-  for (const name of names) addRow(name, name, counts.get(name))
-
-  categoryListEl.replaceChildren(frag)
-  if (categoryListStatus) {
-    categoryListStatus.textContent = `${names.length.toLocaleString()} categories`
-  }
-  syncCategoryUI()
+const onEpgPrefChange = (event: Event) => {
+  const detail = (event as CustomEvent).detail
+  if (!detail || detail.playlistId !== activePlaylistId) return
+  // Picker module already filters internally; we just need to re-pick.
+  applyCategory()
 }
-
-function filterCategories() {
-  if (!categoryListEl || !categoryListStatus || !categorySearchEl) return
-  const qnorm = normalize(categorySearchEl.value || "")
-  const tokens = qnorm.length ? qnorm.split(" ") : []
-
-  let visibleCount = 0
-  let totalCount = 0
-
-  for (const btn of categoryListEl.querySelectorAll('button[role="option"]')) {
-    const isAllButton = btn.dataset.val === ""
-    if (!isAllButton) totalCount++
-    const label = normalize(btn.dataset.val || btn.textContent || "")
-    const matches = !tokens.length || tokens.every((token) => label.includes(token))
-    btn.style.display = matches ? "" : "none"
-    if (matches && !isAllButton) visibleCount++
-  }
-
-  categoryListStatus.textContent = `${visibleCount.toLocaleString()} of ${totalCount.toLocaleString()} categories`
-}
-
-categorySearchEl?.addEventListener("input", debounce(filterCategories, 120))
+document.addEventListener("xt:hidden-categories-changed", onEpgPrefChange)
+document.addEventListener("xt:allowed-categories-changed", onEpgPrefChange)
+document.addEventListener("xt:category-mode-changed", onEpgPrefChange)
+document.addEventListener("xt:epg-sync-changed", onEpgPrefChange)
 
 async function init() {
   // Wait for the locale JSON to resolve before any t() call so the page
@@ -900,12 +807,7 @@ async function init() {
   activePlaylistId = active._id
   activePlaylistTitle = active.title || ""
   await ensurePrefsLoaded()
-  try {
-    activeCat = localStorage.getItem("xt_active_cat") || ""
-  } catch {
-    activeCat = ""
-  }
-  syncCategoryUI()
+  syncCategoryTitle()
 
   const isM3U = isLikelyM3USource(creds.host, creds.user, creds.pass)
   let cached =
@@ -929,10 +831,11 @@ async function init() {
   }
 
   allChannels = cached
-  renderCategoryPicker(allChannels)
+  picker.rerender()
 
   channels = pickChannels(cached)
   if (!channels.length) {
+    const activeCat = picker.getActiveCat()
     if (activeCat === CAT_FAVORITES) {
       showStatus(
         "No favorite channels with EPG ids (`tvg-id`). Star a channel on Live TV first."
@@ -1019,35 +922,20 @@ document.addEventListener("xt:active-changed", () => {
   init()
 })
 
-document.addEventListener("xt:cat-changed", (e) => {
-  const next = /** @type {CustomEvent} */ (e).detail || ""
-  if (next === activeCat) return
-  activeCat = next
-  syncCategoryUI()
-  applyCategory()
-})
-
 document.addEventListener("xt:favorites-changed", (e) => {
   const detail = /** @type {CustomEvent} */ (e).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "live") return
-  if (allChannels.length) renderCategoryPicker(allChannels)
-  if (activeCat === CAT_FAVORITES) applyCategory()
+  if (allChannels.length) picker.refreshPseudoRows()
+  if (picker.getActiveCat() === CAT_FAVORITES) applyCategory()
 })
 
 document.addEventListener("xt:recents-changed", (e) => {
   const detail = /** @type {CustomEvent} */ (e).detail
   if (!detail || detail.playlistId !== activePlaylistId) return
   if (detail.kind !== "live") return
-  if (allChannels.length) renderCategoryPicker(allChannels)
-  if (activeCat === CAT_RECENTS) applyCategory()
-})
-
-categoryDialog?.addEventListener("close", () => {
-  if (categorySearchEl) {
-    categorySearchEl.value = ""
-    filterCategories()
-  }
+  if (allChannels.length) picker.refreshPseudoRows()
+  if (picker.getActiveCat() === CAT_RECENTS) applyCategory()
 })
 
 init()

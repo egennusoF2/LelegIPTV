@@ -752,6 +752,8 @@
   "common.tomorrow": "明天",
   "epg.subtitleAll": "EPG · 所有分类",
   "epg.subtitleWith": "EPG · {category}",
+  "epg.cat.syncWithLive": "与直播同步",
+  "epg.cat.syncWithLiveHelp": "使用与直播中相同的隐藏 / 允许的分类。",
   "settings.update.checking": "检查中…",
   "settings.update.upToDateMsg": "已是最新版本。",
   "settings.update.available": "可用",
