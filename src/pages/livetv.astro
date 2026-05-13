@@ -2,15 +2,43 @@
 import Layout from "@/layouts/Layout.astro";
 import SearchInput from "@/components/SearchInput.astro";
 import CategoryPickerDialog from "@/components/CategoryPickerDialog.astro";
+import WelcomeCard from "@/components/WelcomeCard.astro";
 import { IconDeviceTv, IconChevronDown, IconCalendarTime, IconLayoutGrid } from "@tabler/icons-svelte";
 ---
 
 <Layout pageTitle="Live TV">
+	<script is:inline>
+		try {
+			var raw = localStorage.getItem("xt_playlists") || "";
+			var hasEntries = false;
+			if (raw) {
+				var parsed = JSON.parse(raw);
+				hasEntries = !!(
+					parsed &&
+					Array.isArray(parsed.entries) &&
+					parsed.entries.length
+				);
+			}
+			if (!hasEntries) {
+				document.documentElement.setAttribute("data-first-run", "true");
+			}
+		} catch (e) {}
+	</script>
+
 	<main
+		id="livetv-page-main"
 		class="w-full max-w-480 mx-auto px-4 md:px-6 lg:px-8 pt-4 lg:pt-6 md:landscape:pt-6 pb-6
 			flex flex-col gap-4 flex-1 min-h-0">
 
 		<section
+			id="livetv-welcome"
+			aria-labelledby="welcome-heading"
+			class="livetv-welcome hidden flex-1 min-h-0 items-center justify-center py-6">
+			<WelcomeCard />
+		</section>
+
+		<section
+			id="livetv-main"
 			class="flex flex-col md:landscape:flex-row lg:flex-row gap-4 flex-1 min-h-0">
 
 			<!-- Channels (bottom on mobile, left column on desktop) -->
@@ -171,6 +199,12 @@ import { IconDeviceTv, IconChevronDown, IconCalendarTime, IconLayoutGrid } from 
 			Loading…
 		</div>
 	</main>
+
+	<style>
+		html[data-first-run="true"] #livetv-main { display: none; }
+		html[data-first-run="true"] #livetv-welcome { display: flex; }
+		html[data-first-run="true"] #livetv-page-main { min-height: auto; }
+	</style>
 
 	<script>
 		import "../scripts/stream/stream.ts";

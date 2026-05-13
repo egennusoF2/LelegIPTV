@@ -540,6 +540,32 @@ dialog[open]::backdrop {
     contain-intrinsic-size: 56px;
 }
 
+.map-row[data-just-changed="true"] {
+    animation: map-row-flash 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes map-row-flash {
+    0%   { background-color: transparent; }
+    12%  { background-color: var(--color-accent-soft); }
+    100% { background-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .map-row[data-just-changed="true"] { animation: none; }
+}
+html[data-perf-mode="on"] .map-row[data-just-changed="true"] { animation: none; }
+
+#epgTestStatus[data-celebrate="true"] {
+    animation: epg-test-celebrate 1.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes epg-test-celebrate {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    20%      { box-shadow: 0 0 0 6px color-mix(in oklch, var(--color-ok) 22%, transparent); }
+    60%      { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #epgTestStatus[data-celebrate="true"] { animation: none; }
+}
+html[data-perf-mode="on"] #epgTestStatus[data-celebrate="true"] { animation: none; }
+
 /* Suppress Safari/iOS native disclosure triangle on `<summary class="list-none">`
    - `list-style: none` alone leaves the marker visible in WebKit. */
 summary.list-none::-webkit-details-marker {

@@ -352,30 +352,28 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 							Stacked in order. Each one fills channels the previous sources didn't supply - they never override the primary.
 						</span>
 						<ul id="epgAdditionalList" class="flex flex-col gap-2"></ul>
-						<button
-							id="epgAddBtn"
-							type="button"
-							class="self-start inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
-								hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors">
-							<IconPlus aria-hidden="true" stroke={2} class="size-3.5" />
-							<span data-i18n="login.epg.addSource">Add another source</span>
-						</button>
 					</div>
 
-					<!-- Test all sources without saving. Status card uses the
-					     same shell + palette as the connection-test status above
-					     (see `showStatus` / `palette`) so both "tests" feel like
-					     one component. -->
 					<div class="flex flex-col gap-2">
-						<button
-							id="epgTestBtn"
-							type="button"
-							data-i18n="login.epg.testButton"
-							class="self-start inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
-								hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors
-								disabled:opacity-50 disabled:cursor-not-allowed">
-							Test sources
-						</button>
+						<div class="flex flex-wrap items-center gap-2">
+							<button
+								id="epgAddBtn"
+								type="button"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
+									hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors">
+								<IconPlus aria-hidden="true" stroke={2} class="size-3.5" />
+								<span data-i18n="login.epg.addSource">Add another source</span>
+							</button>
+							<button
+								id="epgTestBtn"
+								type="button"
+								data-i18n="login.epg.testButton"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3 py-1.5 text-sm text-fg-2
+									hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors
+									disabled:opacity-50 disabled:cursor-not-allowed">
+								Test sources
+							</button>
+						</div>
 						<div
 							id="epgTestStatus"
 							class="hidden items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed"></div>
@@ -801,6 +799,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 
 	function setEpgTestStatus(message, tone) {
 		if (!epgTestStatus) return;
+		epgTestStatus.removeAttribute("data-celebrate");
 		if (!message) {
 			epgTestStatus.classList.add("hidden");
 			epgTestStatus.classList.remove("flex");
@@ -913,6 +912,10 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 			}),
 			errCount === 0 ? "good" : okCount === 0 ? "bad" : "warn"
 		);
+		if (errCount === 0 && epgTestStatus) {
+			void epgTestStatus.offsetWidth;
+			epgTestStatus.setAttribute("data-celebrate", "true");
+		}
 		epgTestAbort = null;
 	}
 	epgTestBtn?.addEventListener("click", () => {
@@ -920,9 +923,6 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	});
 
 	function refreshDisableProviderVisibility() {
-		// Only meaningful for Xtream (auto-detected from creds). M3U/local-m3u
-		// fall back to the x-tvg-url header, which is already overridable by
-		// the primary field.
 		if (!epgDisableProviderRow) return;
 		epgDisableProviderRow.style.display = mode === "xtream" ? "" : "none";
 	}

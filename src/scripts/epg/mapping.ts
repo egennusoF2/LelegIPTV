@@ -110,6 +110,19 @@ let mapSpacer: HTMLElement | null = null
 let mapRenderToken = 0
 let mapScrollScheduled = false
 
+let justChangedChannelId: number | null = null
+let justChangedTimer: number | null = null
+const JUST_CHANGED_MS = 1200
+
+function flagJustChanged(channelId: number): void {
+  justChangedChannelId = channelId
+  if (justChangedTimer != null) window.clearTimeout(justChangedTimer)
+  justChangedTimer = window.setTimeout(() => {
+    justChangedChannelId = null
+    justChangedTimer = null
+  }, JUST_CHANGED_MS)
+}
+
 function recomputeCachedNorm() {
   cachedChannelsNorm = cachedChannels.map((channel) =>
     normalize(`${channel.name} ${channel.tvgId || ""}`)
@@ -232,8 +245,10 @@ function renderMapWindow() {
     }
 
     const top = i * MAP_ROW_H
+    const justChangedAttr =
+      channel.id === justChangedChannelId ? ` data-just-changed="true"` : ""
     html.push(
-      `<button type="button" data-channel-id="${channel.id}" class="${rowClassBase}" style="top:${top}px;height:${MAP_ROW_H}px;">${logoHtml}<div class="flex-1 min-w-0"><div class="truncate text-sm font-medium text-fg">${escapeHtml(channel.name)}</div>${subHtml}</div>${badgeHtml}</button>`
+      `<button type="button" data-channel-id="${channel.id}"${justChangedAttr} class="${rowClassBase}" style="top:${top}px;height:${MAP_ROW_H}px;">${logoHtml}<div class="flex-1 min-w-0"><div class="truncate text-sm font-medium text-fg">${escapeHtml(channel.name)}</div>${subHtml}</div>${badgeHtml}</button>`
     )
   }
   if (token !== mapRenderToken) return
@@ -437,6 +452,7 @@ pickListEl?.addEventListener("click", (event) => {
   if (pickerChannelId == null || !activePlaylistId) return
   const tvgId = target.dataset.tvgId
   if (!tvgId) return
+  flagJustChanged(pickerChannelId)
   setChannelEpgOverride(activePlaylistId, pickerChannelId, tvgId)
   pickDialog?.close?.()
 })
@@ -448,6 +464,7 @@ pickDialog?.addEventListener("click", (event) => {
 })
 pickClearBtn?.addEventListener("click", () => {
   if (pickerChannelId == null || !activePlaylistId) return
+  flagJustChanged(pickerChannelId)
   clearChannelEpgOverride(activePlaylistId, pickerChannelId)
   pickDialog?.close?.()
 })
