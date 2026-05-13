@@ -102,13 +102,26 @@ function youtubeUrlFromTrailer(trailer) {
   return ""
 }
 
-function fmtDuration(minsOrStr) {
-  if (!minsOrStr) return ""
-  const s = String(minsOrStr)
-  const m = parseInt(s, 10)
-  if (!isFinite(m) || m <= 0) return s
-  const h = Math.floor(m / 60)
-  const mm = m % 60
+function fmtDuration(value) {
+  if (value == null || value === "") return ""
+  const raw = String(value).trim()
+  if (!raw) return ""
+
+  let totalMin = 0
+  if (raw.includes(":")) {
+    const parts = raw.split(":").map((part) => parseInt(part, 10))
+    if (parts.some((part) => !Number.isFinite(part))) return raw
+    let totalSec = 0
+    if (parts.length === 3) totalSec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+    else if (parts.length === 2) totalSec = parts[0] * 60 + parts[1]
+    else return raw
+    totalMin = Math.round(totalSec / 60)
+  } else {
+    totalMin = parseInt(raw, 10)
+  }
+  if (!Number.isFinite(totalMin) || totalMin <= 0) return raw
+  const h = Math.floor(totalMin / 60)
+  const mm = totalMin % 60
   if (!h) return `${mm} min`
   return `${h}h ${mm.toString().padStart(2, "0")}m`
 }
@@ -172,8 +185,11 @@ function applyVodInfo(data) {
   externalBtnHandle?.refresh()
 
   const year = movieData.releasedate || movieData.year || info.year || ""
+  const durationSecs = Number(movieData.duration_secs || info.duration_secs || 0)
   const duration =
-    movieData.duration || info.duration || movieData.duration_secs || ""
+    movieData.duration ||
+    info.duration ||
+    (durationSecs > 0 ? Math.round(durationSecs / 60) : "")
   const rating =
     movieData.rating || info.rating || movieData.rating_5based || ""
   const genre = movieData.genre || info.genre || movieData.category || ""

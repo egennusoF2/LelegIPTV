@@ -71,19 +71,15 @@ import {
             id="series-detail-fav"
             type="button"
             aria-pressed="false"
-            class="self-start rounded-xl border border-line px-4 min-h-11 text-sm
-                   hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent
-                   active:scale-[0.97] transition duration-150">
+            class="btn">
             Add to favorites
           </button>
           <button
             id="series-detail-watch"
             type="button"
             aria-pressed="false"
-            class="self-start flex items-center gap-2 rounded-xl border border-line px-4 min-h-11 text-sm
-                   hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent
-                   active:scale-[0.97] transition duration-150">
-            <IconBookmark aria-hidden="true" stroke={2} class="size-4" />
+            class="btn">
+            <IconBookmark aria-hidden="true" stroke={2} class="btn-icon" />
             <span id="series-detail-watch-label">Watch later</span>
           </button>
           <button
@@ -92,30 +88,24 @@ import {
             hidden
             aria-label="Picture-in-Picture"
             data-i18n-attr="aria-label:detail.action.pip"
-            class="self-start flex items-center gap-2 rounded-xl border border-line px-4 min-h-11 text-sm text-fg-2
-                   hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent
-                   active:scale-[0.97] transition duration-150">
-            <IconPictureInPicture aria-hidden="true" stroke={2} class="size-4" />
+            class="btn">
+            <IconPictureInPicture aria-hidden="true" stroke={2} class="btn-icon" />
             <span data-i18n="detail.action.pip">Picture-in-Picture</span>
           </button>
           <button
             id="series-detail-open-external"
             type="button"
             hidden
-            class="self-start flex items-center gap-2 rounded-xl border border-line px-4 min-h-11 text-sm text-fg-2
-                   hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent
-                   active:scale-[0.97] transition duration-150">
-            <IconExternalLink aria-hidden="true" stroke={2} class="size-4" />
+            class="btn">
+            <IconExternalLink aria-hidden="true" stroke={2} class="btn-icon" />
             <span data-label></span>
           </button>
           <button
             id="series-detail-trailer"
             type="button"
             hidden
-            class="self-start flex items-center gap-2 rounded-xl border border-line px-4 min-h-11 text-sm text-fg-2
-                   hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:border-accent
-                   active:scale-[0.97] transition duration-150">
-            <IconBrandYoutube aria-hidden="true" stroke={2} class="size-4" />
+            class="btn">
+            <IconBrandYoutube aria-hidden="true" stroke={2} class="btn-icon" />
             <span data-i18n="detail.action.trailer">Trailer</span>
           </button>
         </div>
