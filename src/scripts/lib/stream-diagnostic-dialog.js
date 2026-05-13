@@ -3,6 +3,7 @@ import { log } from "@/scripts/lib/log.js"
 import { attachDialogSpatialNav } from "@/scripts/lib/dialog-spatial-nav.js"
 import { diagnoseStream, summarizeReport } from "@/scripts/lib/stream-diagnostic.js"
 import { t } from "@/scripts/lib/i18n.js"
+import { writeClipboardText } from "@/scripts/lib/clipboard"
 
 const DIALOG_ID = "stream-diagnostic-dialog"
 
@@ -250,7 +251,7 @@ export function openStreamDiagnostic(opts) {
     copyBtn.onclick = async () => {
       if (!lastReport) return
       try {
-        await navigator.clipboard.writeText(JSON.stringify(lastReport, null, 2))
+        await writeClipboardText(JSON.stringify(lastReport, null, 2))
         copyBtn.textContent = t("streamTest.copied")
         setTimeout(() => {
           if (copyBtn) copyBtn.textContent = t("streamTest.copy")

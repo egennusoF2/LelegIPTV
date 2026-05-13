@@ -632,7 +632,8 @@ function openChannelMenu(channel, anchor, point) {
     closeChannelMenu()
     if (!url) return
     try {
-      await navigator.clipboard.writeText(url)
+      const { writeClipboardText } = await import("@/scripts/lib/clipboard")
+      await writeClipboardText(url)
       toast({ title: t("stream.toast.copied"), duration: 2200 })
     } catch (error) {
       log.warn("[xt:livetv] copy stream URL failed:", error)
