@@ -188,6 +188,53 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 						</button>
 					</div>
 				</details>
+
+				<!-- Advanced: live stream format (Xtream only). Most providers
+				     accept either; Dispatcharr only serves .ts today. -->
+				<details id="xtream-advanced" class="group rounded-xl border border-line bg-surface">
+					<summary
+						class="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer
+							hover:bg-surface-2 focus-visible:bg-surface-2 transition-colors rounded-xl
+							list-none min-h-12">
+						<span class="flex flex-col gap-0.5 min-w-0">
+							<span data-i18n="login.advanced.toggle" class="text-sm font-medium text-fg">
+								Advanced playback (optional)
+							</span>
+							<span
+								data-i18n="login.advanced.helper"
+								class="text-xs text-fg-3 leading-relaxed">
+								Tweak how stream URLs are built. Only change if your provider needs it.
+							</span>
+						</span>
+						<IconChevronDown
+							aria-hidden="true"
+							stroke={2}
+							class="size-4 shrink-0 text-fg-3 transition-[transform,color] duration-200
+								group-open:rotate-180 group-open:text-accent"
+						/>
+					</summary>
+
+					<div class="flex flex-col gap-3 px-4 pb-4 pt-1">
+						<label class="flex flex-col gap-2">
+							<span
+								data-i18n="login.field.liveContainer"
+								class="text-eyebrow font-medium uppercase text-fg-3">
+								Live stream format
+							</span>
+							<select id="liveContainer" class="field-input">
+								<option value="m3u8" data-i18n="login.field.liveContainer.option.m3u8">
+									HLS (.m3u8)
+								</option>
+								<option value="ts" data-i18n="login.field.liveContainer.option.ts">
+									MPEG-TS (.ts)
+								</option>
+							</select>
+							<span data-i18n="login.field.liveContainer.helper" class="text-xs text-fg-3 leading-relaxed">
+								Most providers use HLS. Switch to MPEG-TS only if your provider can't serve .m3u8.
+							</span>
+						</label>
+					</div>
+				</details>
 			</div>
 
 			<!-- M3U fields -->
@@ -461,6 +508,8 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	const mirrorsDetails = $("mirrors-section");
 	const mirrorsListEl = $("mirrorsList");
 	const mirrorsAddBtn = $("mirrorsAddBtn");
+	const xtreamAdvancedDetails = $("xtream-advanced");
+	const liveContainerEl = /** @type {HTMLSelectElement} */ ($("liveContainer"));
 	const epgTestBtn = $("epgTestBtn");
 	const epgTestStatus = $("epgTestStatus");
 	const epgDisableProviderRow = $("epgDisableProviderRow");
@@ -1284,6 +1333,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					return;
 				}
 				const mirrors = readMirrorsFromForm();
+				const liveContainer = liveContainerEl?.value === "ts" ? "ts" : "m3u8";
 				const patch = {
 					type: "xtream",
 					title: titleEl.value.trim() || "",
@@ -1291,6 +1341,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					username,
 					password,
 					mirrors,
+					liveContainer,
 					epgUrl,
 					additionalEpgUrls,
 					disableProviderEpg,
@@ -1413,6 +1464,12 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 			const mirrors = Array.isArray(editing.mirrors) ? editing.mirrors : [];
 			for (const mirror of mirrors) addMirrorRow(mirror);
 			if (mirrors.length) mirrorsDetails?.setAttribute("open", "");
+			if (liveContainerEl) {
+				liveContainerEl.value = editing.liveContainer === "ts" ? "ts" : "m3u8";
+			}
+			if (editing.liveContainer === "ts") {
+				xtreamAdvancedDetails?.setAttribute("open", "");
+			}
 		} else if (editing.type === "m3u") {
 			m3uEl.value = editing.url || "";
 		} else {

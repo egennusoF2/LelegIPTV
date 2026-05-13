@@ -78,8 +78,9 @@ function setNowPlaying(id) {
 /** @type {{host:string,port:string,user:string,pass:string}} */
 let creds = { host: "", port: "", user: "", pass: "" }
 
-function buildDirectM3U8(id, c = creds) {
+function buildDirectLiveUrl(id, c = creds) {
   const { host, port, user, pass } = c
+  const ext = c?.liveContainer === "ts" ? ".ts" : ".m3u8"
   return (
     fmtBase(host, port) +
     "/live/" +
@@ -88,7 +89,7 @@ function buildDirectM3U8(id, c = creds) {
     encodeURIComponent(pass) +
     "/" +
     encodeURIComponent(id) +
-    ".m3u8"
+    ext
   )
 }
 
@@ -546,7 +547,7 @@ listEl?.addEventListener(
 function buildChannelStreamUrl(channel) {
   if (!channel) return ""
   if (hasDirectUrl(channel.id)) return getDirectUrl(channel.id)
-  return buildDirectM3U8(channel.id)
+  return buildDirectLiveUrl(channel.id)
 }
 
 function openChannelDiagnostic(channel) {
@@ -1471,7 +1472,7 @@ async function play(streamId, name) {
   if (!currentEl) return
   const src = hasDirectUrl(streamId)
     ? getDirectUrl(streamId)
-    : await resolveStreamUrl((c) => buildDirectM3U8(streamId, c))
+    : await resolveStreamUrl((c) => buildDirectLiveUrl(streamId, c))
 
   // Embedded players (Video.js + hls.js) only speak http(s). M3U sources can
   // ship rtsp/rtmp/udp/mms/... - those need MPV/VLC
