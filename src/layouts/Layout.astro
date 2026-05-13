@@ -1,5 +1,6 @@
 ---
 import Sidebar from "@/components/Sidebar.astro"
+import TitleBar from "@/components/TitleBar.astro"
 import CatalogWarmingIndicator from "@/components/CatalogWarmingIndicator.svelte"
 import "../styles/global.css"
 
@@ -181,7 +182,7 @@ const documentTitle = pageTitle
   <body
     class="antialiased bg-bg text-fg selection:bg-accent-soft
            h-dvh min-h-0 overflow-hidden
-           flex flex-col md:flex-row landscape-phone:flex-row
+           flex flex-col
            pt-[env(safe-area-inset-top)]
            pr-[env(safe-area-inset-right)]"
   >
@@ -211,10 +212,17 @@ const documentTitle = pageTitle
         </span>
       </div>
     </div>
-    <Sidebar />
-    <div class="flex-1 min-w-0 min-h-0 flex flex-col order-first md:order-0
-                overflow-x-clip overflow-y-auto">
-      <slot />
+    <TitleBar />
+    <div
+      class="flex-1 min-h-0 flex flex-col md:flex-row landscape-phone:flex-row"
+    >
+      <Sidebar />
+      <div
+        class="flex-1 min-w-0 min-h-0 flex flex-col order-first md:order-0
+                overflow-x-clip overflow-y-auto"
+      >
+        <slot />
+      </div>
     </div>
     <CatalogWarmingIndicator client:load />
   </body>

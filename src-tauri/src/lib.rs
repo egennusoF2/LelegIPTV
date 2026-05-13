@@ -79,6 +79,14 @@ pub fn run() {
             external_player::sweep_orphan_mpv_sockets();
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             tray::install(app)?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                use tauri::Manager;
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.set_decorations(false);
+                    let _ = main_window.set_shadow(true);
+                }
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
