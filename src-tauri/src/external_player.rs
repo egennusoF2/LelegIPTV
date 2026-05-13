@@ -12,9 +12,9 @@
 //   "OTHER:..."       - anything else
 
 use std::collections::HashMap;
-use std::io::Write;
 #[cfg(unix)]
 use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -192,9 +192,7 @@ fn spawn_detect(path: String, mut args: Vec<String>) -> Result<String, String> {
     loop {
         match child.try_wait() {
             Ok(Some(_status)) => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| format!("OTHER:{e}"))?;
+                let output = child.wait_with_output().map_err(|e| format!("OTHER:{e}"))?;
                 let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
                 if text.trim().is_empty() {
                     text = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -386,7 +384,10 @@ fn wait_named_pipe(name: &str, timeout_ms: u32) -> std::io::Result<()> {
     extern "system" {
         fn WaitNamedPipeW(lpNamedPipeName: *const u16, nTimeOut: u32) -> i32;
     }
-    let wide: Vec<u16> = OsStr::new(name).encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = OsStr::new(name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
     let result = unsafe { WaitNamedPipeW(wide.as_ptr(), timeout_ms) };
     if result == 0 {
         Err(std::io::Error::last_os_error())
@@ -402,10 +403,7 @@ fn open_mpv_pipe(endpoint: &str) -> std::io::Result<std::fs::File> {
     // slot) can't block the IPC thread forever. WaitNamedPipeW returns quickly
     // with ERROR_FILE_NOT_FOUND when no server exists at all.
     wait_named_pipe(endpoint, PIPE_WAIT_TIMEOUT_MS)?;
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(endpoint)
+    OpenOptions::new().read(true).write(true).open(endpoint)
 }
 
 /// Inspect bytes read back from mpv's JSON-IPC socket
@@ -450,9 +448,8 @@ fn build_mpv_loadfile(url: &str, ua: Option<&str>, referer: Option<&str>) -> Vec
 }
 
 fn build_mpv_unpause() -> Vec<u8> {
-    let mut bytes =
-        serde_json::to_vec(&json!({ "command": ["set_property", "pause", false] }))
-            .unwrap_or_else(|_| Vec::new());
+    let mut bytes = serde_json::to_vec(&json!({ "command": ["set_property", "pause", false] }))
+        .unwrap_or_else(|_| Vec::new());
     bytes.push(b'\n');
     bytes
 }
@@ -469,12 +466,8 @@ fn send_mpv_loadfile(
     #[cfg(unix)]
     {
         let mut stream = open_mpv_socket(endpoint).map_err(|e| format!("IPC:{e}"))?;
-        stream
-            .write_all(&payload)
-            .map_err(|e| format!("IPC:{e}"))?;
-        stream
-            .write_all(&unpause)
-            .map_err(|e| format!("IPC:{e}"))?;
+        stream.write_all(&payload).map_err(|e| format!("IPC:{e}"))?;
+        stream.write_all(&unpause).map_err(|e| format!("IPC:{e}"))?;
         let mut sink = [0u8; 1024];
         let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
         let read = stream.read(&mut sink).unwrap_or(0);
@@ -534,8 +527,16 @@ async fn launch_mode(
     // Serialize concurrent launches per kind. Without this the
     // "check slot -> spawn -> persist" sequence can interleave between
     // callers and orphan one of the spawned players.
-    let lock_arc = if reuse_active { Some(state.launch_lock(&kind)) } else { None };
-    let _guard = if let Some(lock) = &lock_arc { Some(lock.lock().await) } else { None };
+    let lock_arc = if reuse_active {
+        Some(state.launch_lock(&kind))
+    } else {
+        None
+    };
+    let _guard = if let Some(lock) = &lock_arc {
+        Some(lock.lock().await)
+    } else {
+        None
+    };
 
     if reuse.enabled && kind == "mpv" && !reuse.url.is_empty() {
         // MPV: drive the existing window via JSON-IPC over its socket / pipe.
@@ -605,15 +606,20 @@ async fn launch_mode(
         })
         .await
         .map_err(|e| format!("OTHER:join: {e}"))??;
-        state.set(&kind, Slot { pid, endpoint: String::new() });
+        state.set(
+            &kind,
+            Slot {
+                pid,
+                endpoint: String::new(),
+            },
+        );
         return Ok(json!({ "pid": pid, "reused": prior_alive }));
     }
 
     // Plain spawn-and-forget fallthrough.
-    let pid =
-        tauri::async_runtime::spawn_blocking(move || spawn_launch_inner(&path, &args))
-            .await
-            .map_err(|e| format!("OTHER:join: {e}"))??;
+    let pid = tauri::async_runtime::spawn_blocking(move || spawn_launch_inner(&path, &args))
+        .await
+        .map_err(|e| format!("OTHER:join: {e}"))??;
     Ok(json!({ "pid": pid, "reused": false }))
 }
 
@@ -698,7 +704,9 @@ mod tests {
         let line = String::from_utf8(bytes).unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        let cmd = parsed["command"].as_array().expect("command must be an array");
+        let cmd = parsed["command"]
+            .as_array()
+            .expect("command must be an array");
         assert_eq!(cmd[0], "loadfile");
         assert_eq!(cmd[1], "https://e.test/x.m3u8");
         assert_eq!(cmd[2], "replace");
@@ -808,7 +816,10 @@ mod tests {
     #[test]
     fn spawn_launch_inner_rejects_path_with_null_byte() {
         let err = spawn_launch_inner("/bin/sh\0evil", &[]).unwrap_err();
-        assert!(err.starts_with("OTHER:") || err.starts_with("NOT_FOUND:"), "got {err}");
+        assert!(
+            err.starts_with("OTHER:") || err.starts_with("NOT_FOUND:"),
+            "got {err}"
+        );
     }
 
     #[test]
