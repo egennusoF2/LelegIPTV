@@ -287,7 +287,6 @@ mapDialog?.addEventListener("click", (event) => {
 })
 
 openBtn?.addEventListener("click", async () => {
-  cachedChannels = await getActiveChannels()
   if (!mapDialog) return
   if (mapListEl) {
     mapListEl.innerHTML = `<div class="h-full flex items-center justify-center p-6 text-sm text-fg-3" data-i18n="common.loading">${escapeHtml(t("common.loading"))}</div>`
@@ -295,6 +294,9 @@ openBtn?.addEventListener("click", async () => {
   if (mapStatusEl) mapStatusEl.textContent = ""
   if (typeof mapDialog.showModal === "function") mapDialog.showModal()
   else mapDialog.setAttribute("open", "")
+
+  cachedChannels = await getActiveChannels()
+  if (!mapDialog.open) return
   requestAnimationFrame(() => {
     recomputeCachedNorm()
     renderMapList()
@@ -312,15 +314,9 @@ function openPicker(channel: Channel) {
   pickerChannelId = channel.id
   const current = getChannelEpgOverride(activePlaylistId, channel.id)
   const original = (channel.tvgId || "").toLowerCase()
-  if (pickClearBtn) {
-    if (current) {
-      pickClearBtn.removeAttribute("disabled")
-      pickClearBtn.classList.remove("opacity-50", "cursor-not-allowed")
-    } else {
-      pickClearBtn.setAttribute("disabled", "")
-      pickClearBtn.classList.add("opacity-50", "cursor-not-allowed")
-    }
-  }
+  // The button's own `disabled:opacity-50 disabled:cursor-not-allowed` classes
+  // (see epg.astro) paint the disabled state - just toggle the attribute here.
+  pickClearBtn?.toggleAttribute("disabled", !current)
   if (pickCurrentEl) {
     pickCurrentEl.textContent = t("epg.map.pickerCurrent", {
       channel: channel.name,

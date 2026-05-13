@@ -44,13 +44,13 @@ const { idPrefix, showSyncToggle = false } = Astro.props;
 		{showSyncToggle && (
 			<label
 				id={`${idPrefix}-sync`}
-				class="flex items-center gap-2.5 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-fg-2 shrink-0
+				class="flex items-start gap-2.5 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-fg-2 shrink-0
 					cursor-pointer hover:bg-surface-3 focus-within:border-accent transition-colors">
 				<input
 					id={`${idPrefix}-sync-input`}
 					type="checkbox"
 					checked
-					class="size-4 accent-accent shrink-0"
+					class="mt-0.5 size-4 accent-accent shrink-0"
 				/>
 				<span class="flex flex-col leading-tight min-w-0">
 					<span data-i18n="epg.cat.syncWithLive" class="text-fg">

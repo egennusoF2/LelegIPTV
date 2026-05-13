@@ -540,6 +540,12 @@ dialog[open]::backdrop {
     contain-intrinsic-size: 56px;
 }
 
+/* Suppress Safari/iOS native disclosure triangle on `<summary class="list-none">`
+   - `list-style: none` alone leaves the marker visible in WebKit. */
+summary.list-none::-webkit-details-marker {
+    display: none;
+}
+
 /* ────────────────────────────── */
 /* Provider error empty state     */
 /* ────────────────────────────── */

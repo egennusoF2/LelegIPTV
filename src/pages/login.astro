@@ -532,6 +532,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 
 	function setEpgError(el, key) {
 		if (!el) return;
+		el.classList.remove("text-bad", "text-good", "text-warn");
 		if (!key) {
 			el.classList.add("hidden");
 			el.textContent = "";
@@ -590,10 +591,10 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className =
-			"shrink-0 rounded-md px-2 py-2 min-h-10 min-w-10 text-fg-3 hover:text-bad hover:bg-bad/10 focus-visible:text-bad focus-visible:bg-bad/10 inline-flex items-center justify-center transition-colors outline-none";
+			"shrink-0 rounded-md min-h-11 min-w-11 text-base text-fg-3 hover:text-bad hover:bg-bad/10 focus-visible:text-bad focus-visible:bg-bad/10 inline-flex items-center justify-center transition-colors outline-none";
 		btn.setAttribute("aria-label", t("login.epg.removeSource"));
 		btn.setAttribute("data-i18n-attr", "aria-label:login.epg.removeSource");
-		btn.textContent = "×";
+		btn.innerHTML = ICON_X;
 		btn.addEventListener("click", () => {
 			row.remove();
 			validateEpgUrlInputs();
