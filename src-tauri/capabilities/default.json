@@ -41,6 +41,7 @@
     "dialog:allow-save",
     "store:default",
     "clipboard-manager:allow-write-text",
+    "notification:default",
     {
       "identifier": "opener:allow-open-url",
       "allow": [

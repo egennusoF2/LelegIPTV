@@ -11,6 +11,8 @@ import {
 } from "@/scripts/lib/account-info.js"
 import { safeHttpUrl } from "@/scripts/lib/creds.js"
 import * as AFs from "@/scripts/lib/android-fs.js"
+import { notify } from "@/scripts/lib/notify"
+import { t } from "@/scripts/lib/i18n.js"
 
 const isTauri =
   typeof window !== "undefined" &&
@@ -266,6 +268,17 @@ async function writeMetaSidecar(item) {
   }
 }
 
+function notifyDownloadComplete(item) {
+  if (!item) return
+  const title = item.title || ""
+  notify({
+    title: t("downloads.notify.complete.title") || "Download complete",
+    body: title
+      ? (t("downloads.notify.complete.body", { title }) || `${title} finished downloading.`)
+      : (t("downloads.notify.complete.bodyGeneric") || "Your download finished."),
+  }).catch(() => {})
+}
+
 async function removeMetaSidecar(path) {
   if (!isTauri || !path || AFs.isAndroidUri(path)) return
   try {
@@ -385,6 +398,7 @@ async function runDownloadAndroid(id, item, controller) {
       bytesTotal: total || received,
     })
     writeMetaSidecar(getItem(id))
+    notifyDownloadComplete(getItem(id))
   } catch (e) {
     if (controller.signal.aborted) {
       const userPaused = controller.signal.reason === "paused"
@@ -538,6 +552,7 @@ async function runDownload(id) {
     })
     lockRetryCount.delete(id)
     writeMetaSidecar(getItem(id))
+    notifyDownloadComplete(getItem(id))
   } catch (e) {
     const msg = String(e?.message || e || "Failed")
     const reason = controller.signal.reason
