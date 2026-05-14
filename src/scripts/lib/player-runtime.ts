@@ -45,6 +45,7 @@ export interface VjsLikeHandle {
   el?(): HTMLElement
   error?(): unknown
   requestFullscreen?(): Promise<void> | void
+  userActive?(active: boolean): void
 }
 
 export interface ExternalLaunchOptions {
@@ -449,12 +450,13 @@ async function mountVideoJs(
 
   async function loadTs(src: string) {
     destroyMpegts()
+    try { player.pause?.() } catch {}
+    try { player.reset() } catch {}
     const videoElement = getUnderlyingVideo()
     if (!videoElement) {
       loadHls(src)
       return
     }
-    try { player.reset() } catch {}
     const handle = await attachMpegts(videoElement, src)
     if (!handle) {
       loadHls(src)
@@ -465,6 +467,7 @@ async function mountVideoJs(
       return
     }
     activeMpegts = handle
+    try { player.hasStarted?.(true) } catch {}
   }
 
   const wrapped: VjsLikeHandle = {
@@ -548,6 +551,9 @@ async function mountVideoJs(
     },
     requestFullscreen() {
       return player.requestFullscreen?.()
+    },
+    userActive(active) {
+      try { player.userActive?.(active) } catch {}
     },
   }
   return wrapped
