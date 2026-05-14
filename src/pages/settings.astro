@@ -2587,12 +2587,10 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
   </style>
 
   <script>
-    // Settings page scroll-spy: smooth-scroll on click, active-section
-    // highlighting via IntersectionObserver, URL hash deep-link.
     {
       const sections = Array.from(
         document.querySelectorAll("section.settings-group[id]")
-      )
+      ) as HTMLElement[]
       const links = Array.from(
         document.querySelectorAll(".settings-nav-link")
       )
@@ -2605,9 +2603,16 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         else linksById.set(targetId, [link as HTMLAnchorElement])
       }
 
+      const scrollEl =
+        (document.querySelector("main.flex-1.min-h-0.overflow-y-auto") as HTMLElement | null) ??
+        document.scrollingElement ?? document.documentElement
+
       let scrollLock = false
+      let currentId = ""
 
       const setActive = (id: string) => {
+        if (id === currentId) return
+        currentId = id
         for (const [otherId, bucket] of linksById) {
           const isActive = otherId === id
           for (const link of bucket) {
@@ -2615,6 +2620,71 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
             else link.removeAttribute("aria-current")
           }
         }
+        try {
+          history.replaceState(null, "", `#${id}`)
+        } catch {}
+      }
+
+      const pickActive = (): string => {
+        if (sections.length === 0) return ""
+        const el = scrollEl as HTMLElement
+        const scrollTop = el.scrollTop
+        const clientHeight = el.clientHeight
+        const scrollHeight = el.scrollHeight
+        if (scrollTop + clientHeight >= scrollHeight - 4) {
+          return sections[sections.length - 1].id
+        }
+        const anchorY = scrollTop + clientHeight * 0.22
+        const viewportTop = scrollTop
+        const viewportBottom = scrollTop + clientHeight
+        let best = sections[0]
+        let bestDistance = Infinity
+        for (const section of sections) {
+          const top = section.offsetTop
+          const bottom = top + section.offsetHeight
+          if (bottom < viewportTop) continue
+          if (top > viewportBottom) break
+          const distance = Math.abs(top - anchorY)
+          if (distance < bestDistance) {
+            bestDistance = distance
+            best = section
+          }
+        }
+        return best.id
+      }
+
+      let rafScheduled = 0
+      const onScroll = () => {
+        if (scrollLock) return
+        if (rafScheduled) return
+        rafScheduled = requestAnimationFrame(() => {
+          rafScheduled = 0
+          setActive(pickActive())
+        })
+      }
+      scrollEl.addEventListener("scroll", onScroll, { passive: true })
+
+      const armScrollUnlock = () => {
+        const QUIET_MS = 200
+        const SAFETY_MS = 2500
+        let released = false
+        let quietTimer = 0
+        const onSettleScroll = () => arm()
+        const release = () => {
+          if (released) return
+          released = true
+          if (quietTimer) clearTimeout(quietTimer)
+          scrollEl.removeEventListener("scroll", onSettleScroll)
+          scrollLock = false
+        }
+        const arm = () => {
+          if (released) return
+          if (quietTimer) clearTimeout(quietTimer)
+          quietTimer = window.setTimeout(release, QUIET_MS)
+        }
+        scrollEl.addEventListener("scroll", onSettleScroll, { passive: true })
+        arm()
+        window.setTimeout(release, SAFETY_MS)
       }
 
       for (const link of links) {
@@ -2626,38 +2696,12 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
           event.preventDefault()
           scrollLock = true
           setActive(targetId)
-          try {
-            history.replaceState(null, "", `#${targetId}`)
-          } catch {}
           target.scrollIntoView({ behavior: "smooth", block: "start" })
-          // Release lock once smooth-scroll has settled so the observer can
-          // resume tracking. 800ms covers the longest typical animation.
-          window.setTimeout(() => {
-            scrollLock = false
-          }, 800)
+          armScrollUnlock()
         })
       }
 
-      // Active-state follows scroll. The rootMargin band marks the top 10%
-      // - 30% of the viewport as "current"; anything past that yields to
-      // the next section. Same shape macOS / Linear / Stripe use.
-      const observer = new IntersectionObserver(
-        (entries) => {
-          if (scrollLock) return
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              setActive(entry.target.id)
-              try {
-                history.replaceState(null, "", `#${entry.target.id}`)
-              } catch {}
-            }
-          }
-        },
-        { rootMargin: "-10% 0px -70% 0px" }
-      )
-      for (const section of sections) observer.observe(section)
-
-      // Deep-link from URL hash, else default to the first section.
+      // Deep-link from URL hash, else pick from current scroll position.
       const initialId =
         location.hash?.slice(1) || sections[0]?.id || ""
       if (initialId && linksById.has(initialId)) {
@@ -2669,7 +2713,13 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
               ?.scrollIntoView({ block: "start" })
           })
         }
+      } else {
+        setActive(pickActive())
       }
     }
+  </script>
+
+  <script>
+    import "@/scripts/settings/settings_effects.ts"
   </script>
 </Layout>

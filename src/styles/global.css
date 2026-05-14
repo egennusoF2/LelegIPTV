@@ -1810,6 +1810,122 @@ summary.list-none::-webkit-details-marker {
     }
 }
 
+/* ──────────────────────────────── */
+/* Settings page "instrument panel" */
+/* ──────────────────────────────── */
+@layer components {
+    [data-pill-group] {
+        position: relative;
+        isolation: isolate;
+    }
+    [data-pill-group="ready"] > .btn,
+    [data-pill-group="ready"] > button {
+        position: relative;
+        z-index: 1;
+    }
+
+    .settings-nav {
+        position: relative;
+        isolation: isolate;
+    }
+    .settings-nav[data-rail-ready] .settings-nav-link {
+        position: relative;
+        z-index: 1;
+    }
+}
+
+.overdrive-pill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: 0.75rem;
+    background: var(--color-accent-soft);
+    border: 1px solid color-mix(in oklch, var(--color-accent) 55%, transparent);
+    box-shadow:
+        0 6px 18px -10px color-mix(in oklch, var(--color-accent) 50%, transparent),
+        inset 0 0 0 1px color-mix(in oklch, var(--color-accent) 18%, transparent);
+    opacity: 0;
+    will-change: transform, width, height;
+    transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-pill-group="ready"] .btn[aria-pressed="true"] {
+    background: transparent;
+    border-color: transparent;
+    color: var(--color-accent);
+}
+[data-pill-group="ready"] .btn[aria-pressed="true"]:hover,
+[data-pill-group="ready"] .btn[aria-pressed="true"]:focus-visible {
+    background: transparent;
+    border-color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+    .overdrive-pill {
+        transition: none;
+    }
+}
+[data-perf-mode="on"] .overdrive-pill {
+    transition: none;
+}
+
+.settings-nav-rail {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: 0.5rem;
+    background: var(--color-accent-soft);
+    opacity: 0;
+    will-change: transform, width, height;
+    transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1),
+                background-color 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.settings-nav-rail[data-danger="true"] {
+    background: color-mix(in oklch, var(--color-bad) 12%, transparent);
+}
+.settings-nav[data-rail-ready] .settings-nav-link[aria-current="true"] {
+    background: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+    .settings-nav-rail {
+        transition: none;
+    }
+}
+[data-perf-mode="on"] .settings-nav-rail {
+    transition: none;
+}
+
+@keyframes settings-commit-pulse {
+    0% {
+        box-shadow:
+            0 0 0 0 color-mix(in oklch, var(--color-accent) 0%, transparent),
+            0 0 0 0 color-mix(in oklch, var(--color-accent) 0%, transparent);
+    }
+    22% {
+        box-shadow:
+            0 0 0 2px color-mix(in oklch, var(--color-accent) 60%, transparent),
+            0 0 28px 2px color-mix(in oklch, var(--color-accent) 22%, transparent);
+    }
+    100% {
+        box-shadow:
+            0 0 0 0 transparent,
+            0 0 0 0 transparent;
+    }
+}
+.settings-commit-pulse {
+    animation: settings-commit-pulse 720ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+    .settings-commit-pulse {
+        animation: none;
+    }
+}
+[data-perf-mode="on"] .settings-commit-pulse {
+    animation: none;
+}
+
 .movie-card {
     transition:
         transform 280ms cubic-bezier(0.16, 1, 0.3, 1),
