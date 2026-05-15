@@ -379,3 +379,44 @@
     display: none;
   }
 }
+
+[data-embed="true"] header.sticky,
+[data-embed="true"] main > footer,
+[data-embed="true"] .reading-progress {
+  display: none;
+}
+[data-embed="true"] body {
+  --nav-h: 0px;
+}
+[data-embed="true"] .docs-sidebar {
+  position: static;
+  inset: auto;
+  width: 100%;
+  translate: 0;
+  transform: none;
+  border-left: 0;
+  background: transparent;
+  padding: 0.5rem 0 1.5rem;
+  box-shadow: none;
+  max-height: none;
+  overflow: visible;
+}
+[data-embed="true"] .docs-sidebar [data-menu-close] {
+  display: none;
+}
+[data-embed="true"] .sidebar-scrim {
+  display: none;
+}
+@media (min-width: 48em) {
+  [data-embed="true"] .docs-sidebar {
+    position: sticky;
+    top: 0.5rem;
+    padding: 0;
+    padding-right: 0.5rem;
+    max-height: calc(100vh - 1rem);
+    overflow-y: auto;
+  }
+}
+[data-embed="true"] main h1 {
+  margin-top: 0;
+}

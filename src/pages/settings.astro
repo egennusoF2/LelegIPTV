@@ -33,7 +33,7 @@ import {
   IconPlayerPlay,
   IconAppWindow,
   IconBook,
-  IconExternalLink,
+  IconRocket,
 } from "@tabler/icons-svelte"
 import HiddenCategoriesEditor from "@/components/HiddenCategoriesEditor.svelte"
 import LocalePicker from "@/components/LocalePicker.svelte"
@@ -661,21 +661,15 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <a
-            href="https://infinitel8p.github.io/Extreme-InfiniTV/"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-external
+            href="/docs"
             class="btn justify-start sm:justify-center">
             <IconBook aria-hidden="true" class="btn-icon" />
             <span data-i18n="settings.help.openDocs">Open documentation</span>
           </a>
           <a
-            href="https://infinitel8p.github.io/Extreme-InfiniTV/getting-started/"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-external
+            href="/docs?p=getting-started"
             class="btn justify-start sm:justify-center">
-            <IconExternalLink aria-hidden="true" class="btn-icon" />
+            <IconRocket aria-hidden="true" class="btn-icon" />
             <span data-i18n="settings.help.openQuickStart">Quick start</span>
           </a>
         </div>

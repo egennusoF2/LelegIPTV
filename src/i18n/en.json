@@ -810,6 +810,8 @@
   "settings.help.docsIntro": "Step-by-step guides for sign-in, external players, the keyboard and D-pad bindings, and the most common things people get stuck on.",
   "settings.help.openDocs": "Open documentation",
   "settings.help.openQuickStart": "Quick start",
+  "docs.loading": "Loading documentation…",
+  "docs.frameTitle": "Extreme InfiniTV documentation",
   "settings.help.title": "Found a bug or have a suggestion?",
   "settings.help.intro": "Bug reports, feature requests, questions, and general feedback all go to GitHub - search existing issues first, or pick a template and open a new one.",
   "settings.help.reportIssue": "Report a bug",

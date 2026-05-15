@@ -105,9 +105,18 @@ const editUrl = `https://github.com/infinitel8p/Extreme-InfiniTV/blob/main/docs-
     <script is:inline>
       (() => {
         try {
-          const saved = localStorage.getItem("xt-docs-theme")
-          if (saved === "light" || saved === "dark") {
-            document.documentElement.setAttribute("data-theme", saved)
+          const params = new URLSearchParams(window.location.search)
+          if (params.get("embed") === "1") {
+            document.documentElement.setAttribute("data-embed", "true")
+          }
+          const themeFromQuery = params.get("theme")
+          if (themeFromQuery === "light" || themeFromQuery === "dark") {
+            document.documentElement.setAttribute("data-theme", themeFromQuery)
+          } else {
+            const saved = localStorage.getItem("xt-docs-theme")
+            if (saved === "light" || saved === "dark") {
+              document.documentElement.setAttribute("data-theme", saved)
+            }
           }
         } catch {}
       })()
@@ -142,6 +151,49 @@ const editUrl = `https://github.com/infinitel8p/Extreme-InfiniTV/blob/main/docs-
     </div>
 
     <script is:inline>
+      (() => {
+        if (document.documentElement.getAttribute("data-embed") !== "true") return
+        const here = new URL(window.location.href)
+        const baseHref = (document.documentElement.dataset.docsBase || "/").replace(/\/$/, "") + "/"
+
+        const isInternalHref = (href) => {
+          if (!href) return false
+          if (href.startsWith("#")) return false
+          try {
+            const target = new URL(href, here)
+            return target.origin === here.origin && target.pathname.startsWith(baseHref)
+          } catch {
+            return false
+          }
+        }
+
+        const rewriteAnchors = (root) => {
+          root.querySelectorAll("a[href]").forEach((anchor) => {
+            if (anchor.dataset.embedRewritten === "1") return
+            if (anchor.target === "_blank") return
+            const href = anchor.getAttribute("href")
+            if (!isInternalHref(href)) return
+            try {
+              const url = new URL(href, here)
+              url.searchParams.set("embed", "1")
+              const theme = document.documentElement.getAttribute("data-theme")
+              if (theme === "light" || theme === "dark") url.searchParams.set("theme", theme)
+              anchor.setAttribute("href", url.pathname + url.search + url.hash)
+              anchor.dataset.embedRewritten = "1"
+            } catch {}
+          })
+        }
+        rewriteAnchors(document)
+
+        window.addEventListener("message", (event) => {
+          const data = event.data
+          if (!data || typeof data !== "object") return
+          if (data.type === "xt-docs:theme" && (data.theme === "light" || data.theme === "dark")) {
+            document.documentElement.setAttribute("data-theme", data.theme)
+          }
+        })
+      })();
+
       (() => {
         const toggleBtn = document.querySelector("[data-menu-toggle]")
         const closeBtn = document.querySelector("[data-menu-close]")
