@@ -205,6 +205,7 @@ input[type="search"]::-webkit-search-decoration {
     scroll-padding-inline: 0.5rem;
     scrollbar-width: thin;
     scrollbar-color: var(--color-line) transparent;
+    scrollbar-gutter: stable;
 }
 
 /* ────────────────────────────── */
