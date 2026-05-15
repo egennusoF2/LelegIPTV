@@ -323,7 +323,9 @@ export function mountCategoryPicker(
         ev.preventDefault()
         const pid = opts.getActivePlaylistId()
         if (!pid) return
-        setCategoryAllowed(pid, resolvedKind(), val, !checked)
+        const currentlyChecked =
+          (ev.currentTarget as HTMLElement).getAttribute("aria-checked") === "true"
+        setCategoryAllowed(pid, resolvedKind(), val, !currentlyChecked)
       })
     }
 
