@@ -1,5 +1,6 @@
 {
   "productName": "Extreme InfiniTV",
+  "mainBinaryName": "extreme-infinitv",
   "version": "1.6.0",
   "identifier": "com.infinitel8p.xtream",
   "build": {
