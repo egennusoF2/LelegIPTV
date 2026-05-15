@@ -41,6 +41,49 @@ import LocalePicker from "@/components/LocalePicker.svelte"
 import FavoritesReorder from "@/components/FavoritesReorder.svelte"
 import HubStripsEditor from "@/components/HubStripsEditor.svelte"
 import PlayerPicker from "@/components/PlayerPicker.svelte"
+
+interface NavCard { id: string; labelKey: string; label: string }
+interface NavSection { id: string; labelKey: string; label: string; cards: NavCard[]; danger?: boolean }
+
+const navStructure: NavSection[] = [
+  { id: "settings-playlists", labelKey: "settings.group.playlists", label: "Playlists", cards: [] },
+  { id: "settings-appearance", labelKey: "settings.group.appearance", label: "Appearance", cards: [
+    { id: "card-language",          labelKey: "settings.section.language",     label: "Language" },
+    { id: "card-display",           labelKey: "settings.section.display",      label: "Display" },
+    { id: "card-perf-mode",         labelKey: "settings.perfMode.title",       label: "Performance mode" },
+    { id: "card-hub-strips",        labelKey: "settings.hubStrips.title",      label: "Home page sections" },
+    { id: "close-behavior-section", labelKey: "settings.closeBehavior.title",  label: "Close button behavior" },
+  ]},
+  { id: "settings-watching", labelKey: "settings.group.watching", label: "Watching", cards: [
+    { id: "card-livetv-layout",       labelKey: "settings.livetvLayout.title",       label: "Live TV layout" },
+    { id: "card-progress-retention",  labelKey: "settings.progressRetention.title",  label: "Continue watching" },
+    { id: "epg-tz-section",           labelKey: "settings.epgTimezone.title",        label: "EPG time zone" },
+    { id: "playback-section",         labelKey: "settings.playback.title",           label: "Playback" },
+  ]},
+  { id: "settings-network", labelKey: "settings.group.network", label: "Network", cards: [
+    { id: "card-network",          labelKey: "settings.network.title", label: "Network" },
+    { id: "discord-rpc-section",   labelKey: "settings.discord.title", label: "Discord Rich Presence" },
+  ]},
+  { id: "settings-library", labelKey: "settings.group.library", label: "Library", cards: [
+    { id: "card-categories", labelKey: "settings.categories.title",        label: "Categories" },
+    { id: "card-favorites",  labelKey: "settings.favoritesSection.title",  label: "Favorites" },
+  ]},
+  { id: "settings-data", labelKey: "settings.group.data", label: "Data", cards: [
+    { id: "downloads-folder-section", labelKey: "settings.downloadsSection.title", label: "Downloads" },
+    { id: "card-backup",              labelKey: "settings.backup.title",           label: "Backup" },
+    { id: "card-storage",             labelKey: "settings.storage.title",          label: "Storage" },
+  ]},
+  { id: "settings-help", labelKey: "settings.group.help", label: "Help & feedback", cards: [
+    { id: "card-docs",     labelKey: "settings.help.docsTitle", label: "Read the docs" },
+    { id: "card-feedback", labelKey: "settings.nav.feedback",   label: "Send feedback" },
+  ]},
+  { id: "settings-about", labelKey: "settings.group.about", label: "About", cards: [
+    { id: "update-section",    labelKey: "settings.nav.appUpdate",  label: "App update" },
+    { id: "changelog-section", labelKey: "settings.about.whatsNew", label: "What's new" },
+  ]},
+  { id: "settings-support", labelKey: "settings.group.support", label: "Support", cards: [] },
+  { id: "settings-danger",  labelKey: "settings.group.dangerZone", label: "Danger zone", cards: [], danger: true },
+]
 ---
 
 <Layout pageTitle="Settings">
@@ -57,21 +100,41 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
 
     <div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-10">
 
+    <div class="settings-nav-scroller -mx-4 sm:-mx-6 lg:m-0 lg:contents">
     <nav
       aria-label="Settings sections"
       data-i18n-attr="aria-label:settings.nav.aria"
       class="settings-nav
-        flex flex-row gap-1 -mx-4 sm:-mx-6 px-4 sm:px-6 shrink-0
-        lg:flex-col lg:gap-0.5 lg:m-0 lg:px-0 lg:py-1
-        lg:sticky lg:top-6 lg:self-start lg:w-52">
-      <a href="#settings-playlists"   data-i18n="settings.group.playlists"  class="settings-nav-link">Playlists</a>
-      <a href="#settings-preferences" data-i18n="settings.group.preferences" class="settings-nav-link">Preferences</a>
-      <a href="#settings-data"        data-i18n="settings.group.data"       class="settings-nav-link">Data</a>
-      <a href="#settings-help"        data-i18n="settings.group.help"       class="settings-nav-link">Help &amp; feedback</a>
-      <a href="#settings-about"       data-i18n="settings.group.about"      class="settings-nav-link">About</a>
-      <a href="#settings-support"     data-i18n="settings.group.support"    class="settings-nav-link">Support</a>
-      <a href="#settings-danger"      data-i18n="settings.group.dangerZone" data-danger="true" class="settings-nav-link">Danger zone</a>
+        flex flex-row gap-1 px-4 sm:px-6 w-max
+        lg:flex-col lg:gap-0.5 lg:px-0 lg:py-1 lg:w-52
+        lg:sticky lg:top-6 lg:self-start">
+      {navStructure.map((section) => (
+        <Fragment>
+          <a
+            href={`#${section.id}`}
+            data-i18n={section.labelKey}
+            class="settings-nav-link"
+            {...(section.danger ? { "data-danger": "true" } : {})}>
+            {section.label}
+          </a>
+          {section.cards.length > 1 && (
+            <ul class="settings-subnav hidden lg:flex flex-col list-none m-0 p-0">
+              {section.cards.map((card) => (
+                <li class="m-0">
+                  <a
+                    href={`#${card.id}`}
+                    data-i18n={card.labelKey}
+                    class="settings-subnav-link">
+                    {card.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Fragment>
+      ))}
     </nav>
+    </div>
 
     <div class="settings-stack flex-1 min-w-0">
 
@@ -100,13 +163,13 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
       </div>
     </section>
 
-    <!-- Group: Preferences -->
-    <section id="settings-preferences" class="settings-group scroll-mt-8">
-      <h2 data-i18n="settings.group.preferences" class="settings-group__title">Preferences</h2>
+    <!-- Group: Appearance (language, theme/font, perf mode, home page sections, close behavior) -->
+    <section id="settings-appearance" class="settings-group scroll-mt-8">
+      <h2 data-i18n="settings.group.appearance" class="settings-group__title">Appearance</h2>
       <div class="flex flex-col gap-4">
 
         <!-- Language -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-language" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconWorld aria-hidden="true" stroke={2} />
@@ -122,7 +185,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </article>
 
         <!-- Display: theme + font scale -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-display" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconPalette aria-hidden="true" stroke={2} />
@@ -191,7 +254,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </article>
 
         <!-- Performance mode: skip decorative animations + focus-glide for low-end TV WebViews -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-perf-mode" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconBolt aria-hidden="true" stroke={2} />
@@ -231,7 +294,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </article>
 
         <!-- Home page sections: which hub strips render, and in what order. -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-hub-strips" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconLayoutDashboard aria-hidden="true" stroke={2} />
@@ -289,8 +352,16 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
           </script>
         </article>
 
+      </div>
+    </section>
+
+    <!-- Group: Watching (Live TV layout, continue watching retention, EPG time zone, playback) -->
+    <section id="settings-watching" class="settings-group scroll-mt-8">
+      <h2 data-i18n="settings.group.watching" class="settings-group__title">Watching</h2>
+      <div class="flex flex-col gap-4">
+
         <!-- Live TV layout: EPG default + channel column width -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-livetv-layout" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconLayoutSidebar aria-hidden="true" stroke={2} />
@@ -331,7 +402,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </article>
 
         <!-- Continue watching: how long paused movies / episodes linger -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-progress-retention" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconPlayerPlay aria-hidden="true" stroke={2} />
@@ -386,8 +457,32 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
             class="text-xs text-fg-3"></div>
         </article>
 
+        <!-- Playback: in-app player + external launcher (desktop only) -->
+        <article id="playback-section" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 hidden">
+          <div class="flex items-start gap-3">
+            <span class="icon-mark">
+              <IconPlayerPlay aria-hidden="true" stroke={2} />
+            </span>
+            <div class="flex flex-col gap-1 min-w-0">
+              <h3 data-i18n="settings.playback.title" class="text-base font-semibold">Playback</h3>
+              <p data-i18n="settings.playback.helper" class="text-xs text-fg-3">
+                Choose how streams open. External players play 4K and HDR more reliably.
+              </p>
+            </div>
+          </div>
+          <PlayerPicker client:load />
+        </article>
+
+      </div>
+    </section>
+
+    <!-- Group: Network (User-Agent spoofing, Discord Rich Presence) -->
+    <section id="settings-network" class="settings-group scroll-mt-8">
+      <h2 data-i18n="settings.group.network" class="settings-group__title">Network</h2>
+      <div class="flex flex-col gap-4">
+
         <!-- Network: User-Agent spoofing -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-network" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconWifi aria-hidden="true" stroke={2} />
@@ -429,22 +524,6 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
             class="text-xs text-fg-3 transition-opacity duration-300 empty:hidden"></span>
         </article>
 
-        <!-- Playback: in-app player + external launcher (desktop only) -->
-        <article id="playback-section" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 hidden">
-          <div class="flex items-start gap-3">
-            <span class="icon-mark">
-              <IconPlayerPlay aria-hidden="true" stroke={2} />
-            </span>
-            <div class="flex flex-col gap-1 min-w-0">
-              <h3 data-i18n="settings.playback.title" class="text-base font-semibold">Playback</h3>
-              <p data-i18n="settings.playback.helper" class="text-xs text-fg-3">
-                Choose how streams open. External players play 4K and HDR more reliably.
-              </p>
-            </div>
-          </div>
-          <PlayerPicker client:load />
-        </article>
-
         <!-- Discord Rich Presence -->
         <article id="discord-rpc-section" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 hidden">
           <div class="flex items-start gap-3">
@@ -474,7 +553,49 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
       </div>
     </section>
 
-    <!-- Group: Data -->
+    <!-- Group: Library (per-playlist content curation: hidden categories, favorites order) -->
+    <section id="settings-library" class="settings-group scroll-mt-8">
+      <h2 data-i18n="settings.group.library" class="settings-group__title">Library</h2>
+      <div class="flex flex-col gap-4">
+
+        <!-- Hidden categories editor -->
+        <article id="card-categories" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
+          <div class="flex items-start gap-3">
+            <span class="icon-mark">
+              <IconFilter aria-hidden="true" stroke={2} />
+            </span>
+            <div class="flex flex-col gap-1 min-w-0">
+              <h3 data-i18n="settings.categories.title" class="text-base font-semibold">Categories</h3>
+              <p data-i18n="settings.categories.helperLong" class="text-xs text-fg-3">
+                Per-playlist mute list. Hidden categories are hidden from
+                the picker and the main grid on Live TV, Movies, and Series.
+              </p>
+            </div>
+          </div>
+          <HiddenCategoriesEditor client:load />
+        </article>
+
+        <!-- Favorites order -->
+        <article id="card-favorites" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
+          <div class="flex items-start gap-3">
+            <span class="icon-mark">
+              <IconStar aria-hidden="true" stroke={2} />
+            </span>
+            <div class="flex flex-col gap-1 min-w-0">
+              <h3 data-i18n="settings.favoritesSection.title" class="text-base font-semibold">Favorites</h3>
+              <p data-i18n="settings.favoritesSection.helperLong" class="text-xs text-fg-3">
+                Reorder your favorites per kind. The hub Favorites strip and
+                the per-page favorites filter follow this order.
+              </p>
+            </div>
+          </div>
+          <FavoritesReorder client:load />
+        </article>
+
+      </div>
+    </section>
+
+    <!-- Group: Data (downloads folder, backup, cache storage) -->
     <section id="settings-data" class="settings-group scroll-mt-8">
       <h2 data-i18n="settings.group.data" class="settings-group__title">Data</h2>
       <div class="flex flex-col gap-4">
@@ -564,7 +685,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </article>
 
         <!-- Backup / restore -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-backup" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconArchive aria-hidden="true" stroke={2} />
@@ -591,7 +712,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         </article>
 
         <!-- Storage / cache -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <article id="card-storage" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
           <div class="flex items-start gap-3">
             <span class="icon-mark">
               <IconDatabase aria-hidden="true" stroke={2} />
@@ -625,47 +746,13 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
             class="text-xs text-fg-3 transition-opacity duration-300 empty:hidden"></span>
         </article>
 
-        <!-- Hidden categories editor -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
-          <div class="flex items-start gap-3">
-            <span class="icon-mark">
-              <IconFilter aria-hidden="true" stroke={2} />
-            </span>
-            <div class="flex flex-col gap-1 min-w-0">
-              <h3 data-i18n="settings.categories.title" class="text-base font-semibold">Categories</h3>
-              <p data-i18n="settings.categories.helperLong" class="text-xs text-fg-3">
-                Per-playlist mute list. Hidden categories are hidden from
-                the picker and the main grid on Live TV, Movies, and Series.
-              </p>
-            </div>
-          </div>
-          <HiddenCategoriesEditor client:load />
-        </article>
-
-        <!-- Favorites order -->
-        <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
-          <div class="flex items-start gap-3">
-            <span class="icon-mark">
-              <IconStar aria-hidden="true" stroke={2} />
-            </span>
-            <div class="flex flex-col gap-1 min-w-0">
-              <h3 data-i18n="settings.favoritesSection.title" class="text-base font-semibold">Favorites</h3>
-              <p data-i18n="settings.favoritesSection.helperLong" class="text-xs text-fg-3">
-                Reorder your favorites per kind. The hub Favorites strip and
-                the per-page favorites filter follow this order.
-              </p>
-            </div>
-          </div>
-          <FavoritesReorder client:load />
-        </article>
-
       </div>
     </section>
 
     <!-- Group: Help & feedback -->
     <section id="settings-help" class="settings-group scroll-mt-8">
       <h2 data-i18n="settings.group.help" class="settings-group__title">Help & feedback</h2>
-      <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+      <article id="card-docs" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
         <div class="flex items-start gap-3">
           <span class="icon-mark">
             <IconBook aria-hidden="true" stroke={2} />
@@ -692,7 +779,7 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
           </a>
         </div>
       </article>
-      <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+      <article id="card-feedback" class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4 scroll-mt-6">
         <div class="flex items-start gap-3">
           <span class="icon-mark">
             <IconMail aria-hidden="true" stroke={2} />
@@ -2648,17 +2735,19 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
   </script>
 
   <style>
-    /* One nav adapts across viewports: horizontal scroll on mobile,
-       sticky vertical rail on lg+. Same items, same visual language. */
-    .settings-nav {
+    /* Mobile chip rail wraps the nav in a scroll container so the nav
+       itself can be content-width (w-max) while the wrapper is parent
+       width with overflow-x:auto. On lg+ the wrapper becomes
+       display:contents and the nav takes over as the sticky vertical
+       rail directly inside the flex-row parent. */
+    .settings-nav-scroller {
       overflow-x: auto;
+      overflow-y: hidden;
       scrollbar-width: none;
       -ms-overflow-style: none;
+      max-width: 100vw;
     }
-    .settings-nav::-webkit-scrollbar { display: none; }
-    @media (min-width: 64em) {
-      .settings-nav { overflow-x: visible; }
-    }
+    .settings-nav-scroller::-webkit-scrollbar { display: none; }
 
     /* Item styling: ghost text-only link with bg-tint hover/active. No
        border outlines - both the chip pill border and the rail's left bar
@@ -2709,16 +2798,84 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
       color: var(--color-bad);
       background: color-mix(in oklch, var(--color-bad) 10%, transparent);
     }
+
+    /* Card-level subnav (lg+ rail only). Each section's cards are listed
+       directly after its nav link in the DOM (no wrapper, so the mobile
+       horizontal chip rail keeps scrolling cleanly). Visible only when
+       the preceding section link is active. */
+    @media (min-width: 64em) {
+      .settings-subnav {
+        display: none;
+        margin: 0.1rem 0 0.6rem 0.6rem;
+        padding-left: 0.7rem;
+        border-left: 1px solid var(--color-line-soft);
+        gap: 0.05rem;
+      }
+      .settings-nav-link[aria-current="true"] + .settings-subnav {
+        display: flex;
+        flex-direction: column;
+      }
+      .settings-subnav-link {
+        position: relative;
+        display: block;
+        color: var(--color-fg-3);
+        font-size: 0.78rem;
+        line-height: 1.4;
+        font-weight: 400;
+        text-decoration: none;
+        padding: 0.3rem 0 0.3rem 0.5rem;
+        border-radius: 0.25rem;
+        transition: color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .settings-subnav-link:hover,
+      .settings-subnav-link:focus-visible {
+        color: var(--color-fg);
+      }
+      .settings-subnav-link[aria-current="true"] {
+        color: var(--color-accent);
+        font-weight: 500;
+      }
+      .settings-subnav-link[aria-current="true"]::before {
+        content: "";
+        position: absolute;
+        left: calc(-0.7rem - 1px);
+        top: 0.45rem;
+        bottom: 0.45rem;
+        width: 2px;
+        background: var(--color-accent);
+        border-radius: 1px;
+      }
+    }
   </style>
 
   <script>
     {
+      // Mobile chip rail: convert vertical mouse-wheel input into
+      // horizontal scrolling so a desktop user with a narrow window can
+      // reach off-screen chips without shift+wheel. Skipped on lg+ where
+      // the wrapper is display:contents and the rail is vertical.
+      const scroller = document.querySelector<HTMLElement>(".settings-nav-scroller")
+      if (scroller) {
+        scroller.addEventListener("wheel", (event) => {
+          if (window.matchMedia("(min-width: 64em)").matches) return
+          if (event.deltaY === 0 || event.shiftKey) return
+          // Only intercept when there's actually horizontal overflow to
+          // scroll, otherwise let the page scroll vertically.
+          if (scroller.scrollWidth <= scroller.clientWidth) return
+          event.preventDefault()
+          scroller.scrollLeft += event.deltaY
+        }, { passive: false })
+      }
+
       const sections = Array.from(
         document.querySelectorAll("section.settings-group[id]")
       ) as HTMLElement[]
       const links = Array.from(
         document.querySelectorAll(".settings-nav-link")
       )
+      const subnavLinks = Array.from(
+        document.querySelectorAll(".settings-subnav-link")
+      ) as HTMLAnchorElement[]
       const linksById = new Map<string, HTMLAnchorElement[]>()
       for (const link of links) {
         const targetId = link.getAttribute("href")?.replace("#", "")
@@ -2727,6 +2884,27 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         if (bucket) bucket.push(link as HTMLAnchorElement)
         else linksById.set(targetId, [link as HTMLAnchorElement])
       }
+      // Card subnav: bucket sub-links by their target card id and keep a
+      // map from section id to the cards it contains (in DOM order).
+      const subLinksByCardId = new Map<string, HTMLAnchorElement[]>()
+      const cardsBySectionId = new Map<string, HTMLElement[]>()
+      for (const link of subnavLinks) {
+        const cardId = link.getAttribute("href")?.replace("#", "")
+        if (!cardId) continue
+        const bucket = subLinksByCardId.get(cardId)
+        if (bucket) bucket.push(link)
+        else subLinksByCardId.set(cardId, [link])
+        const cardEl = document.getElementById(cardId)
+        if (!cardEl) continue
+        const ownerSection = cardEl.closest<HTMLElement>("section.settings-group[id]")
+        if (!ownerSection) continue
+        const cards = cardsBySectionId.get(ownerSection.id)
+        if (cards) {
+          if (!cards.includes(cardEl)) cards.push(cardEl)
+        } else {
+          cardsBySectionId.set(ownerSection.id, [cardEl])
+        }
+      }
 
       const scrollEl =
         (document.querySelector("main.flex-1.min-h-0.overflow-y-auto") as HTMLElement | null) ??
@@ -2734,6 +2912,19 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
 
       let scrollLock = false
       let currentId = ""
+      let currentCardId = ""
+
+      const setActiveCard = (cardId: string) => {
+        if (cardId === currentCardId) return
+        currentCardId = cardId
+        for (const [otherId, bucket] of subLinksByCardId) {
+          const isActive = otherId === cardId
+          for (const link of bucket) {
+            if (isActive) link.setAttribute("aria-current", "true")
+            else link.removeAttribute("aria-current")
+          }
+        }
+      }
 
       const setActive = (id: string) => {
         if (id === currentId) return
@@ -2748,6 +2939,36 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
       }
       const writeHash = (id: string) => {
         try { history.replaceState(null, "", `#${id}`) } catch {}
+      }
+
+      const pickActiveCardWithin = (sectionId: string): string => {
+        const cards = cardsBySectionId.get(sectionId)
+        if (!cards || cards.length === 0) return ""
+        const el = scrollEl as HTMLElement
+        const clientHeight = el.clientHeight
+        const containerIsRoot =
+          el === document.scrollingElement || el === document.documentElement
+        const containerRect = containerIsRoot
+          ? { top: 0, bottom: clientHeight }
+          : el.getBoundingClientRect()
+        // Same 22%-from-top anchor as the section spy.
+        const anchorY = containerRect.top + clientHeight * 0.22
+        let best = cards[0]
+        let bestDistance = Infinity
+        for (const card of cards) {
+          const rect = card.getBoundingClientRect()
+          if (rect.bottom < containerRect.top) {
+            best = card
+            continue
+          }
+          if (rect.top > containerRect.bottom) break
+          const distance = Math.abs(rect.top - anchorY)
+          if (distance < bestDistance) {
+            bestDistance = distance
+            best = card
+          }
+        }
+        return best.id
       }
 
       const pickActive = (): string => {
@@ -2790,7 +3011,9 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
         if (rafScheduled) return
         rafScheduled = requestAnimationFrame(() => {
           rafScheduled = 0
-          setActive(pickActive())
+          const nextSection = pickActive()
+          setActive(nextSection)
+          setActiveCard(pickActiveCardWithin(nextSection))
         })
       }
       scrollEl.addEventListener("scroll", onScroll, { passive: true })
@@ -2827,27 +3050,65 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
           event.preventDefault()
           scrollLock = true
           setActive(targetId)
+          // First card in this section starts as active on a section jump
+          // so the subnav doesn't lag a frame behind the scroll.
+          const firstCard = cardsBySectionId.get(targetId)?.[0]
+          setActiveCard(firstCard?.id ?? "")
           writeHash(targetId)
           target.scrollIntoView({ behavior: "smooth", block: "start" })
           armScrollUnlock()
         })
       }
 
+      // Card subnav links: scroll to the card, set both section + card
+      // active immediately so the rail and the highlight pop without
+      // waiting for the scroll-spy to catch up. If the target card is
+      // a <details>, expand it so the user lands on its content rather
+      // than its collapsed summary.
+      for (const link of subnavLinks) {
+        link.addEventListener("click", (event) => {
+          const cardId = link.getAttribute("href")?.replace("#", "")
+          if (!cardId) return
+          const cardEl = document.getElementById(cardId)
+          if (!cardEl) return
+          event.preventDefault()
+          scrollLock = true
+          const ownerSection = cardEl.closest<HTMLElement>("section.settings-group[id]")
+          if (ownerSection) setActive(ownerSection.id)
+          setActiveCard(cardId)
+          if (cardEl instanceof HTMLDetailsElement) cardEl.open = true
+          writeHash(cardId)
+          cardEl.scrollIntoView({ behavior: "smooth", block: "start" })
+          armScrollUnlock()
+        })
+      }
+
       // Deep-link from URL hash, else pick from current scroll position.
+      // Hash may target a section (`#settings-watching`) or a card
+      // (`#card-progress-retention`). Handle both.
       const hadInitialHash = !!location.hash
-      const initialId =
-        location.hash?.slice(1) || sections[0]?.id || ""
-      if (initialId && linksById.has(initialId)) {
-        setActive(initialId)
+      const initialHashId = location.hash?.slice(1) || ""
+      if (initialHashId && linksById.has(initialHashId)) {
+        setActive(initialHashId)
+        setActiveCard(pickActiveCardWithin(initialHashId))
         if (hadInitialHash) {
           requestAnimationFrame(() => {
             document
-              .getElementById(initialId)
+              .getElementById(initialHashId)
               ?.scrollIntoView({ block: "start" })
           })
         }
+      } else if (initialHashId && subLinksByCardId.has(initialHashId)) {
+        const cardEl = document.getElementById(initialHashId)
+        const ownerSection = cardEl?.closest<HTMLElement>("section.settings-group[id]")
+        if (ownerSection) setActive(ownerSection.id)
+        setActiveCard(initialHashId)
+        if (cardEl instanceof HTMLDetailsElement) cardEl.open = true
+        requestAnimationFrame(() => cardEl?.scrollIntoView({ block: "start" }))
       } else {
-        setActive(pickActive())
+        const initialSection = pickActive()
+        setActive(initialSection)
+        setActiveCard(pickActiveCardWithin(initialSection))
       }
     }
   </script>
