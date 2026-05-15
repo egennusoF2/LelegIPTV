@@ -1,0 +1,49 @@
+---
+layout: ../layouts/DocsLayout.astro
+title: "Playlists (Xtream + M3U)"
+description: "Sign in with Xtream Codes credentials or an M3U URL. Add as many playlists as you want."
+lede: "Whatever your provider sent you, paste it into one field. The app figures out the rest."
+---
+
+import Callout from "../components/Callout.astro"
+
+## Sign in
+
+The login screen has one **Server URL** field plus optional **Username** / **Password**. How you fill it in depends on what your provider gave you.
+
+### Xtream Codes
+
+If your provider sent you a host, a port, a username, and a password, fill in:
+
+- **Server URL**: the full URL with `http://` or `https://` and the port if there is one. For example `http://example-iptv.tv:8080`.
+- **Username** and **Password**: exactly as your provider sent them.
+
+<Callout type="tip">
+  Many providers also send a long "player_api.php" URL with the username and password baked in. Paste that whole URL into **Server URL** and the app auto-fills the username and password fields for you.
+</Callout>
+
+### M3U / M3U8 URL
+
+If your provider only gave you a single playlist URL (anything ending in `.m3u` or `.m3u8`, or a `get.php?...` link), paste the **whole URL** into **Server URL** and leave Username and Password blank. The app detects the M3U format and switches modes.
+
+## Multiple playlists
+
+You can add as many Xtream accounts and M3U URLs as you want. Open **Settings > Playlists** to add, rename, or remove them. Switch the active one from the sidebar.
+
+Favorites, watchlist, recents, and watch progress are tracked **per playlist** so different accounts stay separate. Favorites, Watchlist, and Continue watching also offer a combined view across all your playlists.
+
+## Hide unwanted categories
+
+Many providers ship hundreds of categories you don't want to see ("Adult", regional channels, dead links). Open **Settings > Categories** (or the filter button on Live TV / Movies / Series) to toggle which ones show up. Hidden categories stay hidden across restarts and are remembered per playlist.
+
+## EPG looks shifted
+
+If the EPG (now / next, full schedule) looks off by a few hours, your provider is sending timestamps in their own timezone rather than UTC. Open **Settings > Live TV** and adjust the **EPG offset** for the active playlist. The full schedule is on the **EPG** page in the sidebar.
+
+## Backup and restore
+
+**Settings > Backup** exports a single JSON file containing your playlists, preferences, and app settings. Import it on another device to bring everything across.
+
+<Callout type="warning">
+  The export includes your credentials in plain JSON. Treat the file like a password manager export: don't email it, don't drop it in a shared folder, and delete it from any temporary location once you've restored on the target device.
+</Callout>

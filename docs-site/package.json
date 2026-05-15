@@ -6,16 +6,25 @@
   "packageManager": "pnpm@10.31.0",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && pagefind --site dist --output-subdir pagefind",
     "preview": "astro preview",
     "astro": "astro"
   },
   "dependencies": {
+    "@astrojs/mdx": "^5.0.0",
     "@fontsource-variable/geist": "5.2.8",
+    "@tailwindcss/vite": "^4.3.0",
     "astro": "^6.3.3",
+    "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "sharp"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ]
+  },
+  "devDependencies": {
+    "pagefind": "^1.5.2"
   }
 }

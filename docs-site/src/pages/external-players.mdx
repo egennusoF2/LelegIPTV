@@ -1,0 +1,60 @@
+---
+layout: ../layouts/DocsLayout.astro
+title: "External players"
+description: "Hand off playback to MPV, VLC, or any installed Android video app."
+lede: "When the built-in player can't handle a stream, send it to MPV, VLC, or any video app you already use."
+---
+
+import Callout from "../components/Callout.astro"
+
+The built-in player works for most streams. If a channel won't play, or you'd rather watch in MPV or VLC, hand the stream off to an external player.
+
+## Desktop (Windows / macOS / Linux)
+
+Open **Settings > External players** and point the app at the player you want to use:
+
+- **MPV** - paste the path to your `mpv` executable.
+- **VLC** - paste the path to your `vlc` executable.
+
+After you set a path, an **Open in MPV** or **Open in VLC** button appears on movies, series episodes, and next to the currently-tuned channel on Live TV. Click it and the stream opens in that player. Tuning to a new channel reuses the same window instead of opening a new one.
+
+<Callout type="note">
+  If you quit MPV or VLC manually, the next handoff just opens a fresh window. You don't need to clear any cache or restart Extreme InfiniTV.
+</Callout>
+
+If something goes wrong, the toast tells you what failed:
+
+| Prefix | What it means |
+|---|---|
+| `NOT_FOUND` | The path you set doesn't exist - double-check it in Settings. |
+| `PERMISSION` | Your OS blocked the executable. |
+| `TIMEOUT` | The player didn't respond - try opening it manually once. |
+| `OTHER` | Anything else - the full error is in the toast. |
+
+## Android
+
+Tap **Open in player...** on any movie, episode, or Live TV channel. A picker shows every installed app that can play the stream - [VLC](https://play.google.com/store/apps/details?id=org.videolan.vlc), MX Player, [Just Player](https://play.google.com/store/apps/details?id=com.brouken.player), Plex, or anything else. Pick one and it starts playing.
+
+If your provider needs a specific User-Agent or Referer per channel, the app passes those to the target player. Players that read these (VLC, MX Player, Just Player) will use them; others fall back to their own defaults.
+
+## Downloaded content
+
+The **Downloads** page lets you queue movies and series episodes for offline playback. When you hit play on a finished download:
+
+- **Desktop** plays the file directly in the in-app player.
+- **Android** opens the file in your default video app (the in-app player can't play local files on Android right now).
+
+You can still hand off remote streams from the detail dialog if you'd rather use MPV, VLC, or another player.
+
+## When to use which
+
+| Use this | When |
+|---|---|
+| **In-app player** | Channel-flipping on Live TV, casual VOD, anything that already works. |
+| **MPV** | You want hardware decoding, perfect aspect ratios, or your usual MPV setup. |
+| **VLC** | A stream won't play anywhere else, or you need codec coverage. |
+| **Android picker** | You already have a video app you like and want to keep using it. |
+
+<Callout type="tip">
+  Stuck on a stream that won't play? Right-click the channel and pick **Test stream** first. If the test reports the stream is reachable, the problem is almost always a codec the in-app player can't decode - hand off to MPV or VLC and move on.
+</Callout>

@@ -5,9 +5,11 @@ description: "Install Extreme InfiniTV and add your first playlist."
 lede: "Install on your platform, sign in once, and start watching."
 ---
 
+import Callout from "../components/Callout.astro"
+
 ## Install
 
-Pick the channel that matches your device. All builds are produced from the same source and ship the same feature set.
+Pick the download that matches your device. All builds come from the same source and have the same features.
 
 | Platform | Where to get it |
 |---|---|
@@ -39,26 +41,33 @@ xattr -dr com.apple.quarantine "/Applications/Extreme InfiniTV.app"
 
 Then open the app normally. You only need to do this once per install.
 
+<Callout type="tip">
+  This is a one-time step until a notarized macOS build ships. The command is safe: it strips the `com.apple.quarantine` extended attribute that Gatekeeper sets on downloads, nothing more.
+</Callout>
+
 ## First launch
 
-1. Open the app. You land on the login screen.
-2. Pick your sign-in method:
-   - **Xtream Codes:** enter your host (with `http://` or `https://`), port, username, and password.
-   - **M3U / M3U8 URL:** paste the full playlist URL into the host field. The app detects the format automatically.
-3. The app validates the connection, fetches your channels, and drops you on the home screen.
+1. Open the app. You'll land on the login screen.
+2. Paste your **Server URL** (full URL with `http://` or `https://`, including the port if there is one).
+3. Fill in **Username** and **Password** if your provider gave you separate credentials. If they only gave you a single M3U URL, leave these blank.
+4. The app connects, loads your channels, and takes you to the home screen.
 
-Credentials are stored in your OS app-data directory on desktop and Android, and in `localStorage` on the web build. You do not need to sign in again on the next launch.
+You only need to sign in once. The app remembers your details for next time.
 
-## What you see on the home screen
+<Callout type="tip">
+  More on setting up Xtream credentials, M3U URLs, and multiple playlists in [Playlists (Xtream + M3U)](./playlists/).
+</Callout>
 
-- **Live TV** - your channel list with category filtering and inline EPG (now / next).
-- **Movies (VOD)** - poster grid with categories.
-- **Series** - poster grid with seasons and episodes.
-- **Continue watching** - a strip of partly-watched items that survives restarts.
-- **Sidebar** (desktop) or **bottom tab bar** (phone portrait) - navigation between Live TV, Movies, Series, Favorites, Watchlist, Downloads, Search, EPG, and Settings.
+## What's on the home screen
+
+- **Live TV** - your channel list, with categories and what's on now / next.
+- **Movies** - poster grid with category filtering.
+- **Series** - poster grid with seasons and episodes inside each show.
+- **Continue watching** - a strip of what you were last watching, picked up from where you left off.
+- **Sidebar** on desktop, or a **bottom tab bar** on phones, for jumping between Live TV, Movies, Series, Favorites, Watchlist, Downloads, Search, EPG, and Settings.
 
 ## Next steps
 
-- [Add another playlist](./playlists/) - the app supports any number of Xtream accounts and M3U URLs side by side.
-- [Set up an external player](./external-players/) - if you want MPV or VLC to handle playback.
-- [Learn the keyboard + D-pad bindings](./keyboard-and-d-pad/) - <kbd>Ctrl</kbd> <kbd>K</kbd> for search, <kbd>?</kbd> for the full list.
+- [Add another playlist](./playlists/) so you can run several providers side by side.
+- [Set up an external player](./external-players/) if you'd rather watch in MPV or VLC.
+- [Learn the shortcuts](./keyboard-and-d-pad/) - <kbd>Ctrl</kbd> <kbd>K</kbd> opens search, <kbd>?</kbd> opens the full list.

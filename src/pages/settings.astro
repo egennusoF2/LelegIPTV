@@ -32,6 +32,8 @@ import {
   IconBolt,
   IconPlayerPlay,
   IconAppWindow,
+  IconBook,
+  IconExternalLink,
 } from "@tabler/icons-svelte"
 import HiddenCategoriesEditor from "@/components/HiddenCategoriesEditor.svelte"
 import LocalePicker from "@/components/LocalePicker.svelte"
@@ -645,6 +647,39 @@ import PlayerPicker from "@/components/PlayerPicker.svelte"
     <!-- Group: Help & feedback -->
     <section id="settings-help" class="settings-group scroll-mt-8">
       <h2 data-i18n="settings.group.help" class="settings-group__title">Help & feedback</h2>
+      <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
+        <div class="flex items-start gap-3">
+          <span class="icon-mark">
+            <IconBook aria-hidden="true" stroke={2} />
+          </span>
+          <div class="flex flex-col gap-1 min-w-0">
+            <h3 data-i18n="settings.help.docsTitle" class="text-base font-semibold">Read the docs</h3>
+            <p data-i18n="settings.help.docsIntro" class="text-sm text-fg-2">
+              Step-by-step guides for sign-in, external players, the keyboard and D-pad bindings, and the most common things people get stuck on.
+            </p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <a
+            href="https://infinitel8p.github.io/Extreme-InfiniTV/"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-external
+            class="btn justify-start sm:justify-center">
+            <IconBook aria-hidden="true" class="btn-icon" />
+            <span data-i18n="settings.help.openDocs">Open documentation</span>
+          </a>
+          <a
+            href="https://infinitel8p.github.io/Extreme-InfiniTV/getting-started/"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-external
+            class="btn justify-start sm:justify-center">
+            <IconExternalLink aria-hidden="true" class="btn-icon" />
+            <span data-i18n="settings.help.openQuickStart">Quick start</span>
+          </a>
+        </div>
+      </article>
       <article class="icon-mark-host rounded-2xl border border-line bg-surface p-5 sm:p-6 flex flex-col gap-4">
         <div class="flex items-start gap-3">
           <span class="icon-mark">
