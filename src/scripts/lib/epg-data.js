@@ -285,7 +285,8 @@ export function parseXmlTv(xml) {
   const programmes = new Map()
   /** @type {Map<string, string>} */
   const channelNames = new Map()
-  const doc = new DOMParser().parseFromString(xml, "text/xml")
+  const sanitized = xml.replace(/<!DOCTYPE[\s\S]*?>/gi, "")
+  const doc = new DOMParser().parseFromString(sanitized, "text/xml")
   const err = doc.querySelector("parsererror")
   if (err) throw new Error("XMLTV parse error: " + err.textContent.slice(0, 200))
 

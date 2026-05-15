@@ -31,13 +31,17 @@ function parseXmlTvDate(value: string): number {
   return sign === "+" ? utc - offsetMs : utc + offsetMs
 }
 
+function stripDoctype(xml: string): string {
+  return xml.replace(/<!DOCTYPE[\s\S]*?>/gi, "")
+}
+
 function parseXmlTv(xml: string): {
   programmes: Map<string, Programme[]>
   channelNames: Map<string, string>
 } {
   const programmes = new Map<string, Programme[]>()
   const channelNames = new Map<string, string>()
-  const doc = new DOMParser().parseFromString(xml, "text/xml")
+  const doc = new DOMParser().parseFromString(stripDoctype(xml), "text/xml")
   const err = doc.querySelector("parsererror")
   if (err) {
     throw new Error(
