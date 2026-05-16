@@ -247,11 +247,11 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					<input
 						id="m3uUrl"
 						type="text"
-						placeholder="https://example.com/playlist.m3u8"
+						placeholder="example.com/playlist.m3u8"
 						class="field-input"
 					/>
 					<span data-i18n="login.field.playlistUrl.helper" class="text-xs text-fg-3 leading-relaxed">
-						Any http(s) URL that serves an M3U playlist. Extensions optional.
+						Any URL that serves an M3U playlist. Extension and scheme optional.
 					</span>
 				</label>
 			</div>
@@ -454,7 +454,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		getEntries,
 		parseXtreamUrl,
 		resolveServerScheme,
-		testM3UUrl,
+		resolveM3UScheme,
 		LOCAL_M3U_SCHEME,
 		readLocalM3UContent,
 		isTauri,
@@ -1297,23 +1297,28 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					showStatus(bestStatus, lines.join("\n"));
 				}
 			} else {
-				const url = m3uEl.value.trim();
-				if (!url) {
+				const rawUrl = m3uEl.value.trim();
+				if (!rawUrl) {
 					showStatus("unavailable", t("login.status.enterM3uUrl"));
 					return;
 				}
 				showStatus("busy", t("login.status.fetching"));
-				const r = await testM3UUrl(url);
-				if (r.status === "active") {
-					const n = r.count || 0;
+				const resolved = await resolveM3UScheme(rawUrl);
+				if (m3uEl.value.trim() !== resolved.url) m3uEl.value = resolved.url;
+				const result = resolved.test;
+				if (result.status === "active") {
+					const count = result.count || 0;
+					const swap = resolved.swapped
+						? " " + t(resolved.scheme === "http" ? "login.status.schemeSwappedHttp" : "login.status.schemeSwappedHttps")
+						: "";
 					showStatus(
 						"active",
-						t("login.status.playlistOk") + (n ? t("login.status.playlistEntries", { count: n.toLocaleString() }) : ".")
+						t("login.status.playlistOk") + (count ? t("login.status.playlistEntries", { count: count.toLocaleString() }) : ".") + swap
 					);
 				} else {
 					showStatus(
 						"unavailable",
-						t("login.status.playlistFetchFailed") + (r.message ? ` - ${r.message}` : ".") + privateHostHint(url)
+						t("login.status.playlistFetchFailed") + (result.message ? ` - ${result.message}` : ".") + privateHostHint(resolved.url)
 					);
 				}
 			}
@@ -1392,18 +1397,21 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					savedId = saved._id;
 				}
 			} else if (mode === "m3u") {
-				const url = m3uEl.value.trim();
-				if (!/^https?:\/\//i.test(url)) {
-					showStatus(
-						"unavailable",
-						t("login.status.m3uScheme")
-					);
+				const rawUrl = m3uEl.value.trim();
+				if (!rawUrl) {
+					showStatus("unavailable", t("login.status.enterM3uUrl"));
 					return;
 				}
+				// Same silent-fallback rule as Xtream: probe both schemes, save
+				// whichever the playlist actually serves under, fall back to the
+				// typed scheme (or http) when the provider is unreachable.
+				showStatus("busy", t("login.status.fetching"));
+				const resolvedM3U = await resolveM3UScheme(rawUrl);
+				if (m3uEl.value.trim() !== resolvedM3U.url) m3uEl.value = resolvedM3U.url;
 				const patch = {
 					type: "m3u",
 					title: titleEl.value.trim() || "",
-					url,
+					url: resolvedM3U.url,
 					epgUrl,
 					additionalEpgUrls,
 				};
