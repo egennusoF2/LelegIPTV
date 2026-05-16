@@ -417,6 +417,25 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 				class="hidden items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm leading-relaxed">
 			</div>
 
+			<!-- "Run full diagnostic" affordance + result panel. Hidden until the
+			     user has hit Test once; clicking the link runs the multi-step
+			     wizard in lib/diagnostic.ts and renders the step-by-step result. -->
+			<div id="diagnostic-affordance" class="hidden flex-col gap-2">
+				<button
+					id="diagnostic-run-btn"
+					type="button"
+					class="self-start inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-3.5 py-2 min-h-10 text-xs text-fg-2
+						hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:border-accent transition-colors">
+					<span data-i18n="diagnostic.runFull">Run full diagnostic</span>
+				</button>
+				<div
+					id="diagnostic-result"
+					class="hidden"
+					role="status"
+					aria-live="polite"
+					aria-atomic="false"></div>
+			</div>
+
 			<!-- Actions -->
 			<div
 				class="flex flex-wrap gap-2 pt-2 mt-2 border-t border-line">
@@ -491,6 +510,9 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	const localFileInput = $("localFileInput");
 	const localFileNameEl = $("localFileName");
 	const statusEl = $("status");
+	const diagnosticAffordance = $("diagnostic-affordance");
+	const diagnosticRunBtn = $("diagnostic-run-btn");
+	const diagnosticResultEl = $("diagnostic-result");
 	const testBtn = $("testBtn");
 	const saveBtn = $("saveBtn");
 	const pageTitle = $("page-title");
@@ -968,6 +990,11 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		// after picking and surface the result via showStatus().
 		testBtn.classList.toggle("hidden", isL);
 		clearStatus();
+		hideDiagnosticResult();
+		if (diagnosticAffordance) {
+			diagnosticAffordance.classList.add("hidden");
+			diagnosticAffordance.classList.remove("flex");
+		}
 	}
 
 	function applyTabStyles(btn, active) {
@@ -1346,8 +1373,78 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					showStatus("unavailable", t(reasonKey, params) + privateHostHint(resolved.url));
 				}
 			}
+			// After any Test result (success or failure), reveal the "Run full
+			// diagnostic" affordance. Hidden for local-m3u since there's no
+			// remote to probe step-by-step.
+			if (mode !== "local-m3u") revealDiagnosticAffordance();
 		} finally {
 			testBtn.disabled = false;
+		}
+	});
+
+	// Progressive disclosure: simple Test result first, then optional full
+	// step-by-step diagnostic on demand. Hidden until the user runs Test at
+	// least once (so it doesn't compete with the primary action).
+	function revealDiagnosticAffordance() {
+		if (!diagnosticAffordance) return;
+		diagnosticAffordance.classList.remove("hidden");
+		diagnosticAffordance.classList.add("flex");
+	}
+
+	function hideDiagnosticResult() {
+		if (!diagnosticResultEl) return;
+		diagnosticResultEl.classList.add("hidden");
+		diagnosticResultEl.replaceChildren();
+	}
+
+	// Whenever the user edits any credential field, hide the previous
+	// diagnostic result - it's now stale.
+	for (const el of [serverEl, userEl, passEl, m3uEl]) {
+		el?.addEventListener("input", hideDiagnosticResult);
+	}
+
+	diagnosticRunBtn?.addEventListener("click", async () => {
+		if (!diagnosticResultEl) return;
+		diagnosticRunBtn.setAttribute("disabled", "");
+		diagnosticRunBtn.classList.add("opacity-60");
+		diagnosticResultEl.classList.remove("hidden");
+		diagnosticResultEl.className =
+			"flex flex-col gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-3 text-sm leading-relaxed text-fg-2";
+		diagnosticResultEl.textContent = t("diagnostic.running");
+		try {
+			const { runXtreamDiagnostic, runM3UDiagnostic, renderDiagnosticInto } = await import(
+				"@/scripts/lib/diagnostic.ts"
+			);
+			// Re-render the result panel each time a step completes. The Xtream
+			// wizard can take 5+ seconds end-to-end (vod + series catalogues
+			// can be slow), so users need to see rows appearing or they'll
+			// think the app is stuck.
+			const onProgress = (partialSteps) => {
+				renderDiagnosticInto(diagnosticResultEl, {
+					steps: partialSteps,
+					verdict: "running",
+					verdictMessage: t("diagnostic.running"),
+				});
+			};
+			let result;
+			if (mode === "xtream") {
+				result = await runXtreamDiagnostic({
+					serverUrl: serverEl.value.trim(),
+					username: userEl.value.trim(),
+					password: passEl.value.trim(),
+				}, { onProgress });
+			} else if (mode === "m3u") {
+				result = await runM3UDiagnostic(m3uEl.value.trim(), { onProgress });
+			} else {
+				diagnosticResultEl.classList.add("hidden");
+				return;
+			}
+			renderDiagnosticInto(diagnosticResultEl, result);
+		} catch (error) {
+			diagnosticResultEl.textContent = String(error?.message || error);
+		} finally {
+			diagnosticRunBtn.removeAttribute("disabled");
+			diagnosticRunBtn.classList.remove("opacity-60");
 		}
 	});
 

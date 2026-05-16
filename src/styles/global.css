@@ -447,6 +447,48 @@ dialog[open]::backdrop {
         }
     }
 
+    /* Pulsing dots for the diagnostic wizard's "running" verdict. The
+     * three-dot character isn't easy to animate as ::after content, so we
+     * just fade the whole glyph. */
+    .diagnostic-spinner {
+        animation: diagnostic-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes diagnostic-pulse {
+        0%, 100% { opacity: 0.45; }
+        50% { opacity: 1; }
+    }
+
+    /* "Settle" animation for the verdict icon when the wizard transitions
+     * from running to a final result. One-shot, restrained: 240ms with the
+     * project's signature easing so the success/warning/fail icon lands
+     * rather than appearing mid-air. Matches the calm-by-default brand. */
+    .diagnostic-verdict-settle {
+        animation: diagnostic-settle 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+    @keyframes diagnostic-settle {
+        0%   { transform: scale(0.85); opacity: 0; }
+        60%  { transform: scale(1.04); opacity: 1; }
+        100% { transform: scale(1);    opacity: 1; }
+    }
+
+    /* Pop-in for the poster right-click / long-press menu. Cinema-lobby
+     * restraint - 120ms scale-from-0.97 with a fade so the menu lands at
+     * the cursor with a softness instead of snapping into existence. */
+    .poster-menu-enter {
+        animation: poster-menu-enter 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        transform-origin: top left;
+    }
+    @keyframes poster-menu-enter {
+        from { transform: scale(0.97); opacity: 0; }
+        to   { transform: scale(1);    opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .diagnostic-spinner { animation: none; }
+        .diagnostic-verdict-settle { animation: none; }
+        .poster-menu-enter { animation: none; }
+    }
+
     .pulse-ring {
         position: relative;
     }

@@ -371,9 +371,76 @@ function paintPlaylistHealthInto(panel, entry, opts = {}) {
     paintPlaylistHealthInto(panel, entry, opts)
   })
 
+  // Per-playlist "Run diagnostic" button. Shown for xtream and m3u entries
+  // (local-m3u has nothing remote to probe). Result renders inside the
+  // health panel below the existing rows so the user doesn't lose context.
+  //
+  // Reuse the previous result element across repaints (Refresh button calls
+  // paintPlaylistHealthInto again, which would otherwise drop the diagnostic
+  // panel the user just ran).
+  const supportsDiagnostic = entry.type === "xtream" || entry.type === "m3u"
+  let diagnosticResultEl = panel.querySelector("[data-diagnostic-result]")
+  if (!diagnosticResultEl) {
+    diagnosticResultEl = document.createElement("div")
+    diagnosticResultEl.setAttribute("data-diagnostic-result", "")
+    diagnosticResultEl.setAttribute("role", "status")
+    diagnosticResultEl.setAttribute("aria-live", "polite")
+    diagnosticResultEl.setAttribute("aria-atomic", "false")
+    diagnosticResultEl.className = "mt-3 hidden"
+  }
+  let diagnostic = null
+  if (supportsDiagnostic) {
+    diagnostic = document.createElement("button")
+    diagnostic.type = "button"
+    diagnostic.textContent = t("diagnostic.runFull")
+    diagnostic.className = refresh.className
+    diagnostic.addEventListener("click", async (ev) => {
+      ev.stopPropagation()
+      diagnostic.setAttribute("disabled", "")
+      diagnostic.classList.add("opacity-60")
+      diagnosticResultEl.classList.remove("hidden")
+      diagnosticResultEl.className =
+        "mt-3 flex flex-col gap-2.5 rounded-xl border border-line bg-surface px-3.5 py-3 text-sm leading-relaxed text-fg-2"
+      diagnosticResultEl.textContent = t("diagnostic.running")
+      try {
+        const { runXtreamDiagnostic, runM3UDiagnostic, renderDiagnosticInto } =
+          await import("./diagnostic.ts")
+        // Same incremental render as the login page so users see rows
+        // trickle in rather than staring at "Running…" for 10 seconds.
+        const onProgress = (partialSteps) => {
+          renderDiagnosticInto(diagnosticResultEl, {
+            steps: partialSteps,
+            verdict: "running",
+            verdictMessage: t("diagnostic.running"),
+          })
+        }
+        let result
+        if (entry.type === "xtream") {
+          result = await runXtreamDiagnostic({
+            serverUrl: entry.serverUrl,
+            username: entry.username,
+            password: entry.password,
+          }, { onProgress })
+        } else {
+          result = await runM3UDiagnostic(entry.url, { onProgress })
+        }
+        renderDiagnosticInto(diagnosticResultEl, result)
+      } catch (error) {
+        diagnosticResultEl.textContent = String(error?.message || error)
+      } finally {
+        diagnostic.removeAttribute("disabled")
+        diagnostic.classList.remove("opacity-60")
+      }
+    })
+  }
+
   const footer = document.createElement("div")
   footer.className = "mt-3 flex items-center justify-between gap-2 flex-wrap"
-  footer.appendChild(refresh)
+  const footerLeft = document.createElement("div")
+  footerLeft.className = "inline-flex items-center gap-2"
+  footerLeft.appendChild(refresh)
+  if (diagnostic) footerLeft.appendChild(diagnostic)
+  footer.appendChild(footerLeft)
 
   if (isCompact) {
     const actions = document.createElement("div")
@@ -415,5 +482,9 @@ function paintPlaylistHealthInto(panel, entry, opts = {}) {
     footer.appendChild(actions)
   }
 
-  panel.replaceChildren(list, footer)
+  if (supportsDiagnostic) {
+    panel.replaceChildren(list, footer, diagnosticResultEl)
+  } else {
+    panel.replaceChildren(list, footer)
+  }
 }

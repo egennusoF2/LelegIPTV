@@ -659,12 +659,12 @@ const navStructure: NavSection[] = [
 
           <div
             id="settings-connection-limit"
-            class="hidden flex-col gap-1.5 rounded-lg border border-line bg-surface-2/40 px-3 py-2.5 text-xs"
+            class="hidden flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-xs transition-colors"
             role="status"
             aria-live="polite">
-            <span class="flex items-center gap-1.5">
-              <span data-role="dot" class="size-2 rounded-full bg-ok shrink-0" aria-hidden="true"></span>
-              <span data-role="label" class="font-medium text-fg"></span>
+            <span class="flex items-center gap-2">
+              <span data-role="dot" class="size-2.5 rounded-full shrink-0" aria-hidden="true"></span>
+              <span data-role="label" class="font-medium"></span>
             </span>
             <span data-role="detail" class="text-fg-3 leading-relaxed"></span>
           </div>
@@ -2392,17 +2392,34 @@ const navStructure: NavSection[] = [
       const dot = connectionLimitEl.querySelector("[data-role='dot']")
       const label = connectionLimitEl.querySelector("[data-role='label']")
       const detail = connectionLimitEl.querySelector("[data-role='detail']")
-      const palette = { ok: "bg-ok", warn: "bg-warn", crit: "bg-bad" }
+      const tints = {
+        ok: { border: "border-line", bg: "bg-surface-2/40", dot: "bg-fg-3", label: "text-fg" },
+        warn: { border: "border-warn/40", bg: "bg-warn/5", dot: "bg-warn", label: "text-warn" },
+        crit: { border: "border-bad/40", bg: "bg-bad/10", dot: "bg-bad", label: "text-bad" },
+      }
+      const tint = tints[warning.level]
       const labelKey = {
         ok: "settings.connectionLimit.ok",
         warn: "settings.connectionLimit.warn",
         crit: "settings.connectionLimit.crit",
       }[warning.level]
+      const allTintClasses = [
+        "border-line", "border-warn/40", "border-bad/40",
+        "bg-surface-2/40", "bg-warn/5", "bg-bad/10",
+      ]
+      const allDotClasses = ["bg-fg-3", "bg-ok", "bg-warn", "bg-bad"]
+      const allLabelClasses = ["text-fg", "text-warn", "text-bad"]
+      for (const c of allTintClasses) connectionLimitEl.classList.remove(c)
+      connectionLimitEl.classList.add(tint.border, tint.bg)
       if (dot) {
-        dot.classList.remove("bg-ok", "bg-warn", "bg-bad")
-        dot.classList.add(palette[warning.level])
+        for (const c of allDotClasses) dot.classList.remove(c)
+        dot.classList.add(tint.dot)
       }
-      if (label) label.textContent = t(labelKey)
+      if (label) {
+        for (const c of allLabelClasses) label.classList.remove(c)
+        label.classList.add(tint.label)
+        label.textContent = t(labelKey)
+      }
       if (detail) {
         detail.textContent = t("settings.connectionLimit.detail", {
           current: String(warning.currentCons),

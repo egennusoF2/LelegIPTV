@@ -73,7 +73,9 @@ function makeItem(label: string, handler: () => void): HTMLButtonElement {
   btn.type = "button"
   btn.setAttribute("role", "menuitem")
   btn.className =
-    "w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-surface-2 focus:bg-surface-2 outline-none"
+    "w-full text-left px-3 py-2.5 min-h-11 rounded-lg text-sm " +
+    "hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-accent " +
+    "outline-none transition-colors"
   btn.textContent = label
   btn.addEventListener("click", () => {
     closeMenu()
@@ -95,7 +97,7 @@ export function openPosterMenu(opts: PosterMenuOptions): void {
   menu.id = MENU_ID
   menu.className =
     "fixed z-50 min-w-[12rem] rounded-xl border border-line bg-surface text-fg shadow-2xl " +
-    "p-1 flex flex-col gap-0.5"
+    "p-1 flex flex-col gap-0.5 poster-menu-enter"
   menu.setAttribute("role", "menu")
   menu.setAttribute(
     "aria-label",
@@ -151,6 +153,7 @@ export function openPosterMenu(opts: PosterMenuOptions): void {
             toast({ title: t("stream.toast.copied"), duration: 2200 })
           } catch (error) {
             log.warn("[xt:poster-menu] copy stream URL failed:", error)
+            toast({ title: t("toast.copyError"), variant: "warn", duration: 2800 })
           }
         })
       )
@@ -198,11 +201,6 @@ export function attachPosterContextMenu(
   cardRoot: HTMLElement,
   open: (anchor: HTMLElement, point: { x: number; y: number } | null) => void
 ): void {
-  cardRoot.addEventListener("contextmenu", (event) => {
-    event.preventDefault()
-    open(cardRoot, { x: event.clientX, y: event.clientY })
-  })
-
   let pressTimer: ReturnType<typeof setTimeout> | null = null
   let pressX = 0
   let pressY = 0
@@ -213,6 +211,13 @@ export function attachPosterContextMenu(
       pressTimer = null
     }
   }
+
+  cardRoot.addEventListener("contextmenu", (event) => {
+    event.preventDefault()
+    if (triggered) return
+    open(cardRoot, { x: event.clientX, y: event.clientY })
+  })
+
   cardRoot.addEventListener("pointerdown", (event) => {
     if (event.pointerType !== "touch") return
     triggered = false
