@@ -75,6 +75,17 @@ export interface BuildEntryCardOptions<T extends EntryLike> {
   decoratePoster?: (posterWrap: HTMLDivElement, entry: T) => void
   /** aria-label for the star button when not yet favorited. */
   starLabel?: (entry: T, fav: boolean) => string
+  /**
+   * Right-click / long-press handler. When provided, wires the shared poster
+   * context menu (`poster-menu.ts`) so users get Open / Favorite / Watchlist
+   * (and Download / Copy URL on movies). Omit to leave the card with
+   * default browser menu behaviour.
+   */
+  onContextMenu?: (
+    entry: T,
+    anchor: HTMLElement,
+    point: { x: number; y: number } | null
+  ) => void
 }
 
 const DEFAULT_STAR_LABEL = (entry: EntryLike, fav: boolean): string => {
@@ -99,6 +110,7 @@ export function buildEntryCard<T extends EntryLike>(
     metaText,
     decoratePoster,
     starLabel = DEFAULT_STAR_LABEL,
+    onContextMenu,
   } = opts
 
   const card = document.createElement("div")
@@ -237,6 +249,14 @@ export function buildEntryCard<T extends EntryLike>(
     })
   })
   card.appendChild(starBtn)
+
+  if (onContextMenu) {
+    import("@/scripts/lib/poster-menu").then(({ attachPosterContextMenu }) => {
+      attachPosterContextMenu(card, (anchor, point) =>
+        onContextMenu(entry, anchor, point)
+      )
+    })
+  }
 
   return card
 }

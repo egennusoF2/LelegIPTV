@@ -1196,10 +1196,24 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 				return t("login.status.expired") + exp;
 			case "inactive":
 				return t("login.status.inactive") + exp;
-			default:
-				return t("login.status.serverUnreachable")
-					+ (result.message ? ` - ${result.message}` : ".")
-					+ privateHostHint(serverUrl);
+			default: {
+				// Map the structured reason from classifyError to actionable copy
+				const reasonKeyMap = {
+					unreachable: "login.status.unreachable",
+					timeout: "login.status.timeout",
+					cors: "login.status.corsBlocked",
+					auth_rejected: "login.status.badCredentials",
+					not_found: "login.status.notFound",
+					rate_limited: "login.status.rateLimited",
+					server_error: "login.status.httpError",
+					http_error: "login.status.httpError",
+					bad_response: "login.status.badResponseXtream",
+					unknown: "login.status.serverUnreachable",
+				};
+				const reasonKey = (result.reason && reasonKeyMap[result.reason]) || "login.status.serverUnreachable";
+				const params = result.httpStatus != null ? { status: String(result.httpStatus) } : {};
+				return t(reasonKey, params) + privateHostHint(serverUrl);
+			}
 		}
 	}
 
@@ -1316,10 +1330,20 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 						t("login.status.playlistOk") + (count ? t("login.status.playlistEntries", { count: count.toLocaleString() }) : ".") + swap
 					);
 				} else {
-					showStatus(
-						"unavailable",
-						t("login.status.playlistFetchFailed") + (result.message ? ` - ${result.message}` : ".") + privateHostHint(resolved.url)
-					);
+					const reasonKeyMap = {
+						unreachable: "login.status.unreachable",
+						timeout: "login.status.timeout",
+						cors: "login.status.corsBlocked",
+						not_found: "login.status.notFound",
+						rate_limited: "login.status.rateLimited",
+						server_error: "login.status.httpError",
+						http_error: "login.status.httpError",
+						bad_response: "login.status.badResponseM3U",
+						unknown: "login.status.playlistFetchFailed",
+					};
+					const reasonKey = (result.reason && reasonKeyMap[result.reason]) || "login.status.playlistFetchFailed";
+					const params = result.httpStatus != null ? { status: String(result.httpStatus) } : {};
+					showStatus("unavailable", t(reasonKey, params) + privateHostHint(resolved.url));
 				}
 			}
 		} finally {

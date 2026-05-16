@@ -525,7 +525,7 @@ import {
       row.className = "px-4 py-3 flex flex-col gap-1.5"
 
       const top = document.createElement("div")
-      top.className = "flex items-center gap-3"
+      top.className = "flex items-start gap-3"
 
       const info = document.createElement("div")
       info.className = "flex flex-col min-w-0 flex-1 gap-0.5"
@@ -996,10 +996,15 @@ import {
             paintActiveRow(entry, d)
           }
         }
-        // Re-append in sort order to keep DOM in sync.
+        let prevEl: ChildNode | null = null
         for (const d of active) {
           const entry = activeRowsById.get(d.id)
-          if (entry) activeListEl.appendChild(entry.el)
+          if (!entry) continue
+          const expected = prevEl ? prevEl.nextSibling : activeListEl.firstChild
+          if (expected !== entry.el) {
+            activeListEl.insertBefore(entry.el, expected)
+          }
+          prevEl = entry.el
         }
 
         if (active.length > 0) activeSection.removeAttribute("hidden")
@@ -1034,9 +1039,15 @@ import {
               paintDoneRow(entry, d)
             }
           }
+          let prevDoneEl: ChildNode | null = null
           for (const d of done) {
             const entry = doneRowsById.get(d.id)
-            if (entry) doneListEl.appendChild(entry.el)
+            if (!entry) continue
+            const expected = prevDoneEl ? prevDoneEl.nextSibling : doneListEl.firstChild
+            if (expected !== entry.el) {
+              doneListEl.insertBefore(entry.el, expected)
+            }
+            prevDoneEl = entry.el
           }
         }
       }

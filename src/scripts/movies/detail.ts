@@ -626,6 +626,12 @@ function applyDownloadState() {
 document.addEventListener(DOWNLOADS_LIST_EVENT, applyDownloadState)
 document.addEventListener(DOWNLOAD_PROGRESS_EVENT, applyDownloadState)
 
+// The poster-grid right-click menu can deep-link here with ?download=1 to
+// auto-kick the download flow
+if (urlParams.get("download") === "1") {
+  setTimeout(() => downloadBtn?.click(), 0)
+}
+
 downloadBtn?.addEventListener("click", async () => {
   if (!movie) return
   let waited = 0

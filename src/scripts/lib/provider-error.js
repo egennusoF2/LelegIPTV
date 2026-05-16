@@ -1,5 +1,86 @@
 import { t } from "@/scripts/lib/i18n.js"
 
+/**
+ * Classify a failed provider call into a discrete reason so the UI can pick
+ * actionable copy. Returns one of:
+ *   - "unreachable"     - DNS / refused / timeout, no response came back
+ *   - "timeout"         - request was aborted by the caller's signal
+ *   - "cors"            - browser blocked the response on cross-origin grounds
+ *   - "auth_rejected"   - server answered but rejected the credentials
+ *                         (HTTP 401/403, or Xtream `user_info.auth === 0`)
+ *   - "not_found"       - HTTP 404
+ *   - "rate_limited"    - HTTP 429
+ *   - "server_error"    - HTTP 5xx
+ *   - "http_error"      - any other non-OK HTTP status
+ *   - "bad_response"    - 2xx but body wasn't parseable / didn't have the
+ *                         expected shape (parse failed, not JSON, etc.)
+ *   - "unknown"         - couldn't pin it down; `raw` carries the original
+ *                         message so the UI can surface it as a fallback
+ *
+ * Pure data - no i18n. Callers translate via `t("providerError.classify."
+ * + kind)`, passing `{status: result.httpStatus}` when set.
+ *
+ * @param {object} input
+ * @param {unknown} [input.error]      Caught error (TypeError, AbortError, etc.).
+ * @param {Response} [input.response]  Response from the failed call.
+ * @param {number} [input.httpStatus]  Explicit HTTP status (overrides response.status).
+ * @param {object} [input.payload]     Parsed response body, used to detect Xtream auth=0.
+ * @returns {{ kind: string, httpStatus?: number, raw?: string }}
+ */
+export function classifyError({ error, response, httpStatus, payload } = {}) {
+  const status = httpStatus ?? response?.status
+
+  if (payload && typeof payload === "object") {
+    const auth = payload?.user_info?.auth
+    if (auth === 0 || auth === "0") {
+      return { kind: "auth_rejected" }
+    }
+  }
+
+  if (status != null) {
+    if (status === 401 || status === 403) return { kind: "auth_rejected", httpStatus: status }
+    if (status === 404) return { kind: "not_found", httpStatus: status }
+    if (status === 429) return { kind: "rate_limited", httpStatus: status }
+    if (status >= 500 && status < 600) return { kind: "server_error", httpStatus: status }
+    if (status >= 400 && status < 600) return { kind: "http_error", httpStatus: status }
+  }
+
+  if (error) {
+    const name = (error?.name || "").toString()
+    const message = (error?.message || error || "").toString()
+    if (name === "AbortError" || /timeout|timed out/i.test(message)) {
+      return { kind: "timeout", raw: message }
+    }
+    if (/cors|access-control|cross-?origin/i.test(message)) {
+      return { kind: "cors", raw: message }
+    }
+    // TypeError "Failed to fetch" / "Load failed" / "NetworkError when attempting to fetch resource"
+    if (name === "TypeError" || /failed to fetch|load failed|networkerror|fetch failed/i.test(message)) {
+      return { kind: "unreachable", raw: message }
+    }
+    if (/json|parse|unexpected (token|end)/i.test(message)) {
+      return { kind: "bad_response", raw: message }
+    }
+    return { kind: "unknown", raw: message.slice(0, 200) }
+  }
+
+  return { kind: "unknown" }
+}
+
+/**
+ * Translate a classifyError() result into a user-facing string. Centralises the
+ * key lookup so callers don't repeat the `providerError.classify.<kind>` shape.
+ *
+ * @param {{ kind: string, httpStatus?: number, raw?: string }} classified
+ * @returns {string}
+ */
+export function describeClassifiedError(classified) {
+  if (!classified || !classified.kind) return t("providerError.classify.unknown")
+  const key = `providerError.classify.${classified.kind}`
+  const params = classified.httpStatus != null ? { status: String(classified.httpStatus) } : {}
+  return t(key, params)
+}
+
 const SIGNAL_ART = `
 <svg viewBox="0 0 96 96" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   <path d="M48 64v8" />

@@ -29,6 +29,7 @@ import {
   STAR_OUTLINE,
   STAR_FILLED,
 } from "@/scripts/lib/entry-card.js"
+import { buildMovieStreamUrl } from "@/scripts/lib/stream-urls.ts"
 
 const VOD_TTL_MS = 24 * 60 * 60 * 1000
 
@@ -166,6 +167,28 @@ function makeCard(m, idx) {
       fav
         ? `Remove ${entry.name || "movie"} from favorites`
         : `Add ${entry.name || "movie"} to favorites`,
+    onContextMenu: (entry, anchor, point) => {
+      import("@/scripts/lib/poster-menu").then(({ openPosterMenu }) => {
+        openPosterMenu({
+          kind: "vod",
+          entry,
+          activePlaylistId,
+          anchor,
+          point,
+          onOpen: () => {
+            window.location.href = `/movies/detail?id=${encodeURIComponent(entry.id)}`
+          },
+          onDownload: () => {
+            window.location.href = `/movies/detail?id=${encodeURIComponent(entry.id)}&download=1`
+          },
+          buildStreamUrl: () => {
+            if (!creds.host || !creds.user || !creds.pass) return null
+            const containerExt = (entry as any).container_extension || null
+            return buildMovieStreamUrl(creds, entry.id, containerExt)
+          },
+        })
+      })
+    },
   })
 }
 

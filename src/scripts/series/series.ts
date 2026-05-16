@@ -261,6 +261,21 @@ function makeCard(s, idx) {
       fav
         ? `Remove ${entry.name || "series"} from favorites`
         : `Add ${entry.name || "series"} to favorites`,
+    onContextMenu: (entry, anchor, point) => {
+      import("@/scripts/lib/poster-menu").then(({ openPosterMenu }) => {
+        openPosterMenu({
+          kind: "series",
+          entry,
+          activePlaylistId,
+          anchor,
+          point,
+          onOpen: () => {
+            window.location.href = `/series/detail?id=${encodeURIComponent(entry.id)}`
+          },
+          // omit single stream URL or download for series
+        })
+      })
+    },
   })
 }
 

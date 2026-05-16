@@ -657,6 +657,18 @@ const navStructure: NavSection[] = [
               class="text-xs text-fg-3 transition-opacity duration-300 empty:hidden"></span>
           </div>
 
+          <div
+            id="settings-connection-limit"
+            class="hidden flex-col gap-1.5 rounded-lg border border-line bg-surface-2/40 px-3 py-2.5 text-xs"
+            role="status"
+            aria-live="polite">
+            <span class="flex items-center gap-1.5">
+              <span data-role="dot" class="size-2 rounded-full bg-ok shrink-0" aria-hidden="true"></span>
+              <span data-role="label" class="font-medium text-fg"></span>
+            </span>
+            <span data-role="detail" class="text-fg-3 leading-relaxed"></span>
+          </div>
+
           <div class="flex flex-col gap-1.5">
             <span data-i18n="settings.downloadsFolder.concurrency" class="text-eyebrow font-medium uppercase text-fg-3">
               Concurrent downloads
@@ -1133,6 +1145,7 @@ const navStructure: NavSection[] = [
       ensureUserInfo,
       getMaxConnectionsSync,
       getActiveConnectionsSync,
+      getConnectionLimitWarning,
       USER_INFO_LOADED_EVENT,
     } from "@/scripts/lib/account-info.js"
     import { isDownloadable, scanDownloadsFolder } from "@/scripts/lib/downloads.js"
@@ -2362,6 +2375,42 @@ const navStructure: NavSection[] = [
       return getActiveConnectionsSync(active?.selectedId || "")
     }
 
+    const connectionLimitEl = document.getElementById("settings-connection-limit")
+    function syncConnectionLimitBanner() {
+      if (!connectionLimitEl) return
+      const active = JSON.parse(
+        localStorage.getItem("xt_playlists") || '{"selectedId":""}'
+      )
+      const warning = getConnectionLimitWarning(active?.selectedId || "")
+      if (!warning) {
+        connectionLimitEl.classList.add("hidden")
+        connectionLimitEl.classList.remove("flex")
+        return
+      }
+      connectionLimitEl.classList.remove("hidden")
+      connectionLimitEl.classList.add("flex")
+      const dot = connectionLimitEl.querySelector("[data-role='dot']")
+      const label = connectionLimitEl.querySelector("[data-role='label']")
+      const detail = connectionLimitEl.querySelector("[data-role='detail']")
+      const palette = { ok: "bg-ok", warn: "bg-warn", crit: "bg-bad" }
+      const labelKey = {
+        ok: "settings.connectionLimit.ok",
+        warn: "settings.connectionLimit.warn",
+        crit: "settings.connectionLimit.crit",
+      }[warning.level]
+      if (dot) {
+        dot.classList.remove("bg-ok", "bg-warn", "bg-bad")
+        dot.classList.add(palette[warning.level])
+      }
+      if (label) label.textContent = t(labelKey)
+      if (detail) {
+        detail.textContent = t("settings.connectionLimit.detail", {
+          current: String(warning.currentCons),
+          max: String(warning.maxCons),
+        })
+      }
+    }
+
     function syncConcurrencyButtons() {
       if (!concurrencyGroup) return
       const current = getDownloadConcurrency()
@@ -2390,6 +2439,7 @@ const navStructure: NavSection[] = [
       }
     }
     syncConcurrencyButtons()
+    syncConnectionLimitBanner()
     concurrencyGroup?.addEventListener("click", (e) => {
       const btn = /** @type {HTMLElement} */ (e.target).closest(
         ".dl-concurrency-btn"
@@ -2407,17 +2457,23 @@ const navStructure: NavSection[] = [
         const active = await getActiveEntry()
         if (!active) {
           syncConcurrencyButtons()
+          syncConnectionLimitBanner()
           return
         }
         const creds = await loadCreds()
         await ensureUserInfo(creds, active._id)
         syncConcurrencyButtons()
+        syncConnectionLimitBanner()
       } catch {
         syncConcurrencyButtons()
+        syncConnectionLimitBanner()
       }
     }
     refreshUserInfoForActive()
-    document.addEventListener(USER_INFO_LOADED_EVENT, syncConcurrencyButtons)
+    document.addEventListener(USER_INFO_LOADED_EVENT, () => {
+      syncConcurrencyButtons()
+      syncConnectionLimitBanner()
+    })
     document.addEventListener("xt:active-changed", refreshUserInfoForActive)
 
     const updateSectionEl = document.getElementById("update-section")

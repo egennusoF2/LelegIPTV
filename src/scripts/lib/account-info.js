@@ -76,6 +76,30 @@ export function getActiveConnectionsSync(playlistId) {
   return Number.isFinite(n) && n >= 0 ? n : 0
 }
 
+/**
+ * Compare provider-declared `active_cons` vs `max_connections` and decide
+ * whether to surface a warning. Returns null when the data isn't known yet
+ * (M3U source, cache cold, or the provider didn't expose a limit) so the
+ * caller can skip rendering entirely.
+ *
+ *   level: "ok"   - well below the cap
+ *          "warn" - >=70% of cap
+ *          "crit" - at or over cap; new streams will be rejected
+ *
+ * @param {string} playlistId
+ * @returns {null | { level: "ok"|"warn"|"crit", currentCons: number, maxCons: number }}
+ */
+export function getConnectionLimitWarning(playlistId) {
+  const maxCons = getMaxConnectionsSync(playlistId)
+  if (maxCons <= 0) return null
+  const currentCons = getActiveConnectionsSync(playlistId)
+  let level = "ok"
+  const ratio = currentCons / maxCons
+  if (currentCons >= maxCons) level = "crit"
+  else if (ratio >= 0.7) level = "warn"
+  return { level, currentCons, maxCons }
+}
+
 /** Account expiration as ms-since-epoch, or null when unknown / lifetime. */
 export function getExpirationMsSync(playlistId) {
   const info = getCachedUserInfoSync(playlistId)
