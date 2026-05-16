@@ -112,12 +112,11 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					<input
 						id="serverUrl"
 						type="text"
-						placeholder="http://example.com:8080"
+						placeholder="example.com:8080"
 						class="field-input"
 					/>
 					<span data-i18n="login.field.serverUrl.helper" class="text-xs text-fg-3 leading-relaxed">
-						Paste a full player_api.php URL to auto-fill the fields below, or enter just the
-						server URL and fill in username and password yourself.
+						Paste a full player_api.php URL to auto-fill the fields below, or enter just the hostname.
 					</span>
 				</label>
 
@@ -454,7 +453,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		updateEntry,
 		getEntries,
 		parseXtreamUrl,
-		testXtreamConnection,
+		resolveServerScheme,
 		testM3UUrl,
 		LOCAL_M3U_SCHEME,
 		readLocalM3UContent,
@@ -1204,6 +1203,31 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		}
 	}
 
+	function describeResolvedCandidate(resolved) {
+		const base = describeCandidateResult(resolved.test, resolved.serverUrl);
+		if (!resolved.swapped) return base;
+		const noteKey = resolved.scheme === "http"
+			? "login.status.schemeSwappedHttp"
+			: "login.status.schemeSwappedHttps";
+		return base + " " + t(noteKey);
+	}
+
+	function reflectResolvedUrls(primaryResolved, mirrorResolveds) {
+		if (primaryResolved && serverEl.value.trim() !== primaryResolved.serverUrl) {
+			serverEl.value = primaryResolved.serverUrl;
+		}
+		const rows = mirrorsListEl?.querySelectorAll("[data-role='mirror-row']") || [];
+		let mirrorIdx = 0;
+		for (const row of rows) {
+			const serverInput = /** @type {HTMLInputElement} */ (row.querySelector("[data-role='mirror-server']"));
+			if (!serverInput || !serverInput.value.trim()) continue;
+			const resolved = mirrorResolveds[mirrorIdx++];
+			if (resolved && serverInput.value.trim() !== resolved.serverUrl) {
+				serverInput.value = resolved.serverUrl;
+			}
+		}
+	}
+
 	// Rank candidate verdicts: active > expired > inactive > unavailable.
 	function statusRank(status) {
 		if (status === "active") return 3;
@@ -1234,15 +1258,17 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					})),
 				];
 				showStatus("busy", t("login.status.testing"));
-				const results = await Promise.all(
+				const resolveds = await Promise.all(
 					candidates.map((cand) =>
-						testXtreamConnection({
+						resolveServerScheme({
 							serverUrl: cand.serverUrl,
 							username: cand.username,
 							password: cand.password,
 						})
 					)
 				);
+				reflectResolvedUrls(resolveds[0], resolveds.slice(1));
+				const results = resolveds.map((resolved) => resolved.test);
 
 				// Single-candidate path keeps the old single-line message.
 				if (candidates.length === 1) {
@@ -1252,7 +1278,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 							: result.status === "expired" ? "expired"
 							: result.status === "inactive" ? "inactive"
 							: "unavailable",
-						describeCandidateResult(result, candidates[0].serverUrl)
+						describeResolvedCandidate(resolveds[0])
 					);
 				} else {
 					// Aggregate verdict = best candidate. Body lists each.
@@ -1266,7 +1292,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 						}
 					}
 					const lines = candidates.map((cand, idx) =>
-						`${cand.label}: ${describeCandidateResult(results[idx], cand.serverUrl)}`
+						`${cand.label}: ${describeResolvedCandidate(resolveds[idx])}`
 					);
 					showStatus(bestStatus, lines.join("\n"));
 				}
@@ -1318,24 +1344,34 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					!!editing.disableProviderEpg !== disableProviderEpg);
 
 			if (mode === "xtream") {
-				const serverUrl = serverEl.value.trim();
+				const rawServerUrl = serverEl.value.trim();
 				const username = userEl.value.trim();
 				const password = passEl.value.trim();
-				if (!serverUrl || !username || !password) {
+				if (!rawServerUrl || !username || !password) {
 					showStatus(
 						"unavailable",
 						t("login.status.allRequired")
 					);
 					return;
 				}
-				if (!/^https?:\/\/[^\s]+$/i.test(serverUrl)) {
-					showStatus(
-						"unavailable",
-						t("login.status.serverUrlScheme")
-					);
-					return;
-				}
-				const mirrors = readMirrorsFromForm();
+				// Resolve scheme for primary + mirrors before persisting so the
+				// saved entry always has a usable http(s):// prefix and we don't
+				// re-probe on every API call.
+				showStatus("busy", t("login.status.testing"));
+				const rawMirrors = readMirrorsFromForm();
+				const allResolveds = await Promise.all([
+					resolveServerScheme({ serverUrl: rawServerUrl, username, password }),
+					...rawMirrors.map((mirror) => resolveServerScheme(mirror)),
+				]);
+				const primaryResolved = allResolveds[0];
+				const mirrorResolveds = allResolveds.slice(1);
+				reflectResolvedUrls(primaryResolved, mirrorResolveds);
+				const serverUrl = primaryResolved.serverUrl;
+				const mirrors = rawMirrors.map((mirror, idx) => ({
+					serverUrl: mirrorResolveds[idx].serverUrl,
+					username: mirror.username,
+					password: mirror.password,
+				}));
 				const liveContainer = liveContainerEl?.value === "ts" ? "ts" : "m3u8";
 				const patch = {
 					type: "xtream",
