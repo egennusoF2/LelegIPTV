@@ -13,7 +13,7 @@ jobs:
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         issue-message: |
-          Thanks for opening your first issue in Extreme InfiniTV. A few things that help us help you faster:
+          Thanks for opening your first issue in Leleg IPTV. A few things that help us help you faster:
           - Include your platform (Windows / macOS / Linux / Android) and app version.
           - If it's a playback or playlist issue, mention whether you're using Xtream credentials or a plain M3U URL.
           - Logs from the in-app diagnostic dialog (right-click a channel -> "Test stream") are very useful for stream problems.

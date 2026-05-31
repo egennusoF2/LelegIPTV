@@ -2,7 +2,7 @@
 
 ## Product
 
-Extreme InfiniTV is a cross-platform IPTV player for Xtream Codes and M3U/M3U8
+Leleg IPTV is a cross-platform IPTV player for Xtream Codes and M3U/M3U8
 playlists. It supports Live TV, EPG/XMLTV, VOD movies, series, favorites,
 watchlist, Continue Watching, recently added, offline downloads, external
 players, Discord Rich Presence, TV remote navigation, multiple playlists, and

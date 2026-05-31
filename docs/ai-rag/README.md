@@ -1,7 +1,7 @@
-# Extreme InfiniTV AI RAG index
+# Leleg IPTV AI RAG index
 
 This folder is a retrieval-oriented knowledge base for AI agents working on
-Extreme InfiniTV. It is intentionally redundant: each document repeats key
+Leleg IPTV. It is intentionally redundant: each document repeats key
 terms, paths, events, and module names so semantic search can retrieve useful
 chunks without needing the whole repository in context.
 

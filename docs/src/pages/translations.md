@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/DocsLayout.astro
 title: "Translations"
-description: "Add or improve a locale for Extreme InfiniTV."
+description: "Add or improve a locale for Leleg IPTV."
 lede: "16 locales today. English is the source of truth. Missing keys fall back to English at runtime, so partial translations still ship."
 ---
 
@@ -40,7 +40,7 @@ en, es, de, fr, pt-BR, it, ru, zh, ja, tr, ar, ur, nl, hi, id, pl. Arabic and Ur
   ```
 - **Keep punctuation** consistent with the original where it matters semantically (ellipsis, question marks, sentence-ending periods).
 - **Keep ampersands and HTML entities** as-is in the source - they're already rendered correctly.
-- **Don't translate brand names** (`Extreme InfiniTV`, `Xtream`, `M3U`).
+- **Don't translate brand names** (`Leleg IPTV`, `Xtream`, `M3U`).
 - **Date and time formatting** uses the operating system locale - you don't translate those.
 
 ## Updating an existing locale

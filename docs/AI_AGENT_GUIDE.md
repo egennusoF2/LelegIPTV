@@ -1,11 +1,11 @@
 # AI agent guide
 
 This guide is for AI assistants and maintainers who need to work safely on
-Extreme InfiniTV without rediscovering the codebase from scratch.
+Leleg IPTV without rediscovering the codebase from scratch.
 
 ## Project shape
 
-Extreme InfiniTV is a cross-platform IPTV player for Xtream Codes and M3U/M3U8
+Leleg IPTV is a cross-platform IPTV player for Xtream Codes and M3U/M3U8
 playlists. The primary app is an Astro site enhanced with Svelte islands and
 browser-side TypeScript/JavaScript modules. Native desktop and Android shells
 are provided by Tauri 2.

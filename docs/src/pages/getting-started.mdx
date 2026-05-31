@@ -1,7 +1,7 @@
 ---
 layout: ../layouts/DocsLayout.astro
 title: "Getting started"
-description: "Install Extreme InfiniTV and add your first playlist."
+description: "Install Leleg IPTV and add your first playlist."
 lede: "Install on your platform, sign in once, and start watching."
 ---
 
@@ -13,10 +13,10 @@ Pick the download that matches your device. All builds come from the same source
 
 | Platform | Where to get it |
 |---|---|
-| Windows 10 / 11 | [Microsoft Store](https://apps.microsoft.com/detail/9NN162Z0WXSR) or [NSIS installer](https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest) |
-| Android phone / tablet / TV | [Google Play](https://play.google.com/store/apps/details?id=com.infinitel8p.xtream) or APK from [Releases](https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest) |
-| macOS | `.dmg` from [Releases](https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest) |
-| Linux | `.AppImage` or `.deb` / `.rpm` from [Releases](https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest) |
+| Windows 10 / 11 | [Microsoft Store](https://apps.microsoft.com/detail/9NN162Z0WXSR) or [NSIS installer](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
+| Android phone / tablet / TV | [Google Play](https://play.google.com/store/apps/details?id=com.infinitel8p.xtream) or APK from [Releases](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
+| macOS | `.dmg` from [Releases](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
+| Linux | `.AppImage` or `.deb` / `.rpm` from [Releases](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
 
 The Windows desktop build and the Linux AppImage auto-update from GitHub Releases. The Microsoft Store and Google Play handle updates themselves. Other Linux packages (deb / rpm) do not auto-update.
 
@@ -30,12 +30,12 @@ winget install --id 9NN162Z0WXSR --source msstore
 
 You get the same build as the Store, including automatic updates.
 
-### macOS: "Extreme InfiniTV.app" cannot be opened
+### macOS: "Leleg IPTV.app" cannot be opened
 
-The macOS build is not yet notarized by Apple, so Gatekeeper blocks it on first launch with a message like *"Apple could not verify Extreme InfiniTV.app is free of malware"*. After dragging the app from the `.dmg` into `/Applications`, remove the quarantine flag from a Terminal:
+The macOS build is not yet notarized by Apple, so Gatekeeper blocks it on first launch with a message like *"Apple could not verify Leleg IPTV.app is free of malware"*. After dragging the app from the `.dmg` into `/Applications`, remove the quarantine flag from a Terminal:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Extreme InfiniTV.app"
+xattr -dr com.apple.quarantine "/Applications/Leleg IPTV.app"
 ```
 
 Then open the app normally. You only need to do this once per install.

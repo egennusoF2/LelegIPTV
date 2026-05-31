@@ -1,6 +1,6 @@
 # Translation PR
 
-Thanks for translating Extreme InfiniTV!
+Thanks for translating Leleg IPTV!
 
 ## Checklist
 

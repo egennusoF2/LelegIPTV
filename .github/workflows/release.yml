@@ -154,7 +154,7 @@ jobs:
           model: openai/gpt-4o
           max-tokens: 4000
           system-prompt: |
-            You write user-facing release notes for "Extreme InfiniTV", an IPTV
+            You write user-facing release notes for "Leleg IPTV", an IPTV
             player built with Astro + Svelte 5 and Tauri 2. It ships on
             Windows desktop (NSIS + Microsoft Store), Android phone / tablet /
             TV (Google Play + APK), macOS, Linux, and the web. Audience: end
@@ -317,30 +317,30 @@ jobs:
               '',
               '| Platform | File |',
               '|----------|------|',
-              `| Windows 10/11 (recommended installer) | ${fileLink(`Extreme InfiniTV_${version}_x64-setup.exe`)} |`,
-              `| Windows (MSI alternative) | ${fileLink(`Extreme InfiniTV_${version}_x64_en-US.msi`)} |`,
-              `| macOS (Apple Silicon + Intel) | ${fileLink(`Extreme InfiniTV_${version}_universal.dmg`)} |`,
-              `| Linux Debian / Ubuntu / Mint | ${fileLink(`extreme-infinitv_${version}_amd64.deb`)} |`,
-              `| Linux Fedora / openSUSE / RHEL | ${fileLink(`extreme-infinitv-${version}-1.x86_64.rpm`)} |`,
-              `| Linux portable (any distro) | ${fileLink(`extreme-infinitv_${version}_amd64.AppImage`)} |`,
-              `| Android sideload (APK) | ${fileLink(`Extreme InfiniTV_${version}.apk`)} |`,
+              `| Windows 10/11 (recommended installer) | ${fileLink(`Leleg IPTV_${version}_x64-setup.exe`)} |`,
+              `| Windows (MSI alternative) | ${fileLink(`Leleg IPTV_${version}_x64_en-US.msi`)} |`,
+              `| macOS (Apple Silicon + Intel) | ${fileLink(`Leleg IPTV_${version}_universal.dmg`)} |`,
+              `| Linux Debian / Ubuntu / Mint | ${fileLink(`leleg-iptv_${version}_amd64.deb`)} |`,
+              `| Linux Fedora / openSUSE / RHEL | ${fileLink(`leleg-iptv-${version}-1.x86_64.rpm`)} |`,
+              `| Linux portable (any distro) | ${fileLink(`leleg-iptv_${version}_amd64.AppImage`)} |`,
+              `| Android sideload (APK) | ${fileLink(`Leleg IPTV_${version}.apk`)} |`,
               '',
               '<details><summary>What about the <code>.sig</code> files, <code>latest.json</code> and the macOS <code>.app.tar.gz</code>?</summary>',
               '',
               'You can ignore them.',
               '',
               '- `*.sig` and `latest.json` are used by the built-in auto-updater to verify each download is genuinely signed. The app downloads them on its own when checking for updates.',
-              '- `Extreme InfiniTV_universal.app.tar.gz` is the macOS update bundle consumed by the same updater. For a fresh install on macOS, use the `.dmg` instead.',
+              '- `Leleg IPTV_universal.app.tar.gz` is the macOS update bundle consumed by the same updater. For a fresh install on macOS, use the `.dmg` instead.',
               '- The `.aab` file is uploaded to Google Play and is not meant for sideloading. Use the `.apk` to install manually.',
               '',
               '</details>',
               '',
-              '<details><summary>macOS: "Extreme InfiniTV.app" cannot be opened / "Apple could not verify..."</summary>',
+              '<details><summary>macOS: "Leleg IPTV.app" cannot be opened / "Apple could not verify..."</summary>',
               '',
               'The macOS build is not yet notarized by Apple, so Gatekeeper blocks it on first launch. After dragging the app from the `.dmg` into `/Applications`, remove the quarantine flag from a Terminal:',
               '',
               '```bash',
-              'xattr -dr com.apple.quarantine "/Applications/Extreme InfiniTV.app"',
+              'xattr -dr com.apple.quarantine "/Applications/Leleg IPTV.app"',
               '```',
               '',
               'Then open the app normally. You only need to do this once per install.',
@@ -350,7 +350,7 @@ jobs:
 
             const body = [
               '<p align="center">',
-              '  <img src="https://raw.githubusercontent.com/infinitel8p/Extreme-InfiniTV/refs/heads/main/src-tauri/icons/128x128@2x.png" alt="App Icon"/>',
+              '  <img src="https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/src-tauri/icons/128x128@2x.png" alt="App Icon"/>',
               '</p>',
               '',
               ...(summary ? [`<p align="center">${summary}</p>`, ''] : []),
@@ -370,7 +370,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              name: `Extreme InfiniTV ${tag}`,
+              name: `Leleg IPTV ${tag}`,
               body,
               draft: true,
               prerelease: false,
@@ -525,8 +525,8 @@ jobs:
             find src-tauri/gen/android/app/build/outputs -type f
             exit 1
           fi
-          cp "$AAB" "$OUT/Extreme InfiniTV_${VERSION}.aab"
-          cp "$APK" "$OUT/Extreme InfiniTV_${VERSION}.apk"
+          cp "$AAB" "$OUT/Leleg IPTV_${VERSION}.aab"
+          cp "$APK" "$OUT/Leleg IPTV_${VERSION}.apk"
           echo "out=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Upload to release

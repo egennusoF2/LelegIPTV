@@ -25,20 +25,20 @@ interface Props extends Frontmatter {
 const props = Astro.props
 const { title, description, lede } = props.frontmatter ?? props
 const pageHeadings: Heading[] = (props.headings ?? []).filter((heading) => heading.depth === 2)
-const pageTitle = title === "Extreme InfiniTV docs" ? title : `${title} - Extreme InfiniTV docs`
+const pageTitle = title === "Leleg IPTV docs" ? title : `${title} - Leleg IPTV docs`
 const titleHtml = title.replace(
-  /InfiniTV/g,
-  'Infini<span class="font-extrabold tracking-[0.04em] text-accent ml-[0.05em]">TV</span>',
+  /Leleg IPTV/g,
+  'Leleg <span class="font-extrabold tracking-[0.04em] text-accent ml-[0.05em]">IPTV</span>',
 )
-const metaDescription = description ?? lede ?? "Documentation for Extreme InfiniTV, a cross-platform IPTV player for Xtream Codes and M3U playlists."
+const metaDescription = description ?? lede ?? "Documentation for Leleg IPTV, a cross-platform IPTV player for Xtream Codes and M3U playlists."
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "")
-const ogImage = "https://raw.githubusercontent.com/infinitel8p/Extreme-InfiniTV/refs/heads/main/src-tauri/icons/512x512.png"
+const ogImage = "https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/src-tauri/icons/512x512.png"
 
 const navLinks = [
   { href: `${base}/`, label: "Docs" },
-  { href: "https://github.com/infinitel8p/Extreme-InfiniTV", label: "GitHub", external: true },
-  { href: "https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest", label: "Download", external: true },
+  { href: "https://github.com/egennusoF2/LelegIPTV", label: "GitHub", external: true },
+  { href: "https://github.com/egennusoF2/LelegIPTV/releases/latest", label: "Download", external: true },
 ]
 
 const sidebarGroups = [
@@ -67,9 +67,9 @@ const sidebarGroups = [
   {
     title: "Resources",
     links: [
-      { href: "https://github.com/infinitel8p/Extreme-InfiniTV", label: "GitHub", external: true },
-      { href: "https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest", label: "Download", external: true },
-      { href: "https://github.com/infinitel8p/Extreme-InfiniTV/discussions", label: "Discussions", external: true },
+      { href: "https://github.com/egennusoF2/LelegIPTV", label: "GitHub", external: true },
+      { href: "https://github.com/egennusoF2/LelegIPTV/releases/latest", label: "Download", external: true },
+      { href: "https://github.com/egennusoF2/LelegIPTV/discussions", label: "Discussions", external: true },
     ],
   },
 ]
@@ -84,7 +84,7 @@ if (props.file) {
 } else {
   editPath = pathWithoutBase === "/" ? "/index.astro" : `${pathWithoutBase}.mdx`
 }
-const editUrl = `https://github.com/infinitel8p/Extreme-InfiniTV/blob/main/docs/src/pages${editPath}`
+const editUrl = `https://github.com/egennusoF2/LelegIPTV/blob/main/docs/src/pages${editPath}`
 ---
 
 <!doctype html>
@@ -101,7 +101,7 @@ const editUrl = `https://github.com/infinitel8p/Extreme-InfiniTV/blob/main/docs/
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:image" content={ogImage} />
-    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/infinitel8p/Extreme-InfiniTV/refs/heads/main/src-tauri/icons/32x32.png" />
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/src-tauri/icons/32x32.png" />
     <script is:inline>
       (() => {
         try {
@@ -137,12 +137,12 @@ const editUrl = `https://github.com/infinitel8p/Extreme-InfiniTV/blob/main/docs/
         <slot />
         <footer class="mt-16 flex flex-wrap items-center justify-between gap-3 border-t border-line-soft pt-6 text-[0.86rem] text-fg-3">
           <span>
-            Extreme InfiniTV
+            Leleg IPTV
             <span class="mx-2 inline-block text-line">·</span>
             GPL-3.0-or-later
           </span>
           <span>
-            <a href="https://github.com/infinitel8p/Extreme-InfiniTV/issues" rel="noopener" target="_blank" class="text-fg-2 hover:text-fg">Report an issue<span class="sr-only"> (opens in new tab)</span></a>
+            <a href="https://github.com/egennusoF2/LelegIPTV/issues" rel="noopener" target="_blank" class="text-fg-2 hover:text-fg">Report an issue<span class="sr-only"> (opens in new tab)</span></a>
             <span class="mx-2 inline-block text-line">·</span>
             <a href={editUrl} rel="noopener" target="_blank" class="text-fg-2 hover:text-fg">Edit this page<span class="sr-only"> (opens in new tab)</span></a>
           </span>
@@ -683,7 +683,7 @@ const editUrl = `https://github.com/infinitel8p/Extreme-InfiniTV/blob/main/docs/
           const style = "color:#d6469c;font-weight:600;letter-spacing:0.02em;"
           // eslint-disable-next-line no-console
           console.log(
-            "%cExtreme InfiniTV%c\nhttps://github.com/infinitel8p/Extreme-InfiniTV",
+            "%cLeleg IPTV%c\nhttps://github.com/egennusoF2/LelegIPTV",
             style,
             "color:inherit;",
           )

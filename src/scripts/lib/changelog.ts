@@ -25,7 +25,7 @@ interface CacheShape {
 }
 
 export async function fetchReleases(
-  repoSlug = "infinitel8p/Extreme-InfiniTV",
+  repoSlug = "egennusoF2/LelegIPTV",
   limit = 10
 ): Promise<ReleaseSummary[]> {
   try {

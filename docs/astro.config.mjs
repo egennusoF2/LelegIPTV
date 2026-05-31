@@ -4,8 +4,8 @@ import tailwindcss from "@tailwindcss/vite"
 import mdx from "@astrojs/mdx"
 
 export default defineConfig({
-  site: "https://infinitel8p.github.io",
-  base: "/Extreme-InfiniTV",
+  site: "https://egennusoF2.github.io",
+  base: "/LelegIPTV",
   trailingSlash: "ignore",
   build: {
     format: "directory",

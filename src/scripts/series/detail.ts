@@ -798,7 +798,7 @@ async function playEpisode(episode) {
       details: series.name || "Watching a series",
       state: `S${episode.season || currentSeason || "?"}E${episode.episode_num || "?"} · ${episode.title || ""}`.trim(),
       largeImage: series.logo || "logo",
-      largeText: series.name || "Extreme InfiniTV",
+      largeText: series.name || "Leleg IPTV",
       smallImage: "series",
       smallText: "Series",
       startTimestamp: Date.now(),

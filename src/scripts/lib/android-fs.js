@@ -4,7 +4,7 @@ const isAndroid =
   typeof navigator !== "undefined" &&
   /Android/i.test(navigator.userAgent || "")
 
-const PUBLIC_SUBDIR = "Extreme InfiniTV"
+const PUBLIC_SUBDIR = "Leleg IPTV"
 
 let modPromise = null
 async function mod() {
@@ -282,7 +282,7 @@ export async function saveJsonFile(defaultFileName, text) {
 }
 
 /**
- * Drop a JSON file directly into the public Downloads/Extreme InfiniTV/
+ * Drop a JSON file directly into the public Downloads/Leleg IPTV/
  * folder via MediaStore. No picker UI - used as a fallback when the SAF
  * "Save As" picker is unavailable on the device.
  *

@@ -7,6 +7,9 @@ import svelte from "@astrojs/svelte"
 const hmrHost = process.env.XTREAM_HMR_HOST
 
 export default defineConfig({
+  devToolbar: {
+    enabled: false,
+  },
   vite: {
     plugins: [tailwindcss(), optimizeTablerIconsImport()],
     server: {

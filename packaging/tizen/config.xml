@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <widget xmlns="http://www.w3.org/ns/widgets"
         xmlns:tizen="http://tizen.org/ns/widgets"
-        id="https://infinitel8p.github.io/extreme-infinitv"
+        id="https://egennusoF2.github.io/lelegiptv"
         version="1.6.0"
         viewmodes="maximized">
-  <tizen:application id="InfiniTV.ExtremeInfiniTV"
-                     package="InfiniTV"
+  <tizen:application id="LelegIPTV.LelegIPTV"
+                     package="LelegIPTV"
                      required_version="6.0"/>
   <tizen:profile name="tv"/>
   <tizen:setting screen-orientation="landscape"
@@ -16,9 +16,9 @@
                  hwkey-event="enable"/>
   <tizen:content src="index.html"/>
   <icon src="icon.png"/>
-  <name>Extreme InfiniTV</name>
+  <name>Leleg IPTV</name>
   <description>IPTV player for Xtream Codes and M3U playlists.</description>
-  <author href="https://github.com/infinitel8p/Extreme-InfiniTV">InfiniteL8p</author>
+  <author href="https://github.com/egennusoF2/LelegIPTV">LelegIPTV</author>
   <access origin="*" subdomains="true"/>
   <tizen:privilege name="http://tizen.org/privilege/internet"/>
 </widget>

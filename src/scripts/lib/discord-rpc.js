@@ -33,8 +33,8 @@ async function getInvoke() {
 }
 
 const PROMO_BUTTONS = [
-  { label: "Get Extreme InfiniTV", url: "https://github.com/infinitel8p/Extreme-InfiniTV/releases/latest" },
-  { label: "View on GitHub", url: "https://github.com/infinitel8p/Extreme-InfiniTV" },
+  { label: "Get Leleg IPTV", url: "https://github.com/egennusoF2/LelegIPTV/releases/latest" },
+  { label: "View on GitHub", url: "https://github.com/egennusoF2/LelegIPTV" },
 ]
 
 let lastSignature = ""
@@ -177,7 +177,7 @@ export async function setIdleRichPresence(opts) {
       details: detailsLine,
       stateText: stateLine,
       largeImage: "logo",
-      largeText: "Extreme InfiniTV",
+      largeText: "Leleg IPTV",
       smallImage: null,
       smallText: null,
       startTimestamp: null,
