@@ -12,6 +12,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 docs/preview.log
+/build/tizen-web/
 
 
 # environment variables

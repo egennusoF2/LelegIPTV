@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://infinitel8p.github.io/extreme-infinitv"
+        version="1.6.0"
+        viewmodes="maximized">
+  <tizen:application id="InfiniTV.ExtremeInfiniTV"
+                     package="InfiniTV"
+                     required_version="6.0"/>
+  <tizen:profile name="tv"/>
+  <tizen:setting screen-orientation="landscape"
+                 context-menu="disable"
+                 background-support="disable"
+                 encryption="disable"
+                 install-location="auto"
+                 hwkey-event="enable"/>
+  <tizen:content src="index.html"/>
+  <icon src="icon.png"/>
+  <name>Extreme InfiniTV</name>
+  <description>IPTV player for Xtream Codes and M3U playlists.</description>
+  <author href="https://github.com/infinitel8p/Extreme-InfiniTV">InfiniteL8p</author>
+  <access origin="*" subdomains="true"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+</widget>

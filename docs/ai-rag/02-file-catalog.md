@@ -298,7 +298,9 @@ Live TV controller. Handles virtual channel list, search/category filtering,
 numeric remote input, channel context menu, stream diagnostics, EPG panel,
 radio mode, embedded/external playback, stall/buffering overlays, favorites,
 recents, Discord presence, M3U parsing compatibility, and active playlist
-reloads. Core route script for `/livetv`.
+reloads. Core route script for `/livetv`. Also owns replay entry from
+`catchupStart`/`catchupStop` query params, starts recorded playback through
+`catchup.ts`, and retries Xtream `.m3u8` live startup as `.ts` when appropriate.
 
 ### `src/scripts/movies/movies.ts`
 
@@ -331,7 +333,10 @@ Discord, and resume routing.
 
 Full EPG grid controller. Loads live channels, XMLTV programmes, category
 filters, favorites/recents pseudo categories, manual refresh, now scroll,
-programme dialog, and grid rendering with timeline constants.
+programme dialog, and grid rendering with timeline constants. If the full XMLTV
+source cannot load, it can populate a limited Xtream grid by calling
+`get_short_epg` and then `get_simple_data_table` for visible channels. Marks
+replayable ended cells with `REC`.
 
 ### `src/scripts/epg/mapping.ts`
 
@@ -399,7 +404,8 @@ than 30 days lazily.
 
 XMLTV/EPG data layer. Resolves source URLs, fetches conditionally, detects gzip,
 parses XMLTV, merges multiple sources, stores offsets, resolves `tvg-id`, offers
-name matching and available-channel helpers, tests EPG URLs. Emits
+name matching and available-channel helpers, tests EPG URLs, and reuses cached
+parsed XMLTV when refresh fails. Emits
 `xt:epg-loaded`, `xt:epg-offset-changed`, `xt:epg-source-status`.
 
 ### `src/scripts/lib/epg-worker.ts`
@@ -437,8 +443,10 @@ behavior, and resolves stream URLs with cheap probe fallback.
 
 Playback abstraction. Detects embedded/external/Android options, builds MPV/VLC
 args, launches Tauri external players, opens Android intents, detects stream
-kind, mounts Video.js/Artplayer/HLS/mpegts, and returns a unified mounted
-player handle.
+kind, mounts Video.js/Artplayer/HLS/DASH/mpegts, and returns a unified mounted
+player handle. HLS uses Video.js/Hls.js, DASH uses `dashjs`, MPEG-TS uses
+`mpegts.js`, and native browser media falls back to the underlying video
+element.
 
 ### `src/scripts/lib/stream-urls.ts`
 
@@ -453,8 +461,15 @@ including M3U header metadata.
 ### `src/scripts/lib/m3u-parser.ts`
 
 M3U/M3U8 parser. Extracts entries, names, logos, tvg IDs, categories, radio
-markers, stream URLs, header options such as `x-tvg-url` and VLC opts. Covered
-by fixture tests.
+markers, stream URLs, header options such as `x-tvg-url` and VLC opts. Also
+parses replay metadata: `catchup`, `catchup-days`, `timeshift-days`, and
+`catchup-source`. Covered by fixture tests.
+
+### `src/scripts/lib/catchup.ts`
+
+Replay/catchup helper. Decides if an ended programme can be replayed and builds
+recorded-stream URLs for Xtream `/timeshift/...` or M3U catchup-source/append
+formats. Used by `/livetv`, `/epg`, and `programme-dialog.js` flows.
 
 ### `src/scripts/lib/downloads.js`
 
@@ -624,6 +639,9 @@ MIME choice.
 ### `src/scripts/lib/programme-dialog.js`
 
 EPG programme detail dialog with time/date/duration formatting and spatial nav.
+Shows a live watch CTA for current programmes and a recording/replay CTA for
+ended programmes when `canReplay` is provided. Replay navigation passes
+`catchupStart` and `catchupStop` to `/livetv`.
 
 ### `src/scripts/lib/confirm-dialog.ts`
 

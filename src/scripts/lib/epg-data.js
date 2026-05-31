@@ -276,6 +276,43 @@ export function parseXmlTvDate(s) {
   return sign === "+" ? utc - offsetMs : utc + offsetMs
 }
 
+function stripDoctype(xml) {
+  const start = xml.search(/<!DOCTYPE\b/i)
+  if (start < 0) return xml
+
+  let quote = ""
+  let bracketDepth = 0
+  for (let i = start + 9; i < xml.length; i++) {
+    const ch = xml[i]
+    if (quote) {
+      if (ch === quote) quote = ""
+      continue
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === "[") {
+      bracketDepth++
+      continue
+    }
+    if (ch === "]" && bracketDepth > 0) {
+      bracketDepth--
+      continue
+    }
+    if (ch === ">" && bracketDepth === 0) {
+      return xml.slice(0, start) + xml.slice(i + 1)
+    }
+  }
+  return xml.slice(0, start)
+}
+
+export function sanitizeXmlTvForDomParser(xml) {
+  return stripDoctype(String(xml || ""))
+    .replace(/<!ENTITY\b[^>]*>/gi, "")
+    .replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)[A-Za-z][\w.-]*;/g, " ")
+}
+
 /**
  * @param {string} xml
  * @returns {{ programmes: Map<string, Programme[]>, channelNames: Map<string, string> }}
@@ -285,10 +322,8 @@ export function parseXmlTv(xml) {
   const programmes = new Map()
   /** @type {Map<string, string>} */
   const channelNames = new Map()
-  if (/<!DOCTYPE\b/i.test(xml) || /<!ENTITY\b/i.test(xml)) {
-    throw new Error("XMLTV contains forbidden DOCTYPE/ENTITY declaration")
-  }
-  const doc = new DOMParser().parseFromString(xml, "text/xml")
+  const safeXml = sanitizeXmlTvForDomParser(xml)
+  const doc = new DOMParser().parseFromString(safeXml, "text/xml")
   const err = doc.querySelector("parsererror")
   if (err) throw new Error("XMLTV parse error: " + err.textContent.slice(0, 200))
 

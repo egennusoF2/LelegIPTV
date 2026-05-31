@@ -1,4 +1,4 @@
-# Native Tauri and Android guide
+# Native Tauri, Android, iOS, and Tizen guide
 
 ## Tauri startup
 
@@ -25,6 +25,14 @@ Desktop-only additions:
 Android-only addition:
 
 - `tauri-plugin-android-fs`
+
+iOS/iPadOS target:
+
+- Tauri mobile target initialized with `pnpm tauri:ios:init`.
+- Development run with `pnpm tauri:ios:dev`.
+- Release build with `pnpm tauri:ios:build`.
+- Generated Xcode project is expected under `src-tauri/gen/ios` after init.
+- Requires macOS, Xcode, Apple signing, and simulator/device validation.
 
 Setup behavior:
 
@@ -136,6 +144,16 @@ Frontend counterpart:
 - `src/scripts/lib/android-fs.js` for Android filesystem plugin use.
 - `src/layouts/Layout.astro` for Android platform/status-bar first-paint logic.
 
+Android playback notes:
+
+- Embedded playback can handle HLS, DASH, MPEG-TS, and native formats when the
+  WebView/runtime supports the required JavaScript player path.
+- Android external handoff uses MIME hints from `androidMimeForUrl()`:
+  `.m3u8` -> `application/vnd.apple.mpegurl`, `.mpd` ->
+  `application/dash+xml`, `.ts` -> `video/mp2t`, plus common file formats.
+- VLC can be launched directly when installed; otherwise the system intent
+  chooser is used.
+
 ## Capabilities and permissions
 
 Files:
@@ -170,14 +188,101 @@ Important files:
 Treat most of this as generated platform scaffolding. Edit only when platform
 behavior requires it and verify Tauri Android still builds.
 
+## iOS generated files
+
+Tauri iOS generated files are not committed until the target is initialized.
+Use:
+
+```bash
+pnpm tauri:ios:init
+pnpm tauri:ios:dev
+pnpm tauri:ios:build
+```
+
+Expected generated root after init: `src-tauri/gen/ios`.
+
+Implementation rules:
+
+- Treat `src-tauri/gen/ios` as generated platform scaffolding.
+- Keep all frontend Tauri API calls guarded for web preview and unsupported
+  mobile contexts.
+- Desktop-only Rust commands remain behind cfg gates; iOS cannot launch MPV/VLC
+  processes like desktop.
+- Validate playback on real device/simulator because HLS/DASH/native media
+  support differs from Android WebView and desktop Chromium.
+
+## Samsung Tizen TV packaging
+
+Tizen TV is not a Tauri target. It is packaged as a Web application built from
+the Astro static output.
+
+Files:
+
+- `packaging/tizen/config.xml`: W3C/Tizen Web App metadata with TV profile,
+  internet privilege, start page, app name, icon, and wildcard provider access.
+- `packaging/tizen/README.md`: packaging flow and runtime notes.
+- `scripts/prepare-tizen.mjs`: copies `dist` into `build/tizen-web`, adds
+  `config.xml`, and copies `icon.png`.
+
+Commands:
+
+```bash
+pnpm build
+pnpm tizen:prepare
+```
+
+The output root is `build/tizen-web`. Sign and package that folder with Tizen
+Studio or Tizen CLI using the Samsung certificate profile for the target TV.
+
+Runtime constraints:
+
+- No Tauri plugins, Rust commands, desktop updater, tray, or external process
+  launcher.
+- Provider network calls use the browser fetch path.
+- Playback depends on Samsung TV Web Runtime media support plus embedded JS
+  backends; verify HLS, DASH, and MPEG-TS on real TV firmware.
+- D-pad/spatial navigation, focus rings, overscan, and TV performance mode are
+  mandatory release checks.
+
 ## Native change checklist
 
-1. Identify desktop vs Android vs web behavior.
+1. Identify desktop vs Android vs iOS vs Tizen/web behavior.
 2. Update Rust command registration in `lib.rs` if adding commands.
 3. Update Tauri capabilities.
 4. Add frontend guards for unavailable native APIs.
 5. Add Rust unit tests for pure/native helper logic where possible.
 6. Run frontend tests for corresponding JS wrappers.
-7. Manually verify `pnpm tauri dev` or `pnpm tauri:android` when environment is
+7. Manually verify `pnpm tauri dev`, `pnpm tauri:android`,
+   `pnpm tauri:ios:dev`, or `pnpm tizen:prepare` when the target environment is
    available.
 
+## Release target matrix
+
+The repository can currently target these app/device families:
+
+- Web/static browser build: `pnpm build` output, useful for development and
+  hosted preview, without Tauri-only APIs.
+- Windows desktop app: Tauri desktop build, supports tray, updater, external
+  MPV/VLC, filesystem, notifications, Discord RPC.
+- macOS desktop app: same Tauri desktop capability set, with platform-specific
+  packaging/signing outside this code summary.
+- Linux desktop app: same Tauri desktop capability set, subject to distro
+  packaging requirements.
+- Android phone app: Tauri Android/WebView with Android FS bridge, intent
+  playback handoff, responsive mobile layout.
+- Android tablet app: same Android package, larger responsive layout.
+- Android TV / Google TV app: Android package plus D-pad/spatial navigation,
+  overscan settings, TV performance mode, and TV screenshot profiles.
+- Chromebook: Android/WebView package or browser/PWA-style deployment, validated
+  by Chromebook screenshot profile.
+- Android XR: Android large-screen target represented by screenshot profile;
+  verify input/focus behavior separately before release.
+- iOS/iPhone native app: Tauri iOS command path wired through `tauri:ios:*`;
+  initialize generated Xcode project with `pnpm tauri:ios:init`.
+- iPadOS native app: same Tauri iOS target, with existing iPad screenshot
+  profiles available for responsive validation.
+- Samsung Tizen TV app: Web App package path through
+  `pnpm build && pnpm tizen:prepare`, then Tizen Studio/CLI signing into `.wgt`.
+- tvOS native app.
+- Roku, Fire TV native outside Android compatibility, Samsung Tizen, LG webOS,
+  Apple Vision Pro native, Xbox, PlayStation.

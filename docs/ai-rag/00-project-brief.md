@@ -36,7 +36,36 @@ The app must work in several environments:
   notifications, external process launch.
 - Tauri Android: Android WebView, Android filesystem plugin, Android bridges,
   no desktop process launching.
+- Tauri iOS/iPadOS: mobile WebView target through `tauri ios`; no desktop
+  process launching and every native plugin call must be guarded.
+- Samsung Tizen TV: static Web App package generated from `dist`; no Tauri
+  plugins, no Rust commands, playback depends on TV browser media support.
 - Astro SSR/build/test contexts: browser globals may be unavailable.
+
+Release/device targets currently implied by the codebase:
+
+- Web/PWA-style preview in modern browsers, useful for development and hosted
+  static builds but without native Tauri privileges.
+- Desktop Tauri apps for Windows, macOS, and Linux. Desktop supports tray,
+  updater, filesystem downloads, plugin-store, notifications, Discord Rich
+  Presence, and MPV/VLC process launch.
+- Android Tauri apps for phones and tablets. Android uses WebView, Android
+  filesystem APIs, native intent handoff, status bar/device bridges, and VLC or
+  system player handoff where installed.
+- Android TV / Google TV layouts are explicitly supported by D-pad navigation,
+  overscan controls, TV performance mode, and screenshot profiles.
+- Chromebook is supported through Android/Tauri-WebView packaging assumptions
+  and responsive layout profiles.
+- Android XR is represented by screenshot profiles and should be treated as a
+  large-screen Android target.
+- iOS/iPhone and iPadOS are wired at command level through Tauri mobile scripts:
+  `pnpm tauri:ios:init`, `pnpm tauri:ios:dev`, and `pnpm tauri:ios:build`.
+  The generated Xcode project is expected under `src-tauri/gen/ios` after init
+  and requires macOS, Xcode, Apple signing, and device/simulator validation.
+- Samsung Tizen TV is wired as a Web App packaging path:
+  `pnpm build && pnpm tizen:prepare` prepares `build/tizen-web` with
+  `packaging/tizen/config.xml`; final `.wgt` signing/packaging happens with
+  Tizen Studio or Tizen CLI and a Samsung certificate profile.
 
 ## Core data ownership
 
@@ -86,4 +115,3 @@ Local M3U playlist:
 - Update i18n keys when adding visible UI text.
 - Test desktop and Android assumptions separately for native changes.
 - Before routine work on this fork, run `pnpm sync:upstream -- --check`.
-

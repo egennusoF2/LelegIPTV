@@ -31,20 +31,52 @@ function parseXmlTvDate(value: string): number {
   return sign === "+" ? utc - offsetMs : utc + offsetMs
 }
 
-function assertNoEntities(xml: string): void {
-  if (/<!DOCTYPE\b/i.test(xml) || /<!ENTITY\b/i.test(xml)) {
-    throw new Error("XMLTV contains forbidden DOCTYPE/ENTITY declaration")
+function stripDoctype(xml: string): string {
+  const match = xml.match(/<!DOCTYPE\b/i)
+  const start = match?.index ?? -1
+  if (start < 0) return xml
+
+  let quote = ""
+  let bracketDepth = 0
+  for (let i = start + 9; i < xml.length; i++) {
+    const ch = xml[i]
+    if (quote) {
+      if (ch === quote) quote = ""
+      continue
+    }
+    if (ch === "\"" || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === "[") {
+      bracketDepth++
+      continue
+    }
+    if (ch === "]" && bracketDepth > 0) {
+      bracketDepth--
+      continue
+    }
+    if (ch === ">" && bracketDepth === 0) {
+      return xml.slice(0, start) + xml.slice(i + 1)
+    }
   }
+  return xml.slice(0, start)
+}
+
+function sanitizeXmlTvForDomParser(xml: string): string {
+  return stripDoctype(String(xml || ""))
+    .replace(/<!ENTITY\b[^>]*>/gi, "")
+    .replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)[A-Za-z][\w.-]*;/g, " ")
 }
 
 function parseXmlTv(xml: string): {
   programmes: Map<string, Programme[]>
   channelNames: Map<string, string>
 } {
-  assertNoEntities(xml)
   const programmes = new Map<string, Programme[]>()
   const channelNames = new Map<string, string>()
-  const doc = new DOMParser().parseFromString(xml, "text/xml")
+  const safeXml = sanitizeXmlTvForDomParser(xml)
+  const doc = new DOMParser().parseFromString(safeXml, "text/xml")
   const err = doc.querySelector("parsererror")
   if (err) {
     throw new Error(

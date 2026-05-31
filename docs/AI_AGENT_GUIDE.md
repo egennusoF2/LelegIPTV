@@ -14,6 +14,16 @@ The app supports live TV, EPG/XMLTV schedules, VOD movies, series, offline-ish
 catalog caching, favorites, watchlist, external players, TV remote navigation,
 multiple playlists, and localized UI.
 
+Release target notes:
+
+- Desktop: Tauri builds for Windows, macOS, and Linux.
+- Android/Android TV/Chromebook/Android XR: Tauri Android plus responsive and
+  D-pad focused UI paths.
+- iOS/iPadOS: Tauri mobile command path is wired via `tauri:ios:*`; generated
+  Xcode files appear under `src-tauri/gen/ios` only after `pnpm tauri:ios:init`.
+- Samsung Tizen TV: static web package path via `pnpm build` then
+  `pnpm tizen:prepare`; final signing/packaging uses Tizen Studio/CLI.
+
 ## Stack
 
 - Package manager: `pnpm@10.31.0`, pinned in `package.json`.
@@ -33,6 +43,10 @@ pnpm test
 pnpm lint
 pnpm tauri dev
 pnpm tauri:android
+pnpm tauri:ios:init
+pnpm tauri:ios:dev
+pnpm tauri:ios:build
+pnpm tizen:prepare
 pnpm sync:upstream -- --check
 ```
 
@@ -68,6 +82,8 @@ See `docs/SYNC_UPSTREAM.md` for the full workflow and safety rules.
 - `src/styles/global.css`: Tailwind entry and global design tokens/styles.
 - `src/i18n/*.json`: locale dictionaries.
 - `src-tauri/`: Rust/Tauri host, capabilities, Android project, icons, native commands.
+- `packaging/tizen/`: Samsung Tizen TV Web App metadata and packaging notes.
+- `scripts/prepare-tizen.mjs`: copies `dist/` into a Tizen-ready project root.
 - `tests/`: Vitest coverage for pure functions and data parsers.
 - `docs/src/`: documentation website pages and components.
 - `scripts/`: repository maintenance scripts, currently upstream sync.
@@ -147,6 +163,33 @@ Parsing uses `epg-worker.ts` when workers are available, with fallback to
 main-thread parsing. Important events include `xt:epg-loaded`,
 `xt:epg-offset-changed`, and `xt:epg-source-status`.
 
+Some providers return XMLTV with `DOCTYPE` or internal `ENTITY` declarations.
+The parser sanitizes those declarations before `DOMParser` instead of rejecting
+the whole feed; unknown entity references are neutralized while standard XML
+entities remain intact. If EPG fails with a 200 XMLTV response, check parser
+sanitization before blaming provider availability.
+
+`/livetv` and `/epg` do not use exactly the same provider path. The Live TV
+side panel can use Xtream `get_short_epg` for the selected channel, while the
+full `/epg` grid first tries the larger XMLTV source (`xmltv.php` or configured
+EPG URLs). If the full XMLTV refresh fails, `epg-data.js` now falls back to any
+parsed EPG already cached, and `src/scripts/epg/epg.ts` can build a limited grid
+from Xtream per-channel EPG endpoints (`get_short_epg`, then
+`get_simple_data_table`). Do not diagnose a `/epg` error as provider downtime
+without checking this difference.
+
+Catchup/replay metadata is carried in live channel records:
+
+- Xtream: `tv_archive` and `tv_archive_duration` become `catchup: "xtream"`
+  and `catchupDays`.
+- M3U: `catchup`, `catchup-days`, `timeshift-days`, and `catchup-source` are
+  parsed by `m3u-parser.ts`.
+
+`src/scripts/lib/catchup.ts` decides whether an ended programme is replayable
+and builds either Xtream `/timeshift/...` URLs or M3U catchup-source/append
+URLs. The programme dialog receives `canReplay` and navigates to
+`/livetv?channel=<id>&catchupStart=<ms>&catchupStop=<ms>` for recorded playback.
+
 ## Playback
 
 `src/scripts/lib/player-runtime.ts` is the unified playback mount and launch
@@ -157,6 +200,12 @@ Supported backends:
 - Embedded: Video.js and Artplayer.
 - Desktop external: MPV and VLC through Tauri command `launch_external_player`.
 - Android handoff: system intent or VLC package when available.
+
+Embedded playback supports HLS (`.m3u8`), MPEG-TS (`.ts` through `mpegts.js`),
+DASH (`.mpd` through `dashjs`), and native browser media formats. URL extension
+and MIME hint are checked first; otherwise a small content-type probe chooses
+the container. Live Xtream startup has an HLS-to-TS retry path for providers or
+devices where the `.m3u8` variant stalls.
 
 Keep argument construction pure and testable. Existing tests cover MPV/VLC
 argv builders and error classification. Add tests for new backend behavior

@@ -51,9 +51,12 @@ Responsibilities:
 - Live channel virtual list.
 - Category/search filtering.
 - Embedded or external playback.
+- HLS/DASH/MPEG-TS/native embedded playback selection.
+- Xtream HLS startup retry as MPEG-TS when a live `.m3u8` stalls.
 - Channel context menu and diagnostics.
 - Radio/audio-only display.
 - EPG side panel.
+- Recorded/catchup programme playback via `catchupStart`/`catchupStop`.
 - Numeric D-pad channel selection.
 - Favorites and recents.
 
@@ -65,6 +68,9 @@ High-risk areas:
 - Virtual list row height and focus behavior.
 - Player teardown/remount when backend or active channel changes.
 - Stream URL headers and mirror fallback.
+- Container detection and teardown for HLS/DASH/MPEG-TS handles.
+- Replay URLs must not be treated as normal live recents if that would confuse
+  user history.
 - TV remote navigation and performance mode.
 
 ## Movies route
@@ -143,9 +149,11 @@ Files:
 Responsibilities:
 
 - Load live channels and XMLTV programmes.
+- Fall back to Xtream per-channel EPG when full XMLTV cannot be loaded.
 - Render timeline grid with fixed row/hour dimensions.
 - Search/filter channels and pseudo categories.
 - Open programme detail dialog.
+- Mark replayable ended programmes with `REC` and open replay CTA.
 - Refresh EPG and scroll to now.
 - Map channels manually to EPG tvg IDs.
 
@@ -161,6 +169,9 @@ High-risk areas:
 
 - Large EPG documents can be expensive; keep worker/cache path.
 - `effectiveTvgId()` can use override, direct tvg-id, or name match.
+- When per-channel EPG fallback is active, programme keys are `stream:<id>`
+  rather than `tvg-id`; do not accidentally filter them out.
+- `/livetv` side panel and `/epg` full grid use different EPG provider paths.
 - Manual mapping affects both `/epg` and `/livetv`.
 
 ## Settings route
@@ -279,4 +290,3 @@ When adding text:
 1. Add English key in `src/i18n/en.json`.
 2. Add or mirror keys in other locale JSON files.
 3. Ensure first-paint strings on global layout still use cached locale messages.
-

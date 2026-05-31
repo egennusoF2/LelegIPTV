@@ -53,6 +53,7 @@ Responsibilities:
 - Normalize provider-specific records into UI-friendly item arrays.
 - Cache results through `cache.js`.
 - Parse M3U live channels.
+- Carry catchup/replay metadata from providers into live channel records.
 - Emit warming/progress events for global UI.
 
 Exports:
@@ -84,6 +85,11 @@ Rules:
 - Use `providerFetch()` for provider/M3U network calls.
 - Use `retryWithBackoff()` for transient provider failures.
 - VOD/series return empty arrays for M3U-only playlists.
+- Filter likely M3U group-marker pseudo channels such as `----Italia----`.
+- Xtream `tv_archive` / `tv_archive_duration` map to `catchup: "xtream"` and
+  `catchupDays`.
+- M3U live records preserve `catchup`, `catchupDays`, and `catchupSource` from
+  `m3u-parser.ts`.
 
 ## `cache.js` contract
 
@@ -138,6 +144,7 @@ Responsibilities:
 - Merge primary/additional EPG sources.
 - Infer and store timezone offset.
 - Resolve channel EPG IDs using tvg-id, override, or name matching.
+- Reuse parsed XMLTV cache when a refresh fails.
 
 Important exports:
 
@@ -170,6 +177,48 @@ Rules:
 - Additional EPG sources fill missing tvg-id keys only.
 - `channelEpgMap` from preferences can override channel mapping.
 - Worker parsing is preferred but fallback must remain functional.
+- Provider XMLTV feeds may include `DOCTYPE` or inline `ENTITY` declarations.
+  The parser strips those declarations and neutralizes custom entity references
+  before `DOMParser`; standard XML entities remain supported. Do not restore a
+  hard rejection for `DOCTYPE` without another safe XML parsing strategy.
+- A full XMLTV failure is not equivalent to "no EPG". Live TV may still have
+  per-channel Xtream EPG through `get_short_epg`.
+
+## `catchup.ts` contract
+
+Path: `src/scripts/lib/catchup.ts`
+
+Responsibilities:
+
+- Determine if a channel/programme pair can be replayed.
+- Enforce replay window using `catchupDays` with a conservative default.
+- Build Xtream catchup URLs using `/timeshift/<user>/<pass>/<duration>/<start>/<stream_id>`.
+- Build M3U catchup URLs from `catchup-source` placeholders or append-style
+  `utc`/`lutc` query parameters.
+
+Important exports:
+
+- `channelHasCatchup(channel)`
+- `canReplayProgramme(channel, programme, now?)`
+- `buildCatchupStreamUrl(channel, programme, creds?)`
+
+Data contracts:
+
+- Channel fields: `id`, `url`, `catchup`, `catchupDays`, `catchupSource`.
+- Programme fields: `start`, `stop` in epoch milliseconds.
+- Xtream credentials: `host`, `port`, `user`, `pass`, optional
+  `liveContainer`.
+
+Rules:
+
+- Only ended programmes can be replayed.
+- Future/current programmes use normal live playback.
+- Xtream start is formatted as local `YYYY-MM-DD:HH-mm`.
+- Use `.ts` for timeshift only when `creds.liveContainer === "ts"`;
+  otherwise use `.m3u8`.
+
+RAG keywords: catchup, replay, registrato, timeshift, tv_archive,
+tv_archive_duration, catchup-source, catchup-days, utc, lutc.
 
 ## `preferences.js` contract
 
@@ -324,7 +373,7 @@ Responsibilities:
 - MPV/VLC argv builders.
 - Tauri external player launch.
 - Android external handoff.
-- Video.js/Artplayer/HLS/mpegts mounting.
+- Video.js/Artplayer/HLS/DASH/mpegts mounting.
 
 Important exports:
 
@@ -346,6 +395,11 @@ Rules:
 - Keep argv builders pure and tested.
 - External player paths come from `app-settings.js`.
 - Android path uses JavaScript bridge, not desktop Tauri process launch.
+- Stream kind detection prefers URL extension and MIME, then probes
+  Content-Type for extensionless URLs.
+- Embedded players support HLS `.m3u8`, DASH `.mpd` via `dashjs`, raw
+  MPEG-TS `.ts` via `mpegts.js`, and native browser media.
+- Destroy active HLS/DASH/MPEG-TS handles before switching stream types.
 
 ## `downloads.js` contract
 
@@ -400,7 +454,9 @@ popovers.
 
 `toast.ts`: toast UI.
 
-`programme-dialog.js`: EPG programme detail dialog.
+`programme-dialog.js`: EPG programme detail dialog. Shows normal "watch now"
+for live programmes and replay/recording CTA when `canReplay` is true for an
+ended programme.
 
 `confirm-dialog.ts`: reusable confirmation dialog.
 
@@ -451,4 +507,3 @@ provider stats.
 `notify.ts`: notification abstraction.
 
 `connectivity.ts`: reconnect detection and refresh behavior.
-

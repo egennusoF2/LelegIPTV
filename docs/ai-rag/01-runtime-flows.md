@@ -76,13 +76,22 @@ Files: `src/pages/livetv.astro`, `src/scripts/stream/stream.ts`,
 4. Category/search filters use normalized text and `mountCategoryPicker()`.
 5. Selecting a channel builds a stream URL. Xtream URLs use
    `resolveStreamUrl()` so mirror probing can switch to a working domain.
-6. Headers from M3U `#EXTVLCOPT` or provider settings are applied by
+6. Xtream live defaults to `.m3u8` unless the playlist live container is `ts`.
+   A startup sentinel retries stalled `.m3u8` live playback as `.ts` when the
+   stream is Xtream and no direct M3U URL is involved.
+7. Headers from M3U `#EXTVLCOPT` or provider settings are applied by
    `applyStreamHeaders()`.
-7. `mountPlayer()` returns embedded Video.js/Artplayer handle or external
+8. `mountPlayer()` returns embedded Video.js/Artplayer handle or external
    launcher according to `getPlayerBackend()`.
-8. Live recents/favorites update through `preferences.js`.
-9. EPG side panel uses `effectiveTvgId()` and `getNowNext()`.
-10. Discord presence is updated through `discord-rpc.js` when enabled.
+9. Embedded playback detects HLS, DASH, MPEG-TS, or native media by extension,
+   MIME, or content-type probe.
+10. Live recents/favorites update through `preferences.js`.
+11. EPG side panel uses `effectiveTvgId()` and `getNowNext()`.
+12. Discord presence is updated through `discord-rpc.js` when enabled.
+13. Replay/autoplay URLs can arrive as
+    `/livetv?channel=<id>&catchupStart=<epochMs>&catchupStop=<epochMs>`.
+    `stream.ts` builds a catchup source via `catchup.ts` and labels the player
+    state as `REC`.
 
 ## Movie playback flow
 
@@ -132,6 +141,16 @@ Files: `src/pages/epg.astro`, `src/scripts/epg/epg.ts`,
 9. Mapping overrides are stored in `preferences.channelEpgMap`.
 10. Relevant events are `xt:epg-loaded`, `xt:epg-offset-changed`, and
     `xt:channel-epg-changed`.
+11. If XMLTV refresh fails but a parsed XMLTV cache row exists,
+    `epg-data.js` returns the cached programme map instead of failing the whole
+    load.
+12. If the full XMLTV grid cannot be loaded for an Xtream-capable playlist,
+    `/epg` falls back to per-channel Xtream EPG endpoints for visible channels:
+    first `get_short_epg`, then `get_simple_data_table`.
+13. `/livetv` side-panel EPG uses per-channel APIs directly, so a full `/epg`
+    XMLTV error does not prove the provider has no guide data.
+14. Replayable ended programmes are marked `REC`; clicking the programme
+    dialog CTA navigates to Live TV with `catchupStart`/`catchupStop`.
 
 ## Settings flow
 
@@ -209,4 +228,3 @@ Files: `src/scripts/lib/backup.js`, `src/pages/settings.astro`,
 3. Import restores credentials, prefs, and settings through owning modules.
 4. Restore dispatches normal change events through those modules.
 5. Backup paths must avoid browser-only assumptions on Android/Tauri.
-

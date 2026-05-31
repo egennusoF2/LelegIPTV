@@ -9,6 +9,7 @@ import {
   buildChannelNameIndex,
   findInChannelNameIndex,
   normaliseChannelName,
+  sanitizeXmlTvForDomParser,
 } from "../src/scripts/lib/epg-data.js"
 
 const xtreamCreds = {
@@ -165,6 +166,45 @@ describe("buildEpgUrlsFromEntry: edge cases", () => {
     const sources = buildEpgUrlsFromEntry(null, xtreamCreds, "")
     expect(sources).toHaveLength(1)
     expect(sources[0].source).toBe("xtream-default")
+  })
+})
+
+describe("sanitizeXmlTvForDomParser: provider DTD tolerance", () => {
+  it("removes external DOCTYPE declarations without touching normal XML entities", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tv SYSTEM "xmltv.dtd">
+<tv>
+  <channel id="rai1"><display-name>Rai 1</display-name></channel>
+  <programme channel="rai1" start="20260531210000 +0000" stop="20260531220000 +0000">
+    <title>News &amp; Sport</title>
+    <desc>Daily update</desc>
+  </programme>
+</tv>`
+
+    const sanitized = sanitizeXmlTvForDomParser(xml)
+
+    expect(sanitized).not.toMatch(/<!DOCTYPE\b/i)
+    expect(sanitized).toContain("News &amp; Sport")
+    expect(sanitized).toContain("<channel id=\"rai1\">")
+  })
+
+  it("strips internal entity declarations and neutralizes custom entity references", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE tv [
+  <!ENTITY nbsp " ">
+]>
+<tv>
+  <channel id="rai2"><display-name>Rai 2</display-name></channel>
+  <programme channel="rai2" start="20260531210000 +0000" stop="20260531220000 +0000">
+    <title>Foo&nbsp;Bar</title>
+  </programme>
+</tv>`
+
+    const sanitized = sanitizeXmlTvForDomParser(xml)
+
+    expect(sanitized).not.toMatch(/<!DOCTYPE\b/i)
+    expect(sanitized).not.toMatch(/<!ENTITY\b/i)
+    expect(sanitized).toContain("<title>Foo Bar</title>")
   })
 })
 

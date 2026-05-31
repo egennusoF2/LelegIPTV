@@ -1,13 +1,21 @@
 // scripts/version.js
 import { log } from "@/scripts/lib/log.js"
-import { getVersion, getName } from '@tauri-apps/api/app'
+
+function isTauriRuntime() {
+    return typeof window !== "undefined" &&
+        (!!window.__TAURI_INTERNALS__ || !!window.__TAURI__)
+}
 
 export async function injectVersion() {
+    if (!isTauriRuntime()) return
+    const target = document.getElementById('app-version')
+    if (!target) return
     try {
+        const { getVersion, getName } = await import('@tauri-apps/api/app')
         const version = await getVersion()
         const name = await getName()
-        document.getElementById('app-version').textContent = `${name} v${version}`
+        target.textContent = `${name} v${version}`
     } catch (e) {
-        log.error('Could not get app version:', e)
+        log.warn('Could not get app version:', e)
     }
 }
