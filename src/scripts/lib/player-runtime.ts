@@ -644,11 +644,38 @@ async function attachMpegts(
     log.warn("[xt:player] mpegts.js unsupported in this WebView")
     return null
   }
-  const player = mpegts.createPlayer({
-    type: "mpegts",
-    isLive: true,
-    url,
-  })
+  const { createEmbeddedMpegtsConfig } = await import(
+    "@/scripts/lib/embedded-media-fetch.js"
+  )
+  const extraConfig = await createEmbeddedMpegtsConfig()
+  const player = mpegts.createPlayer(
+    {
+      type: "mpegts",
+      isLive: true,
+      url,
+    },
+    extraConfig,
+  )
+  const Events = mpegts.Events
+  if (Events?.MEDIA_INFO) {
+    player.on(Events.MEDIA_INFO, (info: { audioCodec?: string }) => {
+      import("@/scripts/lib/embedded-hls-audio.js").then(({ notifyIfMpegtsAudioCodecUnsupported }) => {
+        notifyIfMpegtsAudioCodecUnsupported(info?.audioCodec || "")
+      })
+    })
+  }
+  if (Events?.ERROR) {
+    player.on(Events.ERROR, (errorType: string, errorDetail: unknown) => {
+      log.warn("[xt:player] mpegts error", { url, errorType, errorDetail })
+      try {
+        window.dispatchEvent(
+          new CustomEvent("xt:mpegts-playback-error", {
+            detail: { url, errorType, errorDetail },
+          }),
+        )
+      } catch {}
+    })
+  }
   player.attachMediaElement(videoEl)
   player.load()
   try {
@@ -787,42 +814,56 @@ async function mountVideoJs(
     try { player.hasStarted?.(true) } catch {}
   }
 
+  function loadFromResolvedUrl(playUrl: string, type?: string) {
+    const hint = streamKindHint(playUrl, type)
+    if (hint === "ts") {
+      loadTs(playUrl)
+      return
+    }
+    if (hint === "hls") {
+      loadHls(playUrl)
+      return
+    }
+    if (hint === "dash") {
+      loadDash(playUrl)
+      return
+    }
+    if (hint === "native") {
+      loadNative(playUrl, type)
+      return
+    }
+    destroyMpegts()
+    destroyDash()
+    try { player.reset() } catch {}
+    probeContainer(playUrl)
+      .then((kind) => {
+        if (pendingSrc !== playUrl) return
+        if (kind === "ts") loadTs(playUrl)
+        else if (kind === "dash") loadDash(playUrl)
+        else if (kind === "native") loadNative(playUrl, type)
+        else loadHls(playUrl)
+      })
+      .catch(() => {
+        if (pendingSrc !== playUrl) return
+        loadHls(playUrl)
+      })
+  }
+
   const wrapped: VjsLikeHandle = {
     src({ src, type }) {
       pendingSrc = src
-      const hint = streamKindHint(src, type)
-      if (hint === "ts") {
-        loadTs(src)
-        return
-      }
-      if (hint === "hls") {
-        loadHls(src)
-        return
-      }
-      if (hint === "dash") {
-        loadDash(src)
-        return
-      }
-      if (hint === "native") {
-        loadNative(src, type)
-        return
-      }
-      // Unknown extension - probe and only load once we know the container
-      destroyMpegts()
-      destroyDash()
-      try { player.reset() } catch {}
-      probeContainer(src)
-        .then((kind) => {
-          if (pendingSrc !== src) return
-          if (kind === "ts") loadTs(src)
-          else if (kind === "dash") loadDash(src)
-          else if (kind === "native") loadNative(src, type)
-          else loadHls(src)
-        })
-        .catch(() => {
-          if (pendingSrc !== src) return
-          loadHls(src)
-        })
+      void (async () => {
+        let playUrl = src
+        if (!(options.liveui ?? false)) {
+          const { preferVodHlsUrl } = await import(
+            "@/scripts/lib/embedded-vod-playback.js"
+          )
+          playUrl = await preferVodHlsUrl(src)
+        }
+        if (pendingSrc !== src) return
+        pendingSrc = playUrl
+        loadFromResolvedUrl(playUrl, type)
+      })()
     },
     play() {
       return player.play()
@@ -967,7 +1008,10 @@ function mountNativePlayer(videoEl: HTMLVideoElement): VjsLikeHandle {
   return handle
 }
 
-async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle> {
+async function mountArtPlayer(
+  videoEl: HTMLVideoElement,
+  options: MountOptions = {},
+): Promise<VjsLikeHandle> {
   const { default: Artplayer } = await import("artplayer")
 
   const parent = videoEl.parentElement
@@ -989,6 +1033,7 @@ async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle>
   let activeMpegts: MpegtsHandle | null = null
   let activeDash: DashHandle | null = null
   let pendingSrc: string | null = null
+  let loadGeneration = 0
 
   function destroyActiveEmbeddedHandles() {
     if (activeHls) {
@@ -1005,6 +1050,8 @@ async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle>
     }
   }
 
+  const isLive = options.liveui === true
+
   const art = new Artplayer({
     container,
     url: "",
@@ -1012,33 +1059,54 @@ async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle>
     autoplay: false,
     autoSize: false,
     autoMini: false,
-    setting: false,
+    setting: true,
+    isLive,
     flip: false,
     pip: true,
-    playbackRate: true,
+    playbackRate: !isLive,
     aspectRatio: false,
     fullscreen: true,
     fullscreenWeb: true,
-    miniProgressBar: false,
+    miniProgressBar: !isLive,
     mutex: true,
     backdrop: false,
     playsInline: true,
     customType: {
       async m3u8(video, url) {
         destroyActiveEmbeddedHandles()
-        if (
-          video.canPlayType("application/vnd.apple.mpegurl") ||
-          video.canPlayType("application/x-mpegURL")
-        ) {
-          video.src = url
+        const { shouldUseHlsJsForM3u8 } = await import(
+          "@/scripts/lib/stream-proxy.js"
+        )
+        if (!shouldUseHlsJsForM3u8()) {
+          const { resolveEmbeddedStreamUrl } = await import(
+            "@/scripts/lib/embedded-media-fetch.js"
+          )
+          video.src = resolveEmbeddedStreamUrl(url)
           return
         }
         try {
           const { default: Hls } = await import("hls.js")
           if ((Hls as any).isSupported()) {
-            const hls = new (Hls as any)({ enableWorker: true })
-            hls.loadSource(url)
+            const { createEmbeddedHlsConfig } = await import(
+              "@/scripts/lib/embedded-media-fetch.js"
+            )
+            const hlsConfig = await createEmbeddedHlsConfig()
+            const hls = new (Hls as any)(hlsConfig)
+            const { wireHlsForArtplayer } = await import(
+              "@/scripts/lib/embedded-hls-tracks.js"
+            )
+            const { ensureVideoAudible } = await import(
+              "@/scripts/lib/embedded-hls-audio.js"
+            )
+            wireHlsForArtplayer(art, hls, video, { live: isLive })
+            const { resolveEmbeddedStreamUrl } = await import(
+              "@/scripts/lib/embedded-media-fetch.js"
+            )
+            hls.loadSource(resolveEmbeddedStreamUrl(url))
             hls.attachMedia(video)
+            art.volume = 1
+            art.muted = false
+            ensureVideoAudible(video, art)
             activeHls = hls
             return
           }
@@ -1079,47 +1147,71 @@ async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle>
 
   art.on("destroy", () => {
     destroyActiveEmbeddedHandles()
+    art.hls = null
   })
+
+  const { wireNativeTracksForArtplayer } = await import(
+    "@/scripts/lib/embedded-native-tracks.js"
+  )
+  wireNativeTracksForArtplayer(art)
+
+  async function loadArtSrc(src: string, type?: string) {
+    const generation = ++loadGeneration
+    pendingSrc = src
+    destroyActiveEmbeddedHandles()
+    art.hls = null
+
+    let playUrl = src
+    if (!isLive) {
+      const { preferVodHlsUrl } = await import("@/scripts/lib/embedded-vod-playback.js")
+      playUrl = await preferVodHlsUrl(src)
+    }
+    if (generation !== loadGeneration || pendingSrc !== src) return
+
+    const { resolveEmbeddedStreamUrl } = await import(
+      "@/scripts/lib/embedded-media-fetch.js"
+    )
+    const resolvedUrl = resolveEmbeddedStreamUrl(playUrl)
+
+    const hint = streamKindHint(playUrl, type)
+    if (hint === "hls") {
+      art.type = "m3u8"
+      art.url = resolvedUrl
+      return
+    }
+    if (hint === "ts") {
+      art.type = "ts"
+      art.url = resolvedUrl
+      return
+    }
+    if (hint === "dash") {
+      art.type = "mpd"
+      art.url = resolvedUrl
+      return
+    }
+    if (hint === "native") {
+      art.type = ""
+      art.url = resolvedUrl
+      return
+    }
+    art.url = ""
+    probeContainer(playUrl)
+      .then((kind) => {
+        if (generation !== loadGeneration || pendingSrc !== src) return
+        art.type =
+          kind === "ts" ? "ts" : kind === "dash" ? "mpd" : kind === "native" ? "" : "m3u8"
+        art.url = resolvedUrl
+      })
+      .catch(() => {
+        if (generation !== loadGeneration || pendingSrc !== src) return
+        art.type = "m3u8"
+        art.url = resolvedUrl
+      })
+  }
 
   const handle: VjsLikeHandle = {
     src({ src, type }) {
-      pendingSrc = src
-      destroyActiveEmbeddedHandles()
-      const hint = streamKindHint(src, type)
-      if (hint === "hls") {
-        art.type = "m3u8"
-        art.url = src
-        return
-      }
-      if (hint === "ts") {
-        art.type = "ts"
-        art.url = src
-        return
-      }
-      if (hint === "dash") {
-        art.type = "mpd"
-        art.url = src
-        return
-      }
-      if (hint === "native") {
-        art.type = ""
-        art.url = src
-        return
-      }
-      // Unknown - wait for the probe before loading anything so we don't
-      // briefly hand a TS body to hls.js and trip MediaSource errors.
-      art.url = ""
-      probeContainer(src)
-        .then((kind) => {
-          if (pendingSrc !== src) return
-          art.type = kind === "ts" ? "ts" : kind === "dash" ? "mpd" : kind === "native" ? "" : "m3u8"
-          art.url = src
-        })
-        .catch(() => {
-          if (pendingSrc !== src) return
-          art.type = "m3u8"
-          art.url = src
-        })
+      void loadArtSrc(src, type)
     },
     play() {
       return art.play()
@@ -1222,7 +1314,7 @@ export async function mountPlayer(
   }
   // artplayer (default)
   try {
-    const handle = await mountArtPlayer(videoEl)
+    const handle = await mountArtPlayer(videoEl, options)
     return {
       kind: "embedded",
       backend: "artplayer",

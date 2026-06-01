@@ -4,9 +4,19 @@ import SearchInput from "@/components/SearchInput.astro";
 import CategoryPickerDialog from "@/components/CategoryPickerDialog.astro";
 import WelcomeCard from "@/components/WelcomeCard.astro";
 import { IconDeviceTv, IconChevronDown, IconCalendarTime, IconLayoutGrid } from "@tabler/icons-svelte";
+
+const devPlaybackBuild = import.meta.env.DEV ? "playback m3u8-audio" : null;
 ---
 
 <Layout pageTitle="Live TV">
+	{devPlaybackBuild ? (
+		<div
+			id="dev-playback-build"
+			class="fixed bottom-3 left-3 z-9999 rounded-md border border-line bg-surface/95 px-2 py-1 text-[10px] font-mono text-fg-3 shadow-lg pointer-events-none"
+			aria-hidden="true">
+			DEV · {devPlaybackBuild}
+		</div>
+	) : null}
 	<script is:inline>
 		try {
 			var raw = localStorage.getItem("xt_playlists") || "";

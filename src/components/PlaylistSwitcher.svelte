@@ -23,6 +23,7 @@
     defaultElement: "#ps-popover button[data-id], #ps-popover a",
   })
 
+  let mounted = $state(false)
   let isOpen = $state(false)
   // The fallback string is read on `renderHeader()` (mount + every locale
   // change), so the initial sync value here is only visible during the
@@ -136,6 +137,7 @@
   }
 
   onMount(() => {
+    mounted = true
     renderHeader()
 
     const onDocClick = (event) => {
@@ -177,6 +179,22 @@
   })
 </script>
 
+{#if !mounted}
+  <div data-ps-wrap class="relative [view-transition-name:playlist-switcher]">
+    <button
+      type="button"
+      disabled
+      class="flex w-full items-center gap-2.5 px-2.5 py-2.5 min-h-11 rounded-xl border border-line bg-surface text-sm font-medium text-fg justify-center lg:justify-between">
+      <span class="flex items-center gap-2.5 min-w-0">
+        <span
+          class="h-5 px-1.5 inline-flex items-center justify-center rounded-md text-label font-semibold uppercase text-fg-2 ring-1 ring-line shrink-0">
+          {activeBadge}
+        </span>
+        <span class="hidden lg:inline truncate tracking-tight text-fg-3">{activeTitle}</span>
+      </span>
+    </button>
+  </div>
+{:else}
 <div
   bind:this={wrapEl}
   data-ps-wrap
@@ -232,19 +250,18 @@
     </div>
 
     <div class="flex items-stretch border-t border-line shrink-0">
-      {#if hasActive}
-        <button
-          id="ps-refresh"
-          type="button"
-          onclick={onRefresh}
-          class="flex flex-1 min-w-0 items-center justify-center gap-1.5 px-2 py-3 text-sm font-medium text-fg-2 whitespace-nowrap
-            hover:text-fg hover:bg-surface-2
-            focus-visible:text-fg focus-visible:bg-surface-2
-            min-h-11 transition-colors outline-none border-r border-line">
-          <IconRefresh aria-hidden="true" class="h-4 w-4 shrink-0" />
-          <span data-i18n="common.refresh" class="truncate">Refresh</span>
-        </button>
-      {/if}
+      <button
+        id="ps-refresh"
+        type="button"
+        onclick={onRefresh}
+        class="ps-refresh-btn flex flex-1 min-w-0 items-center justify-center gap-1.5 px-2 py-3 text-sm font-medium text-fg-2 whitespace-nowrap
+          hover:text-fg hover:bg-surface-2
+          focus-visible:text-fg focus-visible:bg-surface-2
+          min-h-11 transition-colors outline-none border-r border-line"
+        data-hidden={hasActive ? "false" : "true"}>
+        <IconRefresh aria-hidden="true" class="h-4 w-4 shrink-0" />
+        <span data-i18n="common.refresh" class="truncate">Refresh</span>
+      </button>
       <a
         href="/login"
         class="flex flex-1 min-w-0 items-center justify-center gap-1.5 px-2 py-3 text-sm font-medium text-fg whitespace-nowrap
@@ -257,8 +274,12 @@
     </div>
   </div>
 </div>
+{/if}
 
 <style>
+  :global(#ps-refresh[data-hidden="true"]) {
+    display: none;
+  }
   [data-ps-wrap][data-open="true"] :global(#ps-popover) {
     display: flex;
     flex-direction: column;

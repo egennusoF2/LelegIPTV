@@ -46,7 +46,8 @@ import { fmtImdbRating } from "@/scripts/lib/format.js"
 import { setRichPresence, clearRichPresence } from "@/scripts/lib/discord-rpc.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
 import { mountPlayer, getExternalLauncher } from "@/scripts/lib/player-runtime.ts"
-import { getPlayerBackend } from "@/scripts/lib/app-settings.js"
+import { getPlayerBackend, getUserAgent } from "@/scripts/lib/app-settings.js"
+import { setEmbeddedMediaFetchContext } from "@/scripts/lib/embedded-media-fetch.js"
 import { toast } from "@/scripts/lib/toast.js"
 import { setupExternalPlayerButton, surfaceLaunchError } from "@/scripts/lib/external-player-button.ts"
 
@@ -389,7 +390,13 @@ async function startPlayback() {
   const player = await ensureEmbeddedPlayer(backend)
   if (!player) return
   setupPipButton(player)
-  const mime = chooseMime(detailSrc)
+  try {
+    setEmbeddedMediaFetchContext({
+      userAgent: getUserAgent() || null,
+      referer: creds.host ? `${fmtBase(creds.host, creds.port)}/` : null,
+    })
+  } catch {}
+  const mime = chooseMime(playSrc)
   player.one("error", () => {
     const e = player.error()
     log.error("[xt:movie-detail] player error", {

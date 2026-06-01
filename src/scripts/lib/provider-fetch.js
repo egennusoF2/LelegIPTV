@@ -125,6 +125,11 @@ export async function providerFetch(url, init = {}) {
   const useTauri = isTauri && (ua || forceTauri)
 
   if (!useTauri) {
+    const headers = new Headers(callInit.headers || {})
+    if (ua && !headers.has("User-Agent")) {
+      headers.set("User-Agent", ua)
+    }
+    callInit.headers = headers
     log.log(`[xt:net] native start`, u)
     try {
       const r = await nativeFetch(url, callInit, u, callerSignal)

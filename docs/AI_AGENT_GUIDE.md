@@ -47,6 +47,7 @@ pnpm tauri:ios:init
 pnpm tauri:ios:dev
 pnpm tauri:ios:build
 pnpm tizen:prepare
+pnpm build:all
 pnpm sync:upstream -- --check
 ```
 

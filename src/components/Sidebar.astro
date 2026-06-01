@@ -198,8 +198,25 @@ const settingsActive = path === "/settings" || path.startsWith("/settings/")
   </div>
 
   <div class="flex flex-col gap-1 pt-2 border-t border-line">
-    <div class="hidden lg:block">
-      <PlaylistSwitcher client:load />
+    <!-- Avoid display:none on small viewports — breaks Svelte 5 island mount/hydration -->
+    <div
+      class="max-lg:absolute max-lg:w-px max-lg:h-px max-lg:overflow-hidden max-lg:opacity-0 max-lg:pointer-events-none lg:static lg:w-auto lg:h-auto lg:opacity-100 lg:pointer-events-auto">
+      <PlaylistSwitcher client:only="svelte">
+        <div slot="fallback" data-ps-wrap class="relative [view-transition-name:playlist-switcher]">
+          <button
+            type="button"
+            disabled
+            class="flex w-full items-center gap-2.5 px-2.5 py-2.5 min-h-11 rounded-xl border border-line bg-surface text-sm font-medium text-fg justify-center lg:justify-between">
+            <span class="flex items-center gap-2.5 min-w-0">
+              <span
+                class="h-5 px-1.5 inline-flex items-center justify-center rounded-md text-label font-semibold uppercase text-fg-2 ring-1 ring-line shrink-0">
+                -
+              </span>
+              <span class="hidden lg:inline truncate tracking-tight text-fg-3">…</span>
+            </span>
+          </button>
+        </div>
+      </PlaylistSwitcher>
     </div>
     <a
       href="/settings"
