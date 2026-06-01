@@ -18,7 +18,7 @@ mod android_diagnostics {
             android_logger::init_once(
                 android_logger::Config::default()
                     .with_max_level(log::LevelFilter::Warn)
-                    .with_tag("xtream-rs"),
+                    .with_tag("lelegiptv-rs"),
             );
         });
 

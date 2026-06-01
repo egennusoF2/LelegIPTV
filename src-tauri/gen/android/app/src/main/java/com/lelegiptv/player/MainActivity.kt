@@ -1,4 +1,4 @@
-package com.infinitel8p.xtream
+package com.lelegiptv.player
 
 import android.os.Bundle
 import android.view.View
@@ -227,7 +227,7 @@ class IntentBridge(private val activity: TauriActivity) {
         pm.queryIntentActivities(probe, 0)
       }
     } catch (e: Throwable) {
-      Log.w("xtream-rs", "listVideoPlayerApps query failed: $e")
+      Log.w("lelegiptv-rs", "listVideoPlayerApps query failed: $e")
       return "[]"
     }
     val selfPackage = activity.packageName
@@ -247,7 +247,7 @@ class IntentBridge(private val activity: TauriActivity) {
       val iconDataUri = try {
         encodeIconAsDataUri(ri.loadIcon(pm))
       } catch (e: Throwable) {
-        Log.w("xtream-rs", "loadIcon for $pkg failed: $e")
+        Log.w("lelegiptv-rs", "loadIcon for $pkg failed: $e")
         ""
       }
       entries.add(
@@ -359,12 +359,12 @@ class IntentBridge(private val activity: TauriActivity) {
     val parsed = try {
       Uri.parse(trimmed)
     } catch (e: Throwable) {
-      Log.w("xtream-rs", "IntentBridge.parseUri rejected '$trimmed': $e")
+      Log.w("lelegiptv-rs", "IntentBridge.parseUri rejected '$trimmed': $e")
       return null
     }
     val scheme = parsed.scheme?.lowercase()
     if (scheme.isNullOrEmpty() || scheme !in ALLOWED_SCHEMES) {
-      Log.w("xtream-rs", "IntentBridge.parseUri rejected scheme '$scheme'")
+      Log.w("lelegiptv-rs", "IntentBridge.parseUri rejected scheme '$scheme'")
       return null
     }
     return parsed
@@ -421,7 +421,7 @@ class IntentBridge(private val activity: TauriActivity) {
     } catch (e: PackageManager.NameNotFoundException) {
       false
     } catch (e: Throwable) {
-      Log.w("xtream-rs", "isPackageInstalled($pkg) failed: $e")
+      Log.w("lelegiptv-rs", "isPackageInstalled($pkg) failed: $e")
       false
     }
   }
@@ -432,11 +432,11 @@ class IntentBridge(private val activity: TauriActivity) {
       try {
         activity.startActivity(intent)
       } catch (e: ActivityNotFoundException) {
-        Log.w("xtream-rs", "$context startActivity threw: $e")
+        Log.w("lelegiptv-rs", "$context startActivity threw: $e")
       } catch (e: SecurityException) {
-        Log.w("xtream-rs", "$context blocked by SecurityException: $e")
+        Log.w("lelegiptv-rs", "$context blocked by SecurityException: $e")
       } catch (e: Throwable) {
-        Log.w("xtream-rs", "$context launch threw: $e")
+        Log.w("lelegiptv-rs", "$context launch threw: $e")
       }
     }
   }
@@ -541,7 +541,7 @@ class MainActivity : TauriActivity() {
           set(pm, launcher)
         }
       } catch (e: Throwable) {
-        Log.e("xtream-rs", "PluginManager.$fieldName rebind failed: $e")
+        Log.e("lelegiptv-rs", "PluginManager.$fieldName rebind failed: $e")
       }
     }
 
@@ -555,7 +555,7 @@ class MainActivity : TauriActivity() {
           }
           (cbField.get(pm) as? PluginManager.ActivityResultCallback)?.onResult(result)
         } catch (e: Throwable) {
-          Log.w("xtream-rs", "startActivityForResult callback dispatch failed: $e")
+          Log.w("lelegiptv-rs", "startActivityForResult callback dispatch failed: $e")
         }
       }
       rebind("startActivityForResultLauncher", "startActivityForResultCallback", saLauncher)
@@ -569,7 +569,7 @@ class MainActivity : TauriActivity() {
           }
           (cbField.get(pm) as? PluginManager.ActivityResultCallback)?.onResult(result)
         } catch (e: Throwable) {
-          Log.w("xtream-rs", "startIntentSenderForResult callback dispatch failed: $e")
+          Log.w("lelegiptv-rs", "startIntentSenderForResult callback dispatch failed: $e")
         }
       }
       rebind("startIntentSenderForResultLauncher", "startIntentSenderForResultCallback", isLauncher)
@@ -583,16 +583,16 @@ class MainActivity : TauriActivity() {
           }
           (cbField.get(pm) as? PluginManager.RequestPermissionsCallback)?.onResult(result)
         } catch (e: Throwable) {
-          Log.w("xtream-rs", "requestPermissions callback dispatch failed: $e")
+          Log.w("lelegiptv-rs", "requestPermissions callback dispatch failed: $e")
         }
       }
       rebind("requestPermissionsLauncher", "requestPermissionsCallback", permLauncher)
     } catch (e: Throwable) {
-      Log.e("xtream-rs", "bindPluginManagerLaunchers reflection path failed, trying official init", e)
+      Log.e("lelegiptv-rs", "bindPluginManagerLaunchers reflection path failed, trying official init", e)
       try {
         PluginManager.onActivityCreate(this)
       } catch (e2: Throwable) {
-        Log.e("xtream-rs", "PluginManager.onActivityCreate fallback also failed", e2)
+        Log.e("lelegiptv-rs", "PluginManager.onActivityCreate fallback also failed", e2)
       }
     }
   }
@@ -638,7 +638,7 @@ class MainActivity : TauriActivity() {
           val didCrash = detail.didCrash()
           val isRepeat = sinceLast in 1..RENDER_GONE_REPEAT_WINDOW_MS
           Log.w(
-            "xtream-rs",
+            "lelegiptv-rs",
             "WebView render process gone (didCrash=$didCrash, priority=${detail.rendererPriorityAtExit()}, sinceLast=${sinceLast}ms, repeat=$isRepeat)"
           )
           val messageRes = when {

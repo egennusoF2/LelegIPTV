@@ -1,41 +1,38 @@
 ---
 layout: ../layouts/DocsLayout.astro
 title: "Getting started"
-description: "Install Leleg IPTV and add your first playlist."
+description: "Install LelegIPTV and add your first playlist."
 lede: "Install on your platform, sign in once, and start watching."
 ---
 
 import Callout from "../components/Callout.astro"
 
-## Install
+## Build and install
 
-Pick the download that matches your device. All builds come from the same source and have the same features.
+Pick the artifact that matches your device. LelegIPTV documentation points to
+local build outputs from this repository, not to official app-store listings.
 
-| Platform | Where to get it |
+| Platform | Build command | Artifact path |
 |---|---|
-| Windows 10 / 11 | [Microsoft Store](https://apps.microsoft.com/detail/9NN162Z0WXSR) or [NSIS installer](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
-| Android phone / tablet / TV | [Google Play](https://play.google.com/store/apps/details?id=com.infinitel8p.xtream) or APK from [Releases](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
-| macOS | `.dmg` from [Releases](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
-| Linux | `.AppImage` or `.deb` / `.rpm` from [Releases](https://github.com/egennusoF2/LelegIPTV/releases/latest) |
+| Windows 10 / 11 | `pnpm tauri build` on Windows | `src-tauri/target/release/bundle/nsis/*.exe`, `src-tauri/target/release/bundle/msi/*.msi` |
+| macOS | `pnpm tauri build` on macOS | `src-tauri/target/release/bundle/dmg/*.dmg`, `src-tauri/target/release/bundle/macos/*.app` |
+| Linux | `pnpm tauri build` on Linux | `src-tauri/target/release/bundle/deb/*.deb`, `src-tauri/target/release/bundle/rpm/*.rpm`, `src-tauri/target/release/bundle/appimage/*.AppImage` |
+| Android phone / tablet / TV | `pnpm tauri:android:build` | `src-tauri/gen/android/app/build/outputs/apk/**/*.apk`, `src-tauri/gen/android/app/build/outputs/bundle/**/*.aab` |
+| Chromebook / Android XR | `pnpm tauri:android:build` or `pnpm build` | Android artifacts or `dist/` depending on deployment |
+| iOS / iPadOS | `pnpm tauri:ios:init`, then `pnpm tauri:ios:build` on macOS | `src-tauri/gen/apple/build/**/*.xcarchive`, exported `.ipa`, or the local Xcode Organizer export path |
+| Samsung Tizen TV | `pnpm build && pnpm tizen:prepare`, then Tizen Studio/CLI package | Prepared root: `build/tizen-web/`; signed package: `*.wgt` |
+| Web browser | `pnpm build` | `dist/` |
 
-The Windows desktop build and the Linux AppImage auto-update from GitHub Releases. The Microsoft Store and Google Play handle updates themselves. Other Linux packages (deb / rpm) do not auto-update.
+Desktop artifacts are host-platform specific: build Windows packages on
+Windows, macOS packages on macOS, and Linux packages on Linux unless you
+maintain a dedicated cross-compilation setup.
 
-### Install via winget (Windows)
+### macOS: "LelegIPTV.app" cannot be opened
 
-If you prefer the command line, install directly from the Microsoft Store source:
-
-```powershell
-winget install --id 9NN162Z0WXSR --source msstore
-```
-
-You get the same build as the Store, including automatic updates.
-
-### macOS: "Leleg IPTV.app" cannot be opened
-
-The macOS build is not yet notarized by Apple, so Gatekeeper blocks it on first launch with a message like *"Apple could not verify Leleg IPTV.app is free of malware"*. After dragging the app from the `.dmg` into `/Applications`, remove the quarantine flag from a Terminal:
+The macOS build is not yet notarized by Apple, so Gatekeeper blocks it on first launch with a message like *"Apple could not verify LelegIPTV.app is free of malware"*. After dragging the app from the `.dmg` into `/Applications`, remove the quarantine flag from a Terminal:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Leleg IPTV.app"
+xattr -dr com.apple.quarantine "/Applications/LelegIPTV.app"
 ```
 
 Then open the app normally. You only need to do this once per install.

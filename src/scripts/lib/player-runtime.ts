@@ -67,7 +67,7 @@ export interface ExternalLauncher {
 }
 
 export type Mounted =
-  | { kind: "embedded"; backend: "videojs" | "artplayer"; handle: VjsLikeHandle }
+  | { kind: "embedded"; backend: "videojs" | "artplayer" | "native"; handle: VjsLikeHandle }
   | { kind: "external"; backend: ExternalPlayerKind; launcher: ExternalLauncher }
 
 export interface MountOptions {
@@ -884,11 +884,91 @@ async function mountVideoJs(
   return wrapped
 }
 
+function mountNativePlayer(videoEl: HTMLVideoElement): VjsLikeHandle {
+  let currentError: unknown = null
+
+  const handle: VjsLikeHandle = {
+    src({ src, type }) {
+      currentError = null
+      videoEl.pause()
+      videoEl.removeAttribute("src")
+      try { videoEl.load() } catch {}
+      videoEl.preload = "auto"
+      videoEl.playsInline = true
+      const hint = streamKindHint(src, type)
+      if (hint === "hls") {
+        const canPlayNativeHls =
+          videoEl.canPlayType("application/vnd.apple.mpegurl") ||
+          videoEl.canPlayType("application/x-mpegURL")
+        if (!canPlayNativeHls) {
+          log.warn("[xt:player] native fallback received HLS without native HLS support")
+        }
+      }
+      videoEl.src = src
+      try { videoEl.load() } catch {}
+    },
+    play() {
+      return videoEl.play()
+    },
+    pause() {
+      videoEl.pause()
+    },
+    paused() {
+      return videoEl.paused
+    },
+    muted(value) {
+      if (value === undefined) return videoEl.muted
+      videoEl.muted = !!value
+      return undefined
+    },
+    reset() {
+      currentError = null
+      videoEl.pause()
+      videoEl.removeAttribute("src")
+      try { videoEl.load() } catch {}
+    },
+    dispose() {
+      handle.reset?.()
+    },
+    duration() {
+      return Number.isFinite(videoEl.duration) ? videoEl.duration : 0
+    },
+    currentTime(value) {
+      if (value === undefined) return videoEl.currentTime || 0
+      videoEl.currentTime = value
+      return value
+    },
+    on(event, fn) {
+      if (event === "error") {
+        videoEl.addEventListener(event, (ev) => {
+          currentError = videoEl.error || ev
+          fn(ev)
+        })
+        return
+      }
+      videoEl.addEventListener(event, fn as EventListener)
+    },
+    off(event, fn) {
+      videoEl.removeEventListener(event, fn as EventListener)
+    },
+    one(event, fn) {
+      videoEl.addEventListener(event, fn as EventListener, { once: true })
+    },
+    el() {
+      return videoEl
+    },
+    error() {
+      return currentError || videoEl.error || null
+    },
+    requestFullscreen() {
+      return videoEl.requestFullscreen?.()
+    },
+  }
+  return handle
+}
+
 async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle> {
-  const [{ default: Artplayer }, { default: Hls }] = await Promise.all([
-    import("artplayer"),
-    import("hls.js"),
-  ])
+  const { default: Artplayer } = await import("artplayer")
 
   const parent = videoEl.parentElement
   if (!parent) {
@@ -944,19 +1024,29 @@ async function mountArtPlayer(videoEl: HTMLVideoElement): Promise<VjsLikeHandle>
     backdrop: false,
     playsInline: true,
     customType: {
-      m3u8(video, url) {
+      async m3u8(video, url) {
         destroyActiveEmbeddedHandles()
-        if ((Hls as any).isSupported()) {
-          const hls = new (Hls as any)({ enableWorker: true })
-          hls.loadSource(url)
-          hls.attachMedia(video)
-          activeHls = hls
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        if (
+          video.canPlayType("application/vnd.apple.mpegurl") ||
+          video.canPlayType("application/x-mpegURL")
+        ) {
           video.src = url
-        } else {
-          log.warn("[xt:player] hls.js unsupported and no native HLS; fallback to <video src>")
-          video.src = url
+          return
         }
+        try {
+          const { default: Hls } = await import("hls.js")
+          if ((Hls as any).isSupported()) {
+            const hls = new (Hls as any)({ enableWorker: true })
+            hls.loadSource(url)
+            hls.attachMedia(video)
+            activeHls = hls
+            return
+          }
+        } catch (error) {
+          log.warn("[xt:player] hls.js import failed; falling back to <video src>", error)
+        }
+        log.warn("[xt:player] hls.js unsupported and no native HLS; fallback to <video src>")
+        video.src = url
       },
       async ts(video, url) {
         destroyActiveEmbeddedHandles()
@@ -1114,19 +1204,47 @@ export async function mountPlayer(
     }
   }
   if (backend === "videojs") {
-    const handle = await mountVideoJs(videoEl, options)
-    return {
-      kind: "embedded",
-      backend: "videojs",
-      handle,
+    try {
+      const handle = await mountVideoJs(videoEl, options)
+      return {
+        kind: "embedded",
+        backend: "videojs",
+        handle,
+      }
+    } catch (error) {
+      log.warn("[xt:player] Video.js mount failed; falling back to native <video>", error)
+      return {
+        kind: "embedded",
+        backend: "native",
+        handle: mountNativePlayer(videoEl),
+      }
     }
   }
   // artplayer (default)
-  const handle = await mountArtPlayer(videoEl)
-  return {
-    kind: "embedded",
-    backend: "artplayer",
-    handle,
+  try {
+    const handle = await mountArtPlayer(videoEl)
+    return {
+      kind: "embedded",
+      backend: "artplayer",
+      handle,
+    }
+  } catch (error) {
+    log.warn("[xt:player] ArtPlayer mount failed; trying Video.js fallback", error)
+    try {
+      const handle = await mountVideoJs(videoEl, options)
+      return {
+        kind: "embedded",
+        backend: "videojs",
+        handle,
+      }
+    } catch (videoJsError) {
+      log.warn("[xt:player] Video.js fallback failed; using native <video>", videoJsError)
+      return {
+        kind: "embedded",
+        backend: "native",
+        handle: mountNativePlayer(videoEl),
+      }
+    }
   }
 }
 

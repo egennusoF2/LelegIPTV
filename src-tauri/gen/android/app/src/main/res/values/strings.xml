@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name">Leleg IPTV</string>
-    <string name="main_activity_title">Leleg IPTV</string>
+    <string name="app_name">LelegIPTV</string>
+    <string name="main_activity_title">LelegIPTV</string>
     <string name="render_gone_oom">Display restarted to free memory</string>
     <string name="render_gone_crash">Display crashed, reloading</string>
     <string name="render_gone_repeat">Display keeps crashing. Restart the app if this continues.</string>

@@ -4,21 +4,23 @@ Thanks for taking the time to report a potential security issue. Please **do not
 
 ## Supported versions
 
-Only the **latest released version** is supported. Older versions don't receive security fixes. The Windows desktop build self-updates (signed with minisign, served from GitHub Releases). For other distributions, update via the respective store:
+Only the **latest released version** is supported. Older versions don't receive security fixes. LelegIPTV artifacts are produced from this repository; rebuild or install the newest local artifact for your target platform.
 
 | Platform | How to update |
 | --- | --- |
-| Windows (Microsoft Store) | Microsoft Store auto-updates |
-| Windows (sideload NSIS) | In-app auto-updater |
-| Android phone / tablet | Google Play |
-| Android TV | Google Play (or sideload the latest APK) |
+| Windows | Rebuild/install the latest NSIS `.exe` or MSI `.msi` artifact |
+| macOS | Rebuild/install the latest `.dmg` or `.app` artifact |
+| Linux | Rebuild/install the latest `.deb`, `.rpm`, or `.AppImage` artifact |
+| Android phone / tablet / TV | Rebuild/install the latest `.apk` or `.aab` artifact |
+| iOS / iPadOS | Rebuild/export the latest Xcode archive or `.ipa` artifact |
+| Samsung Tizen TV | Rebuild `dist`, run `pnpm tizen:prepare`, then sign/package a new `.wgt` |
 | Web build | Whoever hosts it; rebuild from `main` |
 
 ## Reporting a vulnerability
 
 **Preferred:** open a private advisory at <https://github.com/egennusoF2/LelegIPTV/security/advisories/new>.
 
-**Fallback:** email <admin@infinitel8p.com> with `xtream security` in the subject line.
+**Fallback:** email <security@lelegiptv.local> with `LelegIPTV security` in the subject line.
 
 Please include:
 
@@ -41,7 +43,8 @@ Please include:
 - The Tauri host (`src-tauri/`), frontend (`src/`), and shipped capabilities allowlist.
 - The auto-updater (`tauri-plugin-updater` + `latest.json` flow).
 - How the app stores and reads credentials and preferences (`@tauri-apps/plugin-store` + localStorage / cookies fallback).
-- Signed release artifacts (NSIS, MSIX, APK, AAB).
+- Signed release artifacts (NSIS, MSI, DMG, AppImage, DEB, RPM, APK, AAB, IPA,
+  WGT).
 - The build / release pipeline in `.github/workflows/`.
 
 **Out of scope:**

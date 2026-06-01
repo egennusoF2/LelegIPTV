@@ -20,5 +20,5 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
--keep class com.infinitel8p.xtream.** { *; }
+-keep class com.lelegiptv.player.** { *; }
 -keep class * extends android.webkit.WebChromeClient { *; }

@@ -16,7 +16,7 @@
                  hwkey-event="enable"/>
   <tizen:content src="index.html"/>
   <icon src="icon.png"/>
-  <name>Leleg IPTV</name>
+  <name>LelegIPTV</name>
   <description>IPTV player for Xtream Codes and M3U playlists.</description>
   <author href="https://github.com/egennusoF2/LelegIPTV">LelegIPTV</author>
   <access origin="*" subdomains="true"/>

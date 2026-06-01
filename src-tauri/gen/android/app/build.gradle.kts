@@ -19,11 +19,11 @@ fun required(name: String): String =
         .orNull ?: error("Missing signing property: $name")
 
 android {
-    namespace = "com.infinitel8p.xtream"
+    namespace = "com.lelegiptv.player"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.infinitel8p.xtream"
+        applicationId = "com.lelegiptv.player"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

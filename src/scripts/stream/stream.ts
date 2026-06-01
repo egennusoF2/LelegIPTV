@@ -84,9 +84,19 @@ function setNowPlaying(id) {
 /** @type {{host:string,port:string,user:string,pass:string}} */
 let creds = { host: "", port: "", user: "", pass: "" }
 
+function preferredLiveContainer(c = creds) {
+  const configured = String(c?.liveContainer || "").trim().toLowerCase()
+  if (configured === "ts" || configured === "mpegts") return "ts"
+  const ua = typeof navigator === "undefined" ? "" : navigator.userAgent || ""
+  const isIosWebKit = /\b(iPad|iPhone|iPod)\b/i.test(ua)
+  const isSafariLike =
+    /Safari/i.test(ua) && !/(Chrome|Chromium|CriOS|FxiOS|Edg|OPR|Android)/i.test(ua)
+  return isIosWebKit || isSafariLike ? "hls" : "ts"
+}
+
 function buildDirectLiveUrl(id, c = creds) {
   const { host, port, user, pass } = c
-  const ext = c?.liveContainer === "ts" ? ".ts" : ".m3u8"
+  const ext = preferredLiveContainer(c) === "ts" ? ".ts" : ".m3u8"
   return (
     fmtBase(host, port) +
     "/live/" +

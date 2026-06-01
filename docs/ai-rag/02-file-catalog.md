@@ -737,7 +737,7 @@ Android capability permissions.
 
 ## Android generated/native bridge files
 
-### `src-tauri/gen/android/app/src/main/java/com/infinitel8p/xtream/MainActivity.kt`
+### `src-tauri/gen/android/app/src/main/java/com/lelegiptv/player/MainActivity.kt`
 
 Android WebView bridge activity. Exposes JavaScript interfaces for Android
 intent playback, device info/status bar, and platform-specific behavior used by
@@ -759,11 +759,11 @@ Top-level Android Gradle build config.
 
 Android Gradle settings.
 
-### `src-tauri/gen/android/buildSrc/src/main/java/com/infinitel8p/xtream/kotlin/BuildTask.kt`
+### `src-tauri/gen/android/buildSrc/src/main/java/com/lelegiptv/player/kotlin/BuildTask.kt`
 
 Generated build helper for Android/Tauri build tasks.
 
-### `src-tauri/gen/android/buildSrc/src/main/java/com/infinitel8p/xtream/kotlin/RustPlugin.kt`
+### `src-tauri/gen/android/buildSrc/src/main/java/com/lelegiptv/player/kotlin/RustPlugin.kt`
 
 Generated Gradle plugin glue for Rust/Tauri Android build integration.
 

@@ -77,7 +77,7 @@ pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let tray_result = TrayIconBuilder::with_id("main")
         .icon(icon)
-        .tooltip("Leleg IPTV")
+        .tooltip("LelegIPTV")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app_handle, event| {

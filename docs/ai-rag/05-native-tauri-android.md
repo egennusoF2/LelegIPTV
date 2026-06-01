@@ -129,7 +129,7 @@ settings in `app-settings.js`.
 
 ## Android bridge
 
-File: `src-tauri/gen/android/app/src/main/java/com/infinitel8p/xtream/MainActivity.kt`
+File: `src-tauri/gen/android/app/src/main/java/com/lelegiptv/player/MainActivity.kt`
 
 Responsibilities:
 

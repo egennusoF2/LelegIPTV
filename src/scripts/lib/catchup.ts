@@ -23,6 +23,13 @@ export interface CatchupCreds {
 
 const DEFAULT_CATCHUP_DAYS = 7
 
+function preferredLiveContainer(creds: CatchupCreds): "hls" | "ts" {
+  const configured = String(creds.liveContainer || "").trim().toLowerCase()
+  if (configured === "ts" || configured === "mpegts") return "ts"
+  if (configured === "hls" || configured === "m3u8") return "hls"
+  return "hls"
+}
+
 function seconds(ms: number): number {
   return Math.floor(ms / 1000)
 }
@@ -116,7 +123,7 @@ export function buildCatchupStreamUrl(
   }
 
   if (mode === "xtream" && creds.host && creds.user && creds.pass) {
-    const ext = creds.liveContainer === "ts" ? ".ts" : ".m3u8"
+    const ext = preferredLiveContainer(creds) === "ts" ? ".ts" : ".m3u8"
     return (
       fmtBase(creds.host, creds.port || "") +
       "/timeshift/" +
