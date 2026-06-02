@@ -5,8 +5,9 @@
 import type { Plugin, ViteDevServer } from "vite"
 import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
-import { mkdir, stat } from "node:fs/promises"
-import { createReadStream } from "node:fs"
+import { mkdir, stat, unlink } from "node:fs/promises"
+import { createReadStream, createWriteStream } from "node:fs"
+import { PassThrough } from "node:stream"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import {
@@ -17,18 +18,31 @@ import { sanitizeTvMasterPlaylistIfNeeded } from "../scripts/lib/hls-manifest-sa
 import {
   preferHttpsStreamUrl,
   httpFallbackStreamUrl,
+  isIptvMediaUrl,
+  resolveUpstreamUserAgent,
+  IPTV_UA_VOD,
 } from "../scripts/lib/stream-proxy.ts"
 
 const PROXY_PATH = "/__stream"
 const SUBTITLE_PATH = "/__vod_subtitles"
 const SUBTITLE_ASSET_PATH = "/__vod_subtitles_asset"
+const VOD_STREAMS_PATH = "/__vod_streams"
+const VOD_REMUX_PATH = "/__vod_remux"
+const VOD_SUBTITLE_PATH = "/__vod_subtitle"
+const SUBTITLE_EXTRACT_MS = 90_000
+const MAX_SUBTITLE_TRACKS = 32
 
-const DEFAULT_UA =
-  "VLC/3.0.20 LibVLC/3.0.20"
+const DEFAULT_UA = IPTV_UA_VOD
+
+function upstreamUserAgent(target: string, clientUa: string): string {
+  if (isIptvMediaUrl(target)) return resolveUpstreamUserAgent(target)
+  return clientUa || DEFAULT_UA
+}
 
 const ALLOW_HEADERS = "Content-Type, Range, X-XT-UA, X-XT-Referer"
 const EXPOSE_HEADERS = "Content-Length, Content-Range, Accept-Ranges"
 const SUBTITLE_CACHE_DIR = join(tmpdir(), "leleg-iptv-vod-subtitles")
+const subtitleExtractInflight = new Map<string, Promise<boolean>>()
 
 function redactStreamUrl(url: string): string {
   try {
@@ -124,17 +138,18 @@ function runProcess(
   })
 }
 
-type SubtitleProbeStream = {
+type MediaProbeStream = {
   index?: number
   codec_type?: string
+  codec_name?: string
   tags?: { language?: string; title?: string }
 }
 
-async function listSubtitleStreams(
+async function listMediaStreams(
   target: string,
   userAgent: string,
   referer: string,
-): Promise<SubtitleProbeStream[]> {
+): Promise<MediaProbeStream[]> {
   const headers = ffmpegHeaders(userAgent, referer)
   const args = [
     "-v", "error",
@@ -147,28 +162,272 @@ async function listSubtitleStreams(
   if (result.code !== 0) {
     throw new Error(result.stderr || "ffprobe failed")
   }
-  const parsed = JSON.parse(result.stdout || "{}") as { streams?: SubtitleProbeStream[] }
-  return (parsed.streams || []).filter((stream) => stream.codec_type === "subtitle")
+  const parsed = JSON.parse(result.stdout || "{}") as { streams?: MediaProbeStream[] }
+  return parsed.streams || []
 }
 
-async function extractSubtitleTrack(
+function isExtractableTextSubtitle(codec: string | undefined): boolean {
+  const name = (codec || "").toLowerCase()
+  if (!name) return true
+  if (name.includes("hdmv") || name.includes("pgssub") || name === "dvd_subtitle") {
+    return false
+  }
+  return true
+}
+
+function subtitleCachePaths(
+  target: string,
+  userAgent: string,
+  referer: string,
+  subtitleIndex: number,
+): { hash: string; dir: string; filename: string; outPath: string } {
+  const hash = createHash("sha256")
+    .update(`${target}\n${userAgent}\n${referer}`)
+    .digest("hex")
+    .slice(0, 24)
+  const filename = `sub-${subtitleIndex}.vtt`
+  const dir = join(SUBTITLE_CACHE_DIR, hash)
+  return { hash, dir, filename, outPath: join(dir, filename) }
+}
+
+function subtitleInflightKey(
+  target: string,
+  userAgent: string,
+  referer: string,
+  subtitleIndex: number,
+): string {
+  const { hash } = subtitleCachePaths(target, userAgent, referer, subtitleIndex)
+  return `${hash}:${subtitleIndex}`
+}
+
+async function cachedSubtitleFile(
+  outPath: string,
+): Promise<boolean> {
+  try {
+    return (await stat(outPath)).size > 0
+  } catch {
+    return false
+  }
+}
+
+function serveSubtitleVttFile(
+  outPath: string,
+  res: import("http").ServerResponse,
+): void {
+  applyCorsHeaders(res)
+  res.statusCode = 200
+  res.setHeader("Content-Type", "text/vtt; charset=utf-8")
+  createReadStream(outPath).pipe(res)
+}
+
+/**
+ * Extract one subtitle track. Streams VTT to the client as ffmpeg produces it
+ * (first cues often within a few seconds) while writing the same bytes to disk cache.
+ */
+function streamExtractSubtitleTrack(
   target: string,
   userAgent: string,
   referer: string,
   subtitleIndex: number,
   outPath: string,
+  res: import("http").ServerResponse | null,
 ): Promise<boolean> {
-  const headers = ffmpegHeaders(userAgent, referer)
-  const args = [
-    "-y",
-    ...(headers ? ["-headers", headers] : []),
-    "-i", target,
-    "-map", `0:s:${subtitleIndex}`,
-    "-c:s", "webvtt",
+  return new Promise((resolve) => {
+    const headers = ffmpegHeaders(userAgent, referer)
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      ...(headers ? ["-headers", headers] : []),
+      "-fflags",
+      "+discardcorrupt",
+      "-i",
+      target,
+      "-map",
+      `0:s:${subtitleIndex}`,
+      "-c:s",
+      "webvtt",
+      "-f",
+      "webvtt",
+      "pipe:1",
+    ]
+    const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] })
+    let stderr = ""
+    const fileStream = createWriteStream(outPath)
+    let settled = false
+
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(ok)
+    }
+
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL")
+      finish(false)
+    }, SUBTITLE_EXTRACT_MS)
+
+    child.stderr.setEncoding("utf8")
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+
+    if (res) {
+      applyCorsHeaders(res)
+      res.statusCode = 200
+      res.setHeader("Content-Type", "text/vtt; charset=utf-8")
+      const tee = new PassThrough()
+      child.stdout.pipe(tee)
+      tee.pipe(res)
+      tee.pipe(fileStream)
+    } else {
+      child.stdout.pipe(fileStream)
+    }
+
+    const onFail = () => {
+      void unlink(outPath).catch(() => {})
+      if (res && !res.headersSent) {
+        res.statusCode = 502
+        res.setHeader("Content-Type", "text/plain; charset=utf-8")
+        res.end("subtitle extract failed")
+      }
+      finish(false)
+    }
+
+    child.on("error", onFail)
+    fileStream.on("error", onFail)
+    child.stdout.on("error", onFail)
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        if (stderr) {
+          console.warn("[xt:vod-subtitle] ffmpeg", stderr.slice(0, 240))
+        }
+        onFail()
+        return
+      }
+      finish(true)
+    })
+  })
+}
+
+async function runSubtitleExtract(
+  target: string,
+  userAgent: string,
+  referer: string,
+  subtitleIndex: number,
+  outPath: string,
+  res: import("http").ServerResponse | null,
+): Promise<boolean> {
+  const key = subtitleInflightKey(target, userAgent, referer, subtitleIndex)
+  const existing = subtitleExtractInflight.get(key)
+  if (existing) return existing
+
+  const job = streamExtractSubtitleTrack(
+    target,
+    userAgent,
+    referer,
+    subtitleIndex,
     outPath,
-  ]
-  const result = await runProcess("ffmpeg", args, 120_000)
-  return result.code === 0
+    res,
+  ).finally(() => {
+    subtitleExtractInflight.delete(key)
+  })
+  subtitleExtractInflight.set(key, job)
+  return job
+}
+
+function listSubtitleMetadata(
+  streams: MediaProbeStream[],
+  target: string,
+): Array<{ index: number; label: string; language: string; src: string; codec: string }> {
+  const subtitleStreams = streams.filter((s) => s.codec_type === "subtitle")
+  const tracks: Array<{
+    index: number
+    label: string
+    language: string
+    src: string
+    codec: string
+  }> = []
+  for (let i = 0; i < Math.min(subtitleStreams.length, MAX_SUBTITLE_TRACKS); i++) {
+    const stream = subtitleStreams[i]
+    const codec = stream.codec_name || ""
+    if (!isExtractableTextSubtitle(codec)) continue
+    const language = stream.tags?.language || ""
+    const label = stream.tags?.title || language || `Subtitle ${i + 1}`
+    tracks.push({
+      index: i,
+      language,
+      label,
+      codec,
+      src: `${VOD_SUBTITLE_PATH}?url=${encodeURIComponent(target)}&index=${i}`,
+    })
+  }
+  return tracks
+}
+
+async function vodSubtitleHandler(
+  req: import("http").IncomingMessage,
+  res: import("http").ServerResponse,
+): Promise<void> {
+  let target = requestParam(req, "url")
+  if (target) target = preferHttpsStreamUrl(target)
+  const subtitleIndex = Math.max(0, parseInt(requestParam(req, "index") || "0", 10) || 0)
+  if (!target || !isAllowedTarget(target)) {
+    res.statusCode = 400
+    res.end("invalid url")
+    return
+  }
+
+  const clientUa =
+    (typeof req.headers["x-xt-ua"] === "string" && req.headers["x-xt-ua"]) || ""
+  const userAgent = upstreamUserAgent(target, clientUa)
+  const { referer } = mediaRequestHeaders(req, target)
+
+  const { dir, outPath } = subtitleCachePaths(target, userAgent, referer, subtitleIndex)
+  await mkdir(dir, { recursive: true })
+
+  if (await cachedSubtitleFile(outPath)) {
+    console.log("[xt:vod-subtitle] cache hit", subtitleIndex)
+    serveSubtitleVttFile(outPath, res)
+    return
+  }
+
+  const inflight = subtitleInflightKey(target, userAgent, referer, subtitleIndex)
+  if (subtitleExtractInflight.has(inflight)) {
+    console.log("[xt:vod-subtitle] wait inflight", subtitleIndex)
+    const ok = await subtitleExtractInflight.get(inflight)!
+    if (ok && (await cachedSubtitleFile(outPath))) {
+      serveSubtitleVttFile(outPath, res)
+    } else if (!res.headersSent) {
+      res.statusCode = 502
+      res.setHeader("Content-Type", "text/plain; charset=utf-8")
+      res.end("subtitle extract failed")
+    }
+    return
+  }
+
+  console.log(
+    "[xt:vod-subtitle] stream extract",
+    redactStreamUrl(target).slice(0, 120),
+    "index:",
+    subtitleIndex,
+  )
+
+  const ok = await runSubtitleExtract(
+    target,
+    userAgent,
+    referer,
+    subtitleIndex,
+    outPath,
+    res,
+  )
+  if (!ok && !res.headersSent) {
+    res.statusCode = 502
+    res.setHeader("Content-Type", "text/plain; charset=utf-8")
+    res.end("subtitle extract failed")
+  }
 }
 
 async function subtitleHandler(
@@ -182,37 +441,132 @@ async function subtitleHandler(
     return
   }
 
-  const { userAgent, referer } = mediaRequestHeaders(req, target)
-  const hash = createHash("sha256").update(`${target}\n${userAgent}\n${referer}`).digest("hex").slice(0, 24)
-  const dir = join(SUBTITLE_CACHE_DIR, hash)
-  await mkdir(dir, { recursive: true })
+  const clientUa =
+    (typeof req.headers["x-xt-ua"] === "string" && req.headers["x-xt-ua"]) || ""
+  const userAgent = upstreamUserAgent(target, clientUa)
+  const { referer } = mediaRequestHeaders(req, target)
 
-  console.log("[xt:vod-subtitles]", redactStreamUrl(target).slice(0, 160))
+  console.log("[xt:vod-subtitles] metadata", redactStreamUrl(target).slice(0, 160))
 
-  const streams = await listSubtitleStreams(target, userAgent, referer)
-  const tracks: Array<{ src: string; label: string; language: string }> = []
-  for (let i = 0; i < Math.min(streams.length, 8); i++) {
-    const stream = streams[i]
-    const language = stream.tags?.language || ""
-    const label = stream.tags?.title || language || `Subtitle ${i + 1}`
-    const filename = `sub-${i}.vtt`
-    const outPath = join(dir, filename)
-    let exists = false
-    try {
-      exists = (await stat(outPath)).size > 0
-    } catch {}
-    if (!exists) {
-      const ok = await extractSubtitleTrack(target, userAgent, referer, i, outPath)
-      if (!ok) continue
-    }
-    tracks.push({
-      src: `${SUBTITLE_ASSET_PATH}?id=${encodeURIComponent(hash)}&file=${encodeURIComponent(filename)}`,
-      label,
-      language,
-    })
+  const streams = await listMediaStreams(target, userAgent, referer)
+  const tracks = listSubtitleMetadata(streams, target).map(({ codec: _codec, ...track }) => track)
+  sendJson(res, 200, { tracks })
+}
+
+async function vodStreamsHandler(
+  req: import("http").IncomingMessage,
+  res: import("http").ServerResponse,
+): Promise<void> {
+  let target = requestParam(req, "url")
+  if (target) target = preferHttpsStreamUrl(target)
+  if (!target || !isAllowedTarget(target)) {
+    sendJson(res, 400, { audio: [], subtitles: [], error: "invalid url" })
+    return
   }
 
-  sendJson(res, 200, { tracks })
+  const clientUa =
+    (typeof req.headers["x-xt-ua"] === "string" && req.headers["x-xt-ua"]) || ""
+  const userAgent = upstreamUserAgent(target, clientUa)
+  const { referer } = mediaRequestHeaders(req, target)
+
+  console.log("[xt:vod-streams]", redactStreamUrl(target).slice(0, 160))
+
+  try {
+    const streams = await listMediaStreams(target, userAgent, referer)
+    const audio = streams
+      .filter((stream) => stream.codec_type === "audio")
+      .map((stream, index) => ({
+        index,
+        language: stream.tags?.language || "",
+        label: stream.tags?.title || stream.tags?.language || "",
+        codec: stream.codec_name || "",
+      }))
+    const subtitles = listSubtitleMetadata(streams, target)
+    console.log(
+      "[xt:vod-streams] tracks",
+      "audio:",
+      audio.length,
+      "subtitles:",
+      subtitles.length,
+      "(lazy extract)",
+    )
+    sendJson(res, 200, { audio, subtitles })
+  } catch (err) {
+    console.warn("[xt:vod-streams] error:", err)
+    sendJson(res, 502, { audio: [], subtitles: [], error: String((err as Error)?.message || err) })
+  }
+}
+
+async function vodRemuxHandler(
+  req: import("http").IncomingMessage,
+  res: import("http").ServerResponse,
+): Promise<void> {
+  let target = requestParam(req, "url")
+  if (target) target = preferHttpsStreamUrl(target)
+  const audioIdx = Math.max(0, parseInt(requestParam(req, "audio") || "0", 10) || 0)
+  if (!target || !isAllowedTarget(target)) {
+    res.statusCode = 400
+    res.end("invalid url")
+    return
+  }
+
+  const clientUa =
+    (typeof req.headers["x-xt-ua"] === "string" && req.headers["x-xt-ua"]) || ""
+  const userAgent = upstreamUserAgent(target, clientUa)
+  const { referer } = mediaRequestHeaders(req, target)
+  const headers = ffmpegHeaders(userAgent, referer)
+
+  console.log("[xt:vod-remux]", redactStreamUrl(target).slice(0, 160), "audio:", audioIdx)
+
+  applyCorsHeaders(res)
+  res.statusCode = 200
+  res.setHeader("Content-Type", "video/mp4")
+  res.setHeader("Cache-Control", "no-store")
+
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    ...(headers ? ["-headers", headers] : []),
+    "-i",
+    target,
+    "-map",
+    "0:v:0?",
+    "-map",
+    `0:a:${audioIdx}`,
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-f",
+    "mp4",
+    "-movflags",
+    "frag_keyframe+empty_moov+default_base_moof",
+    "pipe:1",
+  ]
+
+  const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] })
+  req.on("close", () => {
+    try {
+      child.kill("SIGKILL")
+    } catch {}
+  })
+  child.stdout.pipe(res)
+  child.stderr.on("data", (chunk: string) => {
+    if (chunk.trim()) console.debug("[xt:vod-remux] ffmpeg:", chunk.trim().slice(0, 200))
+  })
+  child.on("error", (err) => {
+    if (!res.headersSent) res.statusCode = 502
+    if (!res.writableEnded) res.end(String(err))
+  })
+  child.on("close", (code) => {
+    if (code !== 0 && !res.writableEnded) {
+      if (!res.headersSent) res.statusCode = 502
+      res.end(`ffmpeg remux failed (${code})`)
+    }
+  })
 }
 
 async function subtitleAssetHandler(
@@ -253,6 +607,43 @@ function applyUpstreamMetadata(
   if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges)
 }
 
+function isBenignProxyDisconnect(err: unknown): boolean {
+  const message = String((err as Error)?.message || err)
+  const cause = (err as { code?: string; message?: string })?.cause
+  const causeCode = cause?.code || ""
+  const causeMessage = String(cause?.message || "")
+  return (
+    message === "terminated" ||
+    /terminated|aborted|other side closed|ECONNRESET/i.test(message) ||
+    /terminated|aborted|other side closed/i.test(causeMessage) ||
+    (err as Error)?.name === "AbortError" ||
+    causeCode === "UND_ERR_SOCKET" ||
+    causeCode === "ABORT_ERR" ||
+    causeCode === "ECONNRESET"
+  )
+}
+
+async function pumpUpstreamBody(
+  upstream: Response,
+  res: import("http").ServerResponse,
+  clientClosed: () => boolean,
+): Promise<void> {
+  if (!upstream.body) return
+  const reader = upstream.body.getReader()
+  try {
+    while (!clientClosed()) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (clientClosed()) break
+      if (value?.byteLength) res.write(Buffer.from(value))
+    }
+  } finally {
+    try {
+      await reader.cancel()
+    } catch {}
+  }
+}
+
 function isAllowedTarget(url: string): boolean {
   try {
     const parsed = new URL(url)
@@ -291,9 +682,9 @@ async function proxyHandler(
     return
   }
 
-  const ua =
-    (typeof req.headers["x-xt-ua"] === "string" && req.headers["x-xt-ua"]) ||
-    DEFAULT_UA
+  const clientUa =
+    (typeof req.headers["x-xt-ua"] === "string" && req.headers["x-xt-ua"]) || ""
+  const ua = upstreamUserAgent(target, clientUa)
   let referer =
     (typeof req.headers["x-xt-referer"] === "string" &&
       req.headers["x-xt-referer"]) ||
@@ -314,11 +705,26 @@ async function proxyHandler(
   }
   console.log("[xt:stream-proxy]", req.method, redactStreamUrl(target).slice(0, 160))
 
+  const upstreamAbort = new AbortController()
+  let clientClosed = false
+  const markClientClosed = () => {
+    clientClosed = true
+    try {
+      upstreamAbort.abort()
+    } catch {}
+  }
+  upstreamAbort.signal.addEventListener("abort", () => {
+    clientClosed = true
+  })
+  req.on("close", markClientClosed)
+  res.on("close", markClientClosed)
+
   async function fetchUpstream(url: string) {
     return fetch(url, {
       method,
       headers: fetchHeaders,
       redirect: "follow",
+      signal: upstreamAbort.signal,
     })
   }
 
@@ -352,14 +758,16 @@ async function proxyHandler(
       return
     }
 
-    const shouldRewrite =
+    const urlSuggestsM3u8 = /\.m3u8(?:[?#]|$)/i.test(target)
+    const shouldInspectManifest =
+      urlSuggestsM3u8 ||
       looksLikeM3u8(contentType, target) ||
-      (upstream.ok && /\.m3u8(?:[?#]|$)/i.test(target))
+      (upstream.ok && urlSuggestsM3u8)
 
-    if (shouldRewrite) {
+    if (shouldInspectManifest) {
       const raw = await upstream.text()
       const finalUrl = upstream.url || target
-      if (/\.m3u8(?:[?#]|$)/i.test(target)) {
+      if (urlSuggestsM3u8) {
         const mediaLines = raw.match(/^#EXT-X-MEDIA:.*$/gim)?.length || 0
         console.log(
           "[xt:stream-proxy] m3u8 status:",
@@ -370,9 +778,25 @@ async function proxyHandler(
           mediaLines,
         )
       }
-      let rewritten = looksLikeM3u8(contentType, target, raw)
-        ? rewriteM3u8Playlist(raw, finalUrl)
-        : raw
+      if (!looksLikeM3u8(contentType, target, raw)) {
+        const quietStatus =
+          upstream.status === 401 ||
+          upstream.status === 403 ||
+          upstream.status === 404 ||
+          upstream.status === 551
+        const logFn = quietStatus ? console.debug : console.warn
+        logFn(
+          "[xt:stream-proxy] upstream is not HLS manifest",
+          upstream.status,
+          redactStreamUrl(target).slice(0, 120),
+        )
+        res.statusCode =
+          upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502
+        res.setHeader("Content-Type", "text/plain; charset=utf-8")
+        res.end(`Upstream returned non-HLS body (HTTP ${upstream.status})`)
+        return
+      }
+      let rewritten = rewriteM3u8Playlist(raw, finalUrl)
       rewritten = sanitizeTvMasterPlaylistIfNeeded(rewritten)
       const body = Buffer.from(rewritten, "utf8")
       res.setHeader("Content-Type", contentType || "application/vnd.apple.mpegurl")
@@ -383,14 +807,22 @@ async function proxyHandler(
 
     applyUpstreamMetadata(upstream, res)
 
-    const reader = upstream.body.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value?.byteLength) res.write(Buffer.from(value))
+    try {
+      await pumpUpstreamBody(upstream, res, () => clientClosed)
+    } catch (pumpErr) {
+      if (!clientClosed && !isBenignProxyDisconnect(pumpErr)) throw pumpErr
     }
-    res.end()
+    if (!clientClosed && !res.writableEnded) res.end()
+    return
   } catch (err) {
+    if (clientClosed || isBenignProxyDisconnect(err)) {
+      if (!res.writableEnded) {
+        try {
+          res.end()
+        } catch {}
+      }
+      return
+    }
     const fallback = httpFallbackStreamUrl(target)
     if (fallback && target.startsWith("https://")) {
       try {
@@ -408,17 +840,22 @@ async function proxyHandler(
           return
         }
         applyUpstreamMetadata(upstream, res)
-        const reader = upstream.body.getReader()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          if (value?.byteLength) res.write(Buffer.from(value))
-        }
-        res.end()
+        await pumpUpstreamBody(upstream, res, () => clientClosed)
+        if (!clientClosed && !res.writableEnded) res.end()
         return
       } catch (retryErr) {
-        console.warn("[xt:stream-proxy] http fallback failed:", retryErr)
+        if (!clientClosed && !isBenignProxyDisconnect(retryErr)) {
+          console.warn("[xt:stream-proxy] http fallback failed:", retryErr)
+        }
       }
+    }
+    if (clientClosed || isBenignProxyDisconnect(err)) {
+      if (!res.writableEnded) {
+        try {
+          res.end()
+        } catch {}
+      }
+      return
     }
     console.warn("[xt:stream-proxy] upstream error:", err)
     res.statusCode = 502
@@ -432,6 +869,65 @@ export function streamProxyPlugin(): Plugin {
     name: "xtream-stream-proxy",
     apply: "serve",
     configureServer(server: ViteDevServer) {
+      server.middlewares.use(VOD_STREAMS_PATH, (req, res) => {
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204
+          applyCorsHeaders(res)
+          res.end()
+          return
+        }
+        if (req.method !== "GET") {
+          res.statusCode = 405
+          res.end("Method not allowed")
+          return
+        }
+        vodStreamsHandler(req, res).catch((err) => {
+          console.warn("[xt:vod-streams] handler error:", err)
+          sendJson(res, 502, { audio: [], subtitles: [], error: String(err?.message || err) })
+        })
+      })
+      server.middlewares.use(VOD_SUBTITLE_PATH, (req, res) => {
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204
+          applyCorsHeaders(res)
+          res.end()
+          return
+        }
+        if (req.method !== "GET") {
+          res.statusCode = 405
+          res.end("Method not allowed")
+          return
+        }
+        vodSubtitleHandler(req, res).catch((err) => {
+          console.warn("[xt:vod-subtitle] handler error:", err)
+          if (!res.headersSent) res.statusCode = 502
+          if (!res.writableEnded) res.end(String((err as Error)?.message || err))
+        })
+      })
+      server.middlewares.use(VOD_REMUX_PATH, (req, res) => {
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204
+          applyCorsHeaders(res)
+          res.end()
+          return
+        }
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          res.statusCode = 405
+          res.end("Method not allowed")
+          return
+        }
+        if (req.method === "HEAD") {
+          res.statusCode = 200
+          applyCorsHeaders(res)
+          res.end()
+          return
+        }
+        vodRemuxHandler(req, res).catch((err) => {
+          console.warn("[xt:vod-remux] handler error:", err)
+          if (!res.headersSent) res.statusCode = 502
+          if (!res.writableEnded) res.end(String(err?.message || err))
+        })
+      })
       server.middlewares.use(SUBTITLE_PATH, (req, res) => {
         if (req.method === "OPTIONS") {
           res.statusCode = 204

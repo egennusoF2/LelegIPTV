@@ -75,15 +75,25 @@ export function rewriteM3u8Playlist(body: string, baseUrl: string): string {
     .join("\n")
 }
 
+export function bodyLooksLikeM3u8(body: string): boolean {
+  return body.includes("#EXTM3U") || body.includes("#EXT-X-")
+}
+
+/** True when the response body is an HLS manifest (not merely the URL extension). */
 export function looksLikeM3u8(
   contentType: string | null | undefined,
   targetUrl: string,
   bodyPreview?: string,
 ): boolean {
-  if (/\.m3u8(?:[?#]|$)/i.test(targetUrl)) return true
-  if (contentType && /mpegurl|m3u8|application\/vnd\.apple/i.test(contentType)) {
-    return true
+  if (bodyPreview) {
+    if (bodyLooksLikeM3u8(bodyPreview)) return true
+    // Provider error pages (HTML/JSON) must not be rewritten as playlists.
+    const trimmed = bodyPreview.trimStart()
+    if (trimmed.startsWith("<") || trimmed.startsWith("{")) return false
   }
-  if (bodyPreview?.includes("#EXTM3U")) return true
+  if (/\.m3u8(?:[?#]|$)/i.test(targetUrl)) return !bodyPreview
+  if (contentType && /mpegurl|m3u8|application\/vnd\.apple/i.test(contentType)) {
+    return !bodyPreview
+  }
   return false
 }

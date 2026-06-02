@@ -11,6 +11,8 @@ import {
   unwrapStreamProxyUrl,
   STREAM_PROXY_PATH,
   preferPlainHttpForXtreamMedia,
+  isContainerUrl,
+  streamUrlsEquivalent,
 } from "../src/scripts/lib/stream-proxy"
 
 describe("preferHttpsStreamUrl", () => {
@@ -93,6 +95,37 @@ describe("isIptvMediaUrl", () => {
 
   it("does not match xmltv", () => {
     expect(isIptvMediaUrl("http://panel.example.com/xmltv.php?u=1")).toBe(false)
+  })
+})
+
+describe("isContainerUrl", () => {
+  it("matches mkv paths", () => {
+    expect(isContainerUrl("http://panel.example.com/movie/u/p/1.mkv")).toBe(true)
+  })
+
+  it("matches series and movie mp4 paths", () => {
+    expect(isContainerUrl("http://panel.example.com/series/u/p/9.mp4")).toBe(true)
+    expect(isContainerUrl("http://panel.example.com/movie/u/p/1.mp4")).toBe(true)
+  })
+})
+
+describe("streamUrlsEquivalent", () => {
+  it("treats same path on different query as equivalent", () => {
+    expect(
+      streamUrlsEquivalent(
+        "http://a.example.com/series/u/p/1.mp4",
+        "http://a.example.com/series/u/p/1.mp4?x=1",
+      ),
+    ).toBe(true)
+  })
+
+  it("rejects different paths", () => {
+    expect(
+      streamUrlsEquivalent(
+        "http://a.example.com/series/u/p/1.mp4",
+        "http://b.example.com/series/u/p/1.mp4",
+      ),
+    ).toBe(false)
   })
 })
 

@@ -49,6 +49,7 @@ import { fmtImdbRating } from "@/scripts/lib/format.js"
 import { setRichPresence, clearRichPresence } from "@/scripts/lib/discord-rpc.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
 import { mountPlayer, getExternalLauncher } from "@/scripts/lib/player-runtime.ts"
+import { streamUrlsEquivalent } from "@/scripts/lib/stream-proxy"
 import { getPlayerBackend, getUserAgent } from "@/scripts/lib/app-settings.js"
 import { setEmbeddedMediaFetchContext } from "@/scripts/lib/embedded-media-fetch.js"
 import { toast } from "@/scripts/lib/toast.js"
@@ -655,6 +656,29 @@ async function ensureEmbeddedPlayer(backend) {
   return vjs
 }
 
+function setPlayerLoading(visible) {
+  const overlay = document.getElementById("series-detail-player-loading")
+  const label = document.getElementById("series-detail-player-loading-label")
+  if (!overlay) return
+  if (label) {
+    label.textContent = t("detail.player.starting") || "Starting playback…"
+  }
+  if (visible) {
+    overlay.classList.remove("hidden")
+    overlay.setAttribute("aria-busy", "true")
+  } else {
+    overlay.classList.add("hidden")
+    overlay.removeAttribute("aria-busy")
+  }
+}
+
+function bindPlayerLoadingEvents(player) {
+  const hide = () => setPlayerLoading(false)
+  player.one?.("playing", hide)
+  player.one?.("canplay", hide)
+  player.one?.("error", hide)
+}
+
 function markNowPlayingEpisode(epId) {
   currentPlayingEpisodeId = epId == null ? null : Number(epId)
   if (!episodeList) return
@@ -670,9 +694,7 @@ function markNowPlayingEpisode(epId) {
 
 async function playEpisode(episode) {
   if (!series || !episode) return
-  const src = episode?._directUrl
-    ? buildEpisodeStreamUrl(episode)
-    : await resolveStreamUrl((c) => buildEpisodeStreamUrl(episode, c))
+  let src = buildEpisodeStreamUrl(episode)
   if (!src) return
   dismissUpNext()
 
@@ -700,6 +722,7 @@ async function playEpisode(episode) {
   currentEpisode = episode
   externalBtnHandle?.refresh()
 
+  const remoteSrc = src
   const localSrc = await getLocalPlayableSrc(src)
   const playSrc = localSrc || src
   const saved = activePlaylistId
@@ -727,11 +750,16 @@ async function playEpisode(episode) {
 
   if (posterEl) posterEl.classList.add("hidden")
   if (playerWrap) playerWrap.classList.remove("hidden")
+  setPlayerLoading(true)
   const videoEl = document.getElementById("series-player")
   videoEl?.removeAttribute("hidden")
 
   const player = await ensureEmbeddedPlayer(backend)
-  if (!player) return
+  if (!player) {
+    setPlayerLoading(false)
+    return
+  }
+  bindPlayerLoadingEvents(player)
   setupPipButton(player)
   try {
     setEmbeddedMediaFetchContext({
@@ -758,7 +786,31 @@ async function playEpisode(episode) {
     })
   }
 
-  player.src({ src: playSrc, type: mime })
+  const containerExtension = String(episode.container_extension || "mp4")
+    .replace(/^\.+/, "")
+    .toLowerCase()
+
+  player.src({
+    src: playSrc,
+    type: mime,
+    containerExtension,
+    remoteSourceUrl: localSrc ? remoteSrc : undefined,
+  })
+
+  if (!episode?._directUrl) {
+    void resolveStreamUrl((c) => buildEpisodeStreamUrl(episode, c))
+      .then((resolved) => {
+        if (!resolved || !player || streamUrlsEquivalent(resolved, playSrc)) return
+        player.src({
+          src: resolved,
+          type: chooseMime(resolved),
+          containerExtension,
+        })
+      })
+      .catch((err) => {
+        log.warn("[xt:series-detail] backup domain resolve failed", err)
+      })
+  }
 
   if (!progressListenersBound) {
     progressListenersBound = true

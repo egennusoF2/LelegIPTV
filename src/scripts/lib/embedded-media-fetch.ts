@@ -7,6 +7,8 @@ import {
   resolveEmbeddedStreamUrl,
   unwrapStreamProxyUrl,
   isIosEmbedded,
+  isIptvMediaUrl,
+  resolveUpstreamUserAgent,
 } from "@/scripts/lib/stream-proxy"
 import { log } from "@/scripts/lib/log.js"
 
@@ -42,7 +44,10 @@ export function shouldUseProviderFetchForMedia(): boolean {
 
 export function resolveMediaHeaders(url: string): Headers {
   const headers = new Headers()
-  const ua = mediaFetchContext?.userAgent || getUserAgent()
+  const upstream = unwrapStreamProxyUrl(url)
+  const ua = isIptvMediaUrl(upstream)
+    ? resolveUpstreamUserAgent(upstream)
+    : mediaFetchContext?.userAgent || getUserAgent()
   if (ua) headers.set("User-Agent", ua)
   let referer = mediaFetchContext?.referer || null
   if (!referer) {
@@ -120,19 +125,31 @@ export function buildHlsXhrSetup(
 export { resolveEmbeddedStreamUrl }
 
 /** hls.js: manifest + segments with UA/referer; dev proxy or Tauri HTTP in app builds. */
-export async function createEmbeddedHlsConfig(): Promise<Record<string, unknown>> {
+export async function createEmbeddedHlsConfig(
+  opts: { live?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const isLive = opts.live === true
   const devProxy = useDevStreamProxy()
   const tauriMedia = shouldUseProviderFetchForMedia()
   const config: Record<string, unknown> = {
     // WKWebView on iOS: workers often break hls.js segment loading.
     enableWorker: !devProxy && !isIosEmbedded(),
     enableWebVTT: true,
+    enableIMSC1: true,
+    enableCEA708Captions: true,
     renderTextTracksNatively: false,
-    lowLatencyMode: true,
-    startFragPrefetch: true,
-    liveSyncDurationCount: 2,
-    liveMaxLatencyDurationCount: 5,
-    backBufferLength: 30,
+    lowLatencyMode: isLive,
+    startFragPrefetch: isLive,
+    ...(isLive
+      ? {
+          liveSyncDurationCount: 2,
+          liveMaxLatencyDurationCount: 5,
+        }
+      : {
+          maxBufferLength: 60,
+          maxMaxBufferLength: 120,
+        }),
+    backBufferLength: isLive ? 30 : 90,
   }
 
   if (tauriMedia) {

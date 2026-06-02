@@ -1,23 +1,69 @@
 import { log } from "@/scripts/lib/log.js"
 import { t } from "@/scripts/lib/i18n.js"
+import { isContainerUrl, useDevStreamProxy } from "@/scripts/lib/stream-proxy"
+import { isXtreamVodContainerUrl } from "@/scripts/lib/embedded-vod-playback.js"
 import {
   clearTrackPreference,
   findPreferredTrackIndex,
   saveTrackPreference,
 } from "@/scripts/lib/media-track-preferences"
+import { formatMediaTrackLabel } from "@/scripts/lib/media-track-labels.js"
 
-const SETTING_AUDIO = "xt-native-audio"
-const SETTING_SUBTITLE = "xt-native-subtitle"
+export const NATIVE_SETTING_AUDIO = "xt-native-audio"
+export const NATIVE_SETTING_SUBTITLE = "xt-native-subtitle"
+
+const SETTING_AUDIO = NATIVE_SETTING_AUDIO
+const SETTING_SUBTITLE = NATIVE_SETTING_SUBTITLE
+
+export function removeNativeTrackSettings(art: any): void {
+  try {
+    art.setting.remove(SETTING_AUDIO)
+  } catch {}
+  try {
+    art.setting.remove(SETTING_SUBTITLE)
+  } catch {}
+}
+
+export function shouldWireNativeTracks(art: any): boolean {
+  if (!art || art.hls) return false
+  if (art._xtContainerTracks || art._xtPendingContainerTracks) return false
+  if (!useDevStreamProxy()) return true
+  const probe =
+    (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
+    (typeof art._xtVodSourceUrl === "string" && art._xtVodSourceUrl) ||
+    ""
+  if (!probe) return true
+  // Film/serie Xtream: menu ffprobe/ffmpeg o hls.js, non audioTracks nativi (non commutabili).
+  if (isContainerUrl(probe) || isXtreamVodContainerUrl(probe)) {
+    return false
+  }
+  return true
+}
 
 function refreshNativeAudioSettings(art: any, video: HTMLVideoElement): void {
+  if (!shouldWireNativeTracks(art)) return
   const tracks = (video as any).audioTracks
-  if (!tracks || tracks.length === 0) return
 
   try {
     art.setting.remove(SETTING_AUDIO)
   } catch {}
 
   const selector: Array<{ html: string; default?: boolean; onSelect?: () => void }> = []
+  if (!tracks || tracks.length === 0) {
+    selector.push({
+      html:
+        t("player.track.audioEmbeddedOnly") ||
+        "Use the HLS stream for multiple audio tracks (browser limitation)",
+      onSelect() {},
+    })
+    art.setting.add({
+      name: SETTING_AUDIO,
+      html: t("player.menu.audio") || "Audio",
+      width: 280,
+      selector,
+    })
+    return
+  }
   const preferred = findPreferredTrackIndex("audio", tracks)
   if (preferred >= 0) {
     for (let j = 0; j < tracks.length; j++) {
@@ -26,9 +72,11 @@ function refreshNativeAudioSettings(art: any, video: HTMLVideoElement): void {
   }
   for (let i = 0; i < tracks.length; i++) {
     const track = tracks[i]
-    const label =
-      [track.label, track.language, track.id].filter(Boolean).join(" · ") ||
-      `${t("player.track.audio") || "Audio"} ${i + 1}`
+    const label = formatMediaTrackLabel(
+      { label: track.label, language: track.language, id: track.id },
+      i,
+      "audio",
+    )
     selector.push({
       html: label,
       default: track.enabled,
@@ -51,6 +99,7 @@ function refreshNativeAudioSettings(art: any, video: HTMLVideoElement): void {
 }
 
 function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void {
+  if (!shouldWireNativeTracks(art)) return
   try {
     art.setting.remove(SETTING_SUBTITLE)
   } catch {}
@@ -79,9 +128,11 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
       },
     },
     ...subtitleTracks.map((track, index) => ({
-      html:
-        [track.label, track.language].filter(Boolean).join(" · ") ||
-        `${t("player.track.subtitle") || "Subtitle"} ${index + 1}`,
+      html: formatMediaTrackLabel(
+        { label: track.label, language: track.language },
+        index,
+        "subtitle",
+      ),
       default: track.mode === "showing",
       onSelect() {
         for (const tr of textTracks) {
@@ -94,7 +145,12 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
     })),
   ]
 
-  if (subtitleTracks.length === 0) return
+  if (subtitleTracks.length === 0) {
+    selector.push({
+      html: t("player.subtitle.unavailable") || "Not available on this stream",
+      onSelect() {},
+    })
+  }
 
   art.setting.add({
     name: SETTING_SUBTITLE,
@@ -106,14 +162,13 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
 
 export function refreshNativeTrackSettings(art: any, video: HTMLVideoElement | null): void {
   if (!art?.setting || !video) return
-  if (art.hls) return
+  if (!shouldWireNativeTracks(art)) return
   refreshNativeAudioSettings(art, video)
   refreshNativeSubtitleSettings(art, video)
 }
 
 export function wireNativeTracksForArtplayer(art: any): void {
   const refresh = () => {
-    if (art.hls) return
     refreshNativeTrackSettings(art, art.video)
   }
   art.on("video:loadedmetadata", refresh)

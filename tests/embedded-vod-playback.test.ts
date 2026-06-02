@@ -2,8 +2,13 @@ import { describe, it, expect } from "vitest"
 import {
   toHlsSiblingUrl,
   toMp4SiblingUrl,
+  toMkvSiblingUrl,
   isXtreamVodContainerUrl,
   looksLikeOfflineFallback,
+  shouldSkipVodHlsSibling,
+  shouldSkipVodHlsProbe,
+  isXtreamSeriesContainerUrl,
+  containerExtensionFromUrl,
 } from "../src/scripts/lib/embedded-vod-playback"
 
 describe("toHlsSiblingUrl", () => {
@@ -23,6 +28,14 @@ describe("toHlsSiblingUrl", () => {
     expect(
       toHlsSiblingUrl("http://panel.example.com/movie/u/p/1.m3u8"),
     ).toBeNull()
+  })
+})
+
+describe("toMkvSiblingUrl", () => {
+  it("rewrites series mp4 to mkv", () => {
+    expect(
+      toMkvSiblingUrl("http://panel.example.com/series/u/p/347677.mp4"),
+    ).toBe("http://panel.example.com/series/u/p/347677.mkv")
   })
 })
 
@@ -57,6 +70,33 @@ describe("isXtreamVodContainerUrl", () => {
     expect(
       isXtreamVodContainerUrl("http://panel.example.com/live/u/p/1.m3u8"),
     ).toBe(false)
+  })
+})
+
+describe("shouldSkipVodHlsSibling", () => {
+  it("skips HLS probe for mkv-only panels", () => {
+    const mkv = "http://panel.example.com/movie/u/p/734099.mkv"
+    expect(containerExtensionFromUrl(mkv)).toBe("mkv")
+    expect(shouldSkipVodHlsSibling(mkv)).toBe(true)
+    expect(shouldSkipVodHlsSibling(mkv, "mkv")).toBe(true)
+  })
+
+  it("still allows HLS probe for mp4 movie containers", () => {
+    expect(shouldSkipVodHlsSibling("http://panel.example.com/movie/u/p/1.mp4")).toBe(false)
+  })
+})
+
+describe("shouldSkipVodHlsProbe", () => {
+  it("skips HLS for series episode mp4", () => {
+    const ep = "http://panel.example.com/series/u/p/347677.mp4"
+    expect(isXtreamSeriesContainerUrl(ep)).toBe(true)
+    expect(shouldSkipVodHlsProbe(ep)).toBe(true)
+    expect(shouldSkipVodHlsProbe(ep, "mp4")).toBe(true)
+  })
+
+  it("still probes HLS for mp4 movies when panel may serve m3u8", () => {
+    const movie = "http://panel.example.com/movie/u/p/1.mp4"
+    expect(shouldSkipVodHlsProbe(movie)).toBe(false)
   })
 })
 

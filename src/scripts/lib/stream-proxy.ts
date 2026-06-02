@@ -1,5 +1,34 @@
 export const STREAM_PROXY_PATH = "/__stream"
 
+/** VOD file playback (mkv/mp4): VLC enables Range/206 on many Xtream panels. */
+export const IPTV_UA_VOD = "VLC/3.0.20 LibVLC/3.0.20"
+
+/**
+ * HLS manifests/segments: IPTV player UA — browser UA often gets 401/403.
+ * @see tracce-audio-sottotitoli-web-implementazione.md §2.4
+ */
+export const IPTV_UA_HLS =
+  "Mozilla/5.0 (Linux; Android 9; SM-G960F) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 IPTVSmartersPlayer/3.1.5"
+
+/**
+ * Upstream User-Agent for IPTV media URLs (proxy, hls.js, probes, ffmpeg).
+ * Settings → Network UA applies to API/M3U/EPG only, not stream fetches.
+ */
+export function resolveUpstreamUserAgent(url: string): string {
+  if (!url) return IPTV_UA_VOD
+  try {
+    if (/\.m3u8(?:[?#]|$)/i.test(url)) return IPTV_UA_HLS
+    const path = new URL(url).pathname
+    if (/\/live\//i.test(path)) return IPTV_UA_HLS
+    if (/\/(movie|series)\//i.test(path)) return IPTV_UA_VOD
+  } catch {
+    if (/\/live\//i.test(url)) return IPTV_UA_HLS
+    if (/\/(movie|series)\//i.test(url)) return IPTV_UA_VOD
+  }
+  return IPTV_UA_VOD
+}
+
 const isTauri =
   typeof window !== "undefined" &&
   (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
@@ -207,14 +236,13 @@ export async function resolveNativeStreamProxyUrl(url: string): Promise<string> 
   if (!useNativeStreamProxy()) return url
   try {
     const { invoke } = await import("@tauri-apps/api/core")
-    const { getUserAgent } = await import("@/scripts/lib/app-settings.js")
     let referer = ""
     try {
       referer = `${new URL(url).origin}/`
     } catch {}
     return await invoke<string>("media_proxy_url", {
       url,
-      userAgent: getUserAgent() || undefined,
+      userAgent: resolveUpstreamUserAgent(url),
       referer: referer || undefined,
     })
   } catch {
@@ -239,6 +267,31 @@ export function isIptvMediaUrl(url: string): boolean {
   }
 }
 
+/** MKV/AVI (and dev MP4 VOD) probed via ffmpeg/ffprobe for embedded track menus. */
+export function isContainerUrl(url: string): boolean {
+  const path = (url.split("?")[0] ?? "").toLowerCase()
+  if (/\.(mkv|avi)(\?|#|$)/i.test(path)) return true
+  if (/\.mp4(\?|#|$)/i.test(path) && /\/(movie|series)\//i.test(url)) {
+    return true
+  }
+  return false
+}
+
+/** Avoid pointless player reload when backup-domain resolve returns the same asset. */
+export function streamUrlsEquivalent(a: string, b: string): boolean {
+  if (!a || !b) return a === b
+  if (a === b) return true
+  const strip = (value: string) => {
+    try {
+      const parsed = new URL(value)
+      return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.toLowerCase()
+    } catch {
+      return value.split("?")[0]?.toLowerCase() || value
+    }
+  }
+  return strip(a) === strip(b)
+}
+
 export function resolveEmbeddedStreamUrl(url: string): string {
   const normalized = preferHttpsStreamUrl(url)
   return useDevStreamProxy() ? wrapStreamUrlForDev(normalized) : normalized
@@ -255,12 +308,10 @@ export function devProxyFetchHeaders(mediaHeaders: Headers): HeadersInit {
 
 /**
  * When false, ArtPlayer uses native <video src> for .m3u8.
- * iOS must stay native because WKWebView has no usable MSE path for hls.js.
- * macOS Tauri should use hls.js: it exposes audio/subtitle tracks reliably and
- * avoids the slow/opaque native HLS startup path.
+ * Tauri (incluso iOS) usa hls.js per tracce audio/sottotitoli alternate.
+ * Solo Safari iOS nel browser resta nativo (un solo audio track esposto).
  */
 export function shouldUseHlsJsForM3u8(): boolean {
-  if (isIosEmbedded()) return false
   if (isTauriEmbedded()) return true
   if (typeof navigator === "undefined") return true
   const ua = navigator.userAgent || ""

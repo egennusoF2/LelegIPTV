@@ -16,6 +16,8 @@ import {
   findPreferredTrackIndex,
   saveTrackPreference,
 } from "@/scripts/lib/media-track-preferences"
+import { removeNativeTrackSettings } from "@/scripts/lib/embedded-native-tracks.js"
+import { formatMediaTrackLabel } from "@/scripts/lib/media-track-labels.js"
 
 const SETTING_AUDIO = "xt-hls-audio"
 const SETTING_SUBTITLE = "xt-hls-subtitle"
@@ -39,16 +41,27 @@ function audioTrackLabel(
   track: { name?: string; lang?: string; groupId?: string; codec?: string },
   index: number,
 ): string {
-  const parts = [track.name, track.lang, track.groupId, track.codec].filter(Boolean)
-  return parts.length ? parts.join(" · ") : `${t("player.track.audio") || "Audio"} ${index + 1}`
+  return formatMediaTrackLabel(
+    {
+      name: track.name,
+      lang: track.lang,
+      groupId: track.groupId,
+      codec: track.codec,
+    },
+    index,
+    "audio",
+  )
 }
 
 function subtitleTrackLabel(
   track: { name?: string; lang?: string; id?: string },
   index: number,
 ): string {
-  const parts = [track.name, track.lang, track.id].filter(Boolean)
-  return parts.length ? parts.join(" · ") : `${t("player.track.subtitle") || "Subtitle"} ${index + 1}`
+  return formatMediaTrackLabel(
+    { name: track.name, lang: track.lang, id: track.id },
+    index,
+    "subtitle",
+  )
 }
 
 function currentLevelAudioCodec(hls: {
@@ -93,6 +106,8 @@ function applyPreferredHlsTracks(hls: any, opts: { audio?: boolean; subtitle?: b
 export function refreshHlsTrackSettings(art: any, hls: any): void {
   if (!art?.setting || !hls) return
 
+  removeNativeTrackSettings(art)
+
   try {
     art.setting.remove(SETTING_AUDIO)
   } catch {}
@@ -101,6 +116,12 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
   } catch {}
 
   const audioTracks = hls.audioTracks || []
+  if (import.meta.env.DEV) {
+    log.log("[xt:player] HLS track menu", {
+      audio: audioTracks.length,
+      subtitle: (hls.subtitleTracks || []).length,
+    })
+  }
   const currentAudio =
     typeof hls.audioTrack === "number" ? hls.audioTrack : pickBestAudioTrackIndex(hls)
   const embeddedLabel = t("player.track.audioEmbedded") || "Default (main stream)"
@@ -146,6 +167,15 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
     ),
   ]
 
+  if (audioTracks.length === 0) {
+    audioSelector.push({
+      html:
+        t("player.track.audioEmbeddedOnly") ||
+        "Only the main audio track is available on this stream",
+      onSelect() {},
+    })
+  }
+
   if (codecHint) {
     audioSelector.push({
       html: `${t("player.track.codec") || "Codec"}: ${codecHint}`,
@@ -188,6 +218,12 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
           hls.subtitleTrack = index
           hls.subtitleDisplay = true
           saveTrackPreference("subtitle", track)
+          if (art.video) {
+            for (const tr of Array.from(art.video.textTracks || [])) {
+              tr.mode = "disabled"
+            }
+          }
+          log.log("[xt:player] HLS subtitle", index, track)
         },
       }),
     ),
@@ -215,6 +251,19 @@ export interface WireHlsOptions {
   live?: boolean
 }
 
+function scheduleVodTrackRefresh(art: any, hls: any, isLive: boolean): void {
+  if (isLive) {
+    setTimeout(() => refreshHlsTrackSettings(art, hls), 400)
+    return
+  }
+  for (const delay of [400, 1200, 2500]) {
+    setTimeout(() => {
+      if (!art?.hls || art.hls !== hls) return
+      refreshHlsTrackSettings(art, hls)
+    }, delay)
+  }
+}
+
 function nudgeLiveToEdge(video: HTMLVideoElement): void {
   try {
     if (video.currentTime > 0.5) return
@@ -239,7 +288,7 @@ export function wireHlsForArtplayer(
 ): void {
   const Hls = hls?.constructor
   if (!Hls?.Events) return
-  const isLive = options.live !== false
+  const isLive = options.live === true
 
   if (import.meta.env.DEV) {
     try {
@@ -322,7 +371,7 @@ export function wireHlsForArtplayer(
       codecsFromHlsManifest(data as { levels?: Array<{ codecs?: string; audioCodec?: string }> }),
     )
     refreshHlsTrackSettings(art, hls)
-    setTimeout(() => refreshHlsTrackSettings(art, hls), 400)
+    scheduleVodTrackRefresh(art, hls, isLive)
   })
 
   hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, onTracksUpdated)
@@ -371,13 +420,19 @@ export function wireHlsForArtplayer(
     })
   })
 
-  hls.on(Hls.Events.ERROR, (_event: string, data: { type?: string; details?: string; fatal?: boolean }) => {
+  hls.on(Hls.Events.ERROR, (_event: string, data: { type?: string; details?: string; fatal?: boolean; response?: { code?: number } }) => {
     const details = data?.details || ""
+    const httpCode = data?.response?.code
+    const manifestAuthFailure =
+      /manifestLoadError|manifestParsingError|levelLoadError/i.test(details) &&
+      (httpCode === 401 || httpCode === 403)
+    const logFn = manifestAuthFailure ? log.debug.bind(log) : log.warn.bind(log)
     if (import.meta.env.DEV) {
-      log.warn("[xt:player] HLS error", {
+      logFn("[xt:player] HLS error", {
         type: data?.type,
         details,
         fatal: data?.fatal,
+        httpCode,
         currentTime: video.currentTime,
         readyState: video.readyState,
         networkState: video.networkState,

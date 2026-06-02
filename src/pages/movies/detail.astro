@@ -54,8 +54,20 @@ import {
           </div>
           <div
             id="movie-detail-player-wrap"
-            class="hidden aspect-video w-full mx-auto overflow-hidden rounded-xl bg-black ring-1 ring-line
+            class="hidden relative aspect-video w-full mx-auto overflow-hidden rounded-xl bg-black ring-1 ring-line
                    max-h-[60dvh] max-w-[calc(60dvh*16/9)]">
+            <div
+              id="movie-detail-player-loading"
+              class="hidden absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/75 pointer-events-none"
+              aria-live="polite"
+              aria-busy="true">
+              <div
+                class="h-10 w-10 rounded-full border-2 border-fg-3 border-t-accent animate-spin"
+                aria-hidden="true"></div>
+              <p id="movie-detail-player-loading-label" class="text-sm text-fg-2 px-4 text-center">
+                Starting playback…
+              </p>
+            </div>
             <video
               id="movie-player"
               class="video-js vjs-default-skin vjs-big-play-centered h-full w-full"

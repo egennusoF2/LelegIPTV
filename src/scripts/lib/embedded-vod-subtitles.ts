@@ -15,16 +15,16 @@ interface ExtractedSubtitleTrack {
 
 function canExtractDevSubtitles(url: string): boolean {
   if (!useDevStreamProxy()) return false
+  if (!/\.(mkv|avi|ts|mp4)(?:[?#]|$)/i.test(url.split("?")[0] || url)) return false
   try {
     const params = new URLSearchParams(window.location.search)
-    const enabled =
+    return (
       params.get("extractSubs") === "1" ||
       localStorage.getItem("xt_vod_extract_subtitles") === "1"
-    if (!enabled) return false
+    )
   } catch {
     return false
   }
-  return /\.(mkv|avi|ts)(?:[?#]|$)/i.test(url.split("?")[0] || url)
 }
 
 function removeGeneratedTracks(video: HTMLVideoElement): void {
@@ -69,7 +69,9 @@ export async function attachExtractedVodSubtitles(
     }
     return tracks.length
   } catch (error) {
-    log.warn("[xt:player] VOD subtitle extraction failed", error)
+    if (import.meta.env.DEV) {
+      log.debug("[xt:player] VOD subtitle extraction skipped", error)
+    }
     return 0
   }
 }

@@ -6,11 +6,13 @@ import {
   wrapStreamUrlForDev,
   devProxyFetchHeaders,
   isAppleEmbedded,
+  isTauriEmbedded,
   preferPlainHttpForXtreamMedia,
 } from "@/scripts/lib/stream-proxy"
 
 const PROBE_MS = 5000
-const PROBE_BYTES = 2048
+/** Master playlists often declare EXT-X-MEDIA after the first variants. */
+const PROBE_BYTES = 16_384
 const OFFLINE_FALLBACK_RE = /\b(TS_OFFLINE|offline|demo|placeholder)\b/i
 
 interface HlsProbeResult {
@@ -19,6 +21,34 @@ interface HlsProbeResult {
   mediaLines: number
   subtitleLines: number
   audioLines: number
+  /** Master playlist with variant renditions (needed for alternate tracks). */
+  masterPlaylist: boolean
+  /** Panel rejected HLS for this path (401/403) — skip further probes. */
+  authDenied?: boolean
+}
+
+/** Paths where HLS was already rejected; avoids repeated 401 noise in console. */
+const hlsDeniedPathKeys = new Set<string>()
+
+export function vodStreamPathKey(url: string): string {
+  try {
+    return new URL(url).pathname.replace(/\.[a-z0-9]+$/i, "")
+  } catch {
+    return url.split("?")[0] || url
+  }
+}
+
+export function isVodHlsDenied(url: string): boolean {
+  return hlsDeniedPathKeys.has(vodStreamPathKey(url))
+}
+
+function scoreHlsProbe(probe: HlsProbeResult): number {
+  return (
+    probe.audioLines * 200 +
+    probe.subtitleLines * 200 +
+    probe.mediaLines * 10 +
+    (probe.masterPlaylist ? 80 : 0)
+  )
 }
 
 function emitVodChoice(reason: string, originalUrl: string, selectedUrl: string): void {
@@ -49,7 +79,7 @@ function alignSiblingScheme(containerUrl: string, siblingUrl: string): string {
   }
 }
 
-function toSiblingUrl(url: string, ext: "m3u8" | "mp4"): string | null {
+function toSiblingUrl(url: string, ext: "m3u8" | "mp4" | "mkv"): string | null {
   if (!url) return null
   const stripped = url.split("?")[0] ?? ""
   if (new RegExp(`\\.${ext}$`, "i").test(stripped)) return null
@@ -86,16 +116,16 @@ export function looksLikeOfflineFallback(value: string): boolean {
 }
 
 function hlsSiblingCandidates(originalUrl: string, normalizedUrl: string): string[] {
-  const normalizedSibling = toHlsSiblingUrl(normalizedUrl)
-  const originalSibling = toHlsSiblingUrl(originalUrl)
-  return uniqueUrls([
-    normalizedSibling,
-    originalSibling,
-    normalizedSibling ? forceScheme(normalizedSibling, "https:") : null,
-    originalSibling ? forceScheme(originalSibling, "https:") : null,
-    normalizedSibling ? forceScheme(normalizedSibling, "http:") : null,
-    originalSibling ? forceScheme(originalSibling, "http:") : null,
-  ])
+  const primary = toHlsSiblingUrl(normalizedUrl) || toHlsSiblingUrl(originalUrl)
+  if (!primary) return []
+  const preferred = preferPlainHttpForXtreamMedia(primary)
+  const altScheme =
+    preferred.startsWith("http:") && !preferred.startsWith("https:")
+      ? forceScheme(preferred, "https:")
+      : preferred.startsWith("https:")
+        ? forceScheme(preferred, "http:")
+        : null
+  return uniqueUrls([preferred, primary !== preferred ? primary : null, altScheme])
 }
 
 export function toHlsSiblingUrl(url: string): string | null {
@@ -104,6 +134,10 @@ export function toHlsSiblingUrl(url: string): string | null {
 
 export function toMp4SiblingUrl(url: string): string | null {
   return toSiblingUrl(url, "mp4")
+}
+
+export function toMkvSiblingUrl(url: string): string | null {
+  return toSiblingUrl(url, "mkv")
 }
 
 /** Xtream VOD paths usually expose an `.m3u8` next to the container file. */
@@ -142,13 +176,18 @@ async function buildProbeHeaders(upstreamUrl: string): Promise<Headers> {
   return headers
 }
 
-async function probeReachable(url: string): Promise<HlsProbeResult> {
-  const failed = (): HlsProbeResult => ({
+async function probeReachable(
+  url: string,
+  alternateUserAgent?: string,
+): Promise<HlsProbeResult> {
+  const failed = (authDenied = false): HlsProbeResult => ({
     reachable: false,
     url,
     mediaLines: 0,
     subtitleLines: 0,
     audioLines: 0,
+    masterPlaylist: false,
+    authDenied,
   })
   const controller =
     typeof AbortController !== "undefined" ? new AbortController() : null
@@ -159,6 +198,13 @@ async function probeReachable(url: string): Promise<HlsProbeResult> {
       target = wrapStreamUrlForDev(url)
     }
     const headers = await buildProbeHeaders(url)
+    if (alternateUserAgent) {
+      headers.set("User-Agent", alternateUserAgent)
+      if (useDevStreamProxy()) {
+        headers.set("X-XT-UA", alternateUserAgent)
+      }
+    }
+    headers.set("Range", "bytes=0-2047")
     const { providerFetch } = await import("@/scripts/lib/provider-fetch.js")
     // When the dev proxy is active, `target` is a relative /__stream URL that
     // the Tauri HTTP plugin (Rust) cannot resolve. Use native fetch instead.
@@ -168,7 +214,26 @@ async function probeReachable(url: string): Promise<HlsProbeResult> {
       signal: controller?.signal,
       forceTauri: !useDevStreamProxy(),
     })
-    if (response.status === 401 || response.status === 403 || response.status === 404) {
+    if (response.status === 401 || response.status === 403) {
+      try {
+        response.body?.cancel?.()
+      } catch {}
+      return failed(true)
+    }
+    if (response.status === 551) {
+      try {
+        response.body?.cancel?.()
+      } catch {}
+      hlsDeniedPathKeys.add(vodStreamPathKey(url))
+      if (import.meta.env.DEV) {
+        log.debug(
+          "[xt:player] VOD HLS unavailable (551); skip further probes",
+          redactUrl(url).slice(0, 120),
+        )
+      }
+      return failed(true)
+    }
+    if (response.status === 404 || response.status >= 500) {
       try {
         response.body?.cancel?.()
       } catch {}
@@ -190,14 +255,36 @@ async function probeReachable(url: string): Promise<HlsProbeResult> {
       try {
         response.body?.cancel?.()
       } catch {}
+      if (
+        !snippet.includes("#EXTM3U") &&
+        !snippet.includes("#EXT-X-") &&
+        !(response.ok && ct.includes("mpegurl"))
+      ) {
+        return failed()
+      }
       const mediaLines = snippet.match(/^#EXT-X-MEDIA:.*$/gim)?.length || 0
       const subtitleLines = snippet.match(/^#EXT-X-MEDIA:.*TYPE=SUBTITLES.*$/gim)?.length || 0
       const audioLines = snippet.match(/^#EXT-X-MEDIA:.*TYPE=AUDIO.*$/gim)?.length || 0
+      const masterPlaylist = /#EXT-X-STREAM-INF/i.test(snippet)
       if (snippet.includes("#EXTM3U") || snippet.includes("#EXT-X-")) {
-        return { reachable: true, url, mediaLines, subtitleLines, audioLines }
+        return {
+          reachable: true,
+          url,
+          mediaLines,
+          subtitleLines,
+          audioLines,
+          masterPlaylist,
+        }
       }
       if (response.ok && ct.includes("mpegurl")) {
-        return { reachable: true, url, mediaLines, subtitleLines, audioLines }
+        return {
+          reachable: true,
+          url,
+          mediaLines,
+          subtitleLines,
+          audioLines,
+          masterPlaylist,
+        }
       }
     }
     try {
@@ -264,9 +351,51 @@ async function probeNativeMp4Playable(url: string): Promise<boolean> {
   }
 }
 
+/** Panels that only publish a container file (no parallel `.m3u8` ladder). */
+const CONTAINER_ONLY_EXTENSIONS = new Set(["mkv", "avi", "wmv", "flv"])
+
+export function containerExtensionFromUrl(url: string): string {
+  const match = (url.split("?")[0] ?? "").match(/\.([a-z0-9]+)$/i)
+  return (match?.[1] ?? "").toLowerCase()
+}
+
+/**
+ * Xtream `get_vod_info` often reports `container_extension: mkv` with no HLS URL.
+ * Probing `.m3u8` then always 401 — Smarters Lite plays the MKV via redirect+token.
+ */
+export function shouldSkipVodHlsSibling(
+  url: string,
+  containerExtension?: string,
+): boolean {
+  const ext = (containerExtension || containerExtensionFromUrl(url)).toLowerCase()
+  return CONTAINER_ONLY_EXTENSIONS.has(ext)
+}
+
+/** Series episodes are usually a single `.mp4`; sibling `.m3u8` often returns HTTP 551. */
+export function isXtreamSeriesContainerUrl(url: string): boolean {
+  if (!url) return false
+  try {
+    const path = new URL(url).pathname.toLowerCase()
+    return /\/series\/[^/]+\/[^/]+\/\d+\.[a-z0-9]+$/i.test(path)
+  } catch {
+    return /\/series\//i.test(url) && /\.[a-z0-9]+(\?|#|$)/i.test(url)
+  }
+}
+
+/** Skip HLS sibling probes (save time and avoid pointless proxy traffic). */
+export function shouldSkipVodHlsProbe(
+  url: string,
+  containerExtension?: string,
+): boolean {
+  if (shouldSkipVodHlsSibling(url, containerExtension)) return true
+  return isXtreamSeriesContainerUrl(url)
+}
+
 export interface PreferVodHlsOptions {
   /** Try `.m3u8` without probe (only when caller already verified it exists). */
   optimistic?: boolean
+  /** From Xtream `movie_data.container_extension` when known. */
+  containerExtension?: string
 }
 
 /**
@@ -279,9 +408,31 @@ export async function preferVodHlsUrl(
   options: PreferVodHlsOptions = {},
 ): Promise<string> {
   const normalizedUrl = preferPlainHttpForXtreamMedia(url)
+  const streamKey = vodStreamPathKey(normalizedUrl)
+
+  if (shouldSkipVodHlsProbe(normalizedUrl, options.containerExtension)) {
+    if (import.meta.env.DEV) {
+      const reason = isXtreamSeriesContainerUrl(normalizedUrl)
+        ? "series mp4/mkv"
+        : containerExtensionFromUrl(normalizedUrl) || options.containerExtension
+      log.log("[xt:player] skip HLS sibling probe", reason)
+    }
+    emitVodChoice(
+      isXtreamSeriesContainerUrl(normalizedUrl) ? "series-container" : "container-only",
+      url,
+      normalizedUrl,
+    )
+    return normalizedUrl
+  }
+
   const hlsCandidates = hlsSiblingCandidates(url, normalizedUrl)
   const mp4Sibling = toMp4SiblingUrl(normalizedUrl)
   if (hlsCandidates.length === 0 && !mp4Sibling) return url
+
+  if (hlsDeniedPathKeys.has(streamKey)) {
+    emitVodChoice("hls-denied-cache", url, normalizedUrl)
+    return normalizedUrl
+  }
 
   if (hlsCandidates[0] && options.optimistic) {
     const sibling = hlsCandidates[0]
@@ -292,28 +443,59 @@ export async function preferVodHlsUrl(
     return sibling
   }
 
+  const preferWebTracks =
+    typeof window !== "undefined" &&
+    !isTauriEmbedded() &&
+    isXtreamVodContainerUrl(normalizedUrl)
+
   let bestHls: HlsProbeResult | null = null
+  let bestScore = -1
+  let firstReachable: HlsProbeResult | null = null
   for (const candidate of hlsCandidates) {
     const probe = await probeReachable(candidate)
-    if (!probe.reachable) continue
-    if (!bestHls || probe.mediaLines > bestHls.mediaLines) {
-      bestHls = probe
+    if (probe.authDenied) {
+      hlsDeniedPathKeys.add(streamKey)
+      if (import.meta.env.DEV) {
+        log.debug(
+          "[xt:player] VOD HLS denied/unavailable; using container file",
+          redactUrl(normalizedUrl).slice(0, 120),
+        )
+      }
+      break
     }
-    if (probe.subtitleLines > 0 || probe.audioLines > 0) break
+    if (!probe.reachable) continue
+    if (!firstReachable) firstReachable = probe
+    const score = scoreHlsProbe(probe)
+    if (!bestHls || score > bestScore) {
+      bestHls = probe
+      bestScore = score
+    }
+    if (probe.subtitleLines > 0 && probe.audioLines > 0) break
   }
 
-  if (bestHls) {
-    const sibling = bestHls.url
+  const chosen = preferWebTracks ? bestHls || firstReachable : bestHls
+  if (chosen) {
+    const sibling = chosen.url
     if (import.meta.env.DEV) {
       log.log("[xt:player] VOD HLS sibling verified", {
         url: redactUrl(sibling).slice(0, 120),
-        mediaLines: bestHls.mediaLines,
-        audioLines: bestHls.audioLines,
-        subtitleLines: bestHls.subtitleLines,
+        mediaLines: chosen.mediaLines,
+        audioLines: chosen.audioLines,
+        subtitleLines: chosen.subtitleLines,
+        masterPlaylist: chosen.masterPlaylist,
+        preferWebTracks,
       })
     }
     emitVodChoice(
-      bestHls.mediaLines > 0 ? "hls-tracks-verified" : "hls-verified",
+      chosen.audioLines > 0 || chosen.subtitleLines > 0
+        ? "hls-tracks-verified"
+        : chosen.masterPlaylist
+          ? preferWebTracks
+            ? "hls-web-master"
+            : "hls-master-verified"
+          : preferWebTracks
+            ? "hls-web-verified"
+            : "hls-verified",
       url,
       sibling,
     )
@@ -337,7 +519,7 @@ export async function preferVodHlsUrl(
   }
 
   if (import.meta.env.DEV) {
-    log.warn("[xt:player] VOD HLS sibling unavailable; using original", redactUrl(url).slice(0, 120))
+    log.debug("[xt:player] VOD HLS sibling unavailable; using original", redactUrl(url).slice(0, 120))
   }
 
   emitVodChoice("original", url, normalizedUrl)
