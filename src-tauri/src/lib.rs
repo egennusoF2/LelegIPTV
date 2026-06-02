@@ -77,6 +77,11 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_android_fs::init());
 
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        media_proxy::media_proxy_url,
+    ]);
+
     builder
         .setup(|_app| {
             #[cfg(not(target_os = "android"))]

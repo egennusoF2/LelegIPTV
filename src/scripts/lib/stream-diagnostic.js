@@ -3,6 +3,10 @@
 // against the first segment. Used by the "Test stream" context-menu action
 // to triage "this channel doesn't play" reports.
 import { providerFetch } from "@/scripts/lib/provider-fetch.js"
+import {
+  resolveEmbeddedStreamUrl,
+  useDevStreamProxy,
+} from "@/scripts/lib/stream-proxy.js"
 
 const FETCH_TIMEOUT_MS = 12_000
 
@@ -22,6 +26,10 @@ function withTimeout(promise, ms, label) {
       }
     )
   })
+}
+
+function probeUrlFor(url) {
+  return useDevStreamProxy() ? resolveEmbeddedStreamUrl(url) : url
 }
 
 function resolveUrl(base, ref) {
@@ -180,7 +188,7 @@ export async function diagnoseStream(url, onUpdate) {
     return report
   }
 
-  report.head = await headOrGet(url)
+  report.head = await headOrGet(probeUrlFor(url))
   emit()
 
   const looksLikeHls =
@@ -189,9 +197,10 @@ export async function diagnoseStream(url, onUpdate) {
 
   if (looksLikeHls) {
     try {
+      const playlistUrl = probeUrlFor(url)
       const start = performance.now()
       const response = await withTimeout(
-        providerFetch(url),
+        providerFetch(playlistUrl),
         FETCH_TIMEOUT_MS,
         "Playlist GET"
       )
@@ -222,7 +231,10 @@ export async function diagnoseStream(url, onUpdate) {
 
       // For a master playlist, descend into the top variant first.
       if (parsed.isMaster && parsed.variants[0]?.uri) {
-        const variantUrl = resolveUrl(url, parsed.variants[0].uri)
+        const variantRef = parsed.variants[0].uri
+        const variantUrl = variantRef.includes("/__stream?")
+          ? new URL(variantRef, window.location.origin).href
+          : probeUrlFor(resolveUrl(url, variantRef))
         try {
           const variantResp = await withTimeout(
             providerFetch(variantUrl),
@@ -249,12 +261,13 @@ export async function diagnoseStream(url, onUpdate) {
       }
 
       if (firstSegmentUri) {
-        const segmentUrl = resolveUrl(
-          parsed.isMaster && report.playlist.descendedVariant
+        const segmentBase =
+          parsed.isMaster && report.playlist.descendedVariant?.url
             ? report.playlist.descendedVariant.url
-            : url,
-          firstSegmentUri
-        )
+            : playlistUrl
+        const segmentUrl = firstSegmentUri.includes("/__stream?")
+          ? new URL(firstSegmentUri, window.location.origin).href
+          : probeUrlFor(resolveUrl(segmentBase, firstSegmentUri))
         const segHead = await headOrGet(segmentUrl)
         report.firstSegment = {
           ...segHead,

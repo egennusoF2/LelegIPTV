@@ -79,7 +79,7 @@ import {
   setEmbeddedMediaFetchContext,
   clearEmbeddedMediaFetchContext,
 } from "@/scripts/lib/embedded-media-fetch"
-import { preferHttpsStreamUrl } from "@/scripts/lib/stream-proxy"
+import { preferHttpsStreamUrl, isIosEmbedded } from "@/scripts/lib/stream-proxy"
 import { installDevStreamFetchPatch } from "@/scripts/lib/dev-stream-fetch-patch"
 import { setStreamStatus } from "@/scripts/lib/stream-state-cache"
 
@@ -1370,7 +1370,7 @@ async function runAutoDiagnostic(ctx, dismissGenericToast) {
     }
     const { verdict, reason } = summarizeReport(report)
     log.log("[xt:livetv] auto-diagnostic verdict:", verdict, reason)
-    if (!reason) return
+    if (!reason || verdict === "ok" || verdict === "warn") return
     try { dismissGenericToast?.() } catch {}
     toastError(
       t("stream.error.cantPlay", { channel: ctx.name || `#${ctx.streamId}` }),
@@ -1678,6 +1678,7 @@ function clearStartupSentinel() {
 }
 
 function canTryXtreamTsFallback(ctx) {
+  if (isIosEmbedded()) return false
   if (!ctx || ctx.tsFallbackTried) return false
   if (ctx.hlsPlaybackFailed) return false
   if (hasDirectUrl(ctx.streamId)) return false
@@ -2070,10 +2071,14 @@ async function play(streamId, name, options = {}) {
     referer: channelHeaders?.referer || defaultStreamReferer(src),
   })
   const seq = ++playSeq
+  let playSrc = src
+  if (isIosEmbedded() && /\.ts(?:[?#]|$)/i.test(playSrc || "")) {
+    playSrc = playSrc.replace(/\.ts(?=[?#]|$)/i, ".m3u8")
+  }
   lastPlayContext = {
     streamId,
     name,
-    src,
+    src: playSrc,
     seq,
     retried: false,
     tsFallbackTried: false,
@@ -2086,10 +2091,10 @@ async function play(streamId, name, options = {}) {
   hideBufferingChip()
   clearStallSentinel()
   try { player.reset?.() } catch {}
-  const liveType = /\.ts(?:[?#]|$)/i.test(src || "")
+  const liveType = /\.ts(?:[?#]|$)/i.test(playSrc || "")
     ? "video/mp2t"
     : "application/x-mpegURL"
-  player.src({ src, type: liveType })
+  player.src({ src: playSrc, type: liveType })
   const playResult = player.play?.()
   if (playResult && typeof playResult.catch === "function") {
     playResult.catch(() => {})

@@ -1,5 +1,6 @@
 ---
 import Layout from "@/layouts/Layout.astro"
+import InstallWebAppCard from "@/components/InstallWebAppCard.svelte"
 import {
   IconDownload,
   IconSettings,
@@ -22,6 +23,8 @@ import {
         Movies and series episodes you save will appear here.
       </p>
     </header>
+
+    <InstallWebAppCard client:load variant="banner" />
 
     <!-- Folder summary -->
     <a

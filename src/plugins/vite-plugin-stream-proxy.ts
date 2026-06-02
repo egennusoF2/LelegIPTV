@@ -1004,28 +1004,64 @@ async function proxyHandler(
   req.on("close", markClientClosed)
   res.on("close", markClientClosed)
 
-  async function fetchUpstream(url: string) {
+  async function fetchUpstream(url: string, opts?: { asGet?: boolean }) {
+    const useGet = opts?.asGet === true
+    const headers = { ...fetchHeaders }
+    if (useGet && method === "HEAD" && !headers.Range) {
+      headers.Range = "bytes=0-0"
+    }
     return fetch(url, {
-      method,
-      headers: fetchHeaders,
+      method: useGet ? "GET" : method,
+      headers,
       redirect: "follow",
       signal: upstreamAbort.signal,
     })
   }
 
-  try {
-    let upstream = await fetchUpstream(target)
-    if (
-      !upstream.ok &&
-      upstream.status >= 500 &&
-      target.startsWith("https://")
-    ) {
-      const fallback = httpFallbackStreamUrl(target)
-      if (fallback) {
-        console.log("[xt:stream-proxy] retry http", redactStreamUrl(fallback).slice(0, 160))
-        upstream = await fetchUpstream(fallback)
+  async function fetchUpstreamResilient(url: string): Promise<Response> {
+    try {
+      let upstream = await fetchUpstream(url)
+      if (
+        method === "HEAD" &&
+        (!upstream.ok ||
+          upstream.status === 405 ||
+          upstream.status === 501 ||
+          upstream.status === 403)
+      ) {
+        console.log(
+          "[xt:stream-proxy] HEAD rejected",
+          upstream.status,
+          "→ GET range",
+          redactStreamUrl(url).slice(0, 120),
+        )
+        upstream = await fetchUpstream(url, { asGet: true })
       }
+      if (
+        !upstream.ok &&
+        upstream.status >= 500 &&
+        url.startsWith("https://")
+      ) {
+        const fallback = httpFallbackStreamUrl(url)
+        if (fallback) {
+          console.log("[xt:stream-proxy] retry http", redactStreamUrl(fallback).slice(0, 160))
+          return fetchUpstreamResilient(fallback)
+        }
+      }
+      return upstream
+    } catch (err) {
+      if (method === "HEAD") {
+        console.log(
+          "[xt:stream-proxy] HEAD failed → GET range",
+          redactStreamUrl(url).slice(0, 120),
+        )
+        return fetchUpstream(url, { asGet: true })
+      }
+      throw err
     }
+  }
+
+  try {
+    let upstream = await fetchUpstreamResilient(target)
 
     res.statusCode = upstream.status
     applyCorsHeaders(res)
@@ -1033,7 +1069,25 @@ async function proxyHandler(
     const contentType = upstream.headers.get("content-type")
 
     if (method === "HEAD") {
-      applyUpstreamMetadata(upstream, res)
+      // Normalize 206 Partial Content → 200 OK for HEAD responses.
+      // This happens when the upstream rejected HEAD and we fell back to GET range=0-0:
+      // the CDN returns 206 with Content-Length=1, which confuses AVFoundation (iOS native HLS)
+      // into thinking the file is 1 byte and abandoning the segment download.
+      if (upstream.status === 206) {
+        res.statusCode = 200
+        const contentRange = upstream.headers.get("content-range")
+        // Content-Range: bytes 0-0/TOTAL → extract TOTAL as the real Content-Length
+        const totalMatch = contentRange?.match(/\/(\d+)$/)
+        if (totalMatch) {
+          res.setHeader("Content-Length", totalMatch[1])
+        }
+        const ct = upstream.headers.get("content-type")
+        if (ct) res.setHeader("Content-Type", ct)
+        const acceptRanges = upstream.headers.get("accept-ranges")
+        if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges)
+      } else {
+        applyUpstreamMetadata(upstream, res)
+      }
       res.end()
       return
     }
@@ -1112,7 +1166,7 @@ async function proxyHandler(
     if (fallback && target.startsWith("https://")) {
       try {
         console.log("[xt:stream-proxy] tls retry http", redactStreamUrl(fallback).slice(0, 160))
-        const upstream = await fetchUpstream(fallback)
+        const upstream = await fetchUpstreamResilient(fallback)
         res.statusCode = upstream.status
         applyCorsHeaders(res)
         if (method === "HEAD") {

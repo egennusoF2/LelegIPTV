@@ -39,10 +39,24 @@ export function isTauriEmbedded(): boolean {
 }
 
 export function isIosEmbedded(): boolean {
+  if (typeof document !== "undefined") {
+    if (document.documentElement?.getAttribute("data-platform") === "ios") {
+      return isTauriEmbedded()
+    }
+  }
   if (typeof navigator === "undefined") return false
-  return (
-    isTauriEmbedded() && /\b(iPad|iPhone|iPod)\b/i.test(navigator.userAgent || "")
-  )
+  const ua = navigator.userAgent || ""
+  if (isTauriEmbedded() && /\b(iPad|iPhone|iPod)\b/i.test(ua)) return true
+  // WKWebView on device sometimes omits "iPhone" in UA; iOS touch + no Android/desktop hints.
+  if (
+    isTauriEmbedded() &&
+    typeof navigator.maxTouchPoints === "number" &&
+    navigator.maxTouchPoints > 1 &&
+    !/Android/i.test(ua)
+  ) {
+    return true
+  }
+  return false
 }
 
 export function isAppleEmbedded(): boolean {
@@ -228,8 +242,28 @@ export function wrapStreamUrlForDev(url: string): string {
   }
 }
 
+/** True when streams should go through the Tauri Rust media proxy (127.0.0.1/stream). */
 export function useNativeStreamProxy(): boolean {
+  if (isIosEmbedded()) {
+    // Dev WebView loads from the Mac LAN host — native HLS must use same-origin /__stream.
+    // Loopback 127.0.0.1/stream is not reachable from a remote-origin WKWebView page.
+    if (useDevStreamProxy()) return false
+    return isTauriEmbedded()
+  }
   return isTauriEmbedded() && !useDevStreamProxy()
+}
+
+export function isNativeMediaProxyUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname
+    return (
+      (host === "127.0.0.1" || host === "localhost") &&
+      parsed.pathname === "/stream"
+    )
+  } catch {
+    return false
+  }
 }
 
 export async function resolveNativeStreamProxyUrl(url: string): Promise<string> {
@@ -240,12 +274,19 @@ export async function resolveNativeStreamProxyUrl(url: string): Promise<string> 
     try {
       referer = `${new URL(url).origin}/`
     } catch {}
-    return await invoke<string>("media_proxy_url", {
+    const proxied = await invoke<string>("media_proxy_url", {
       url,
       userAgent: resolveUpstreamUserAgent(url),
       referer: referer || undefined,
     })
-  } catch {
+    if (import.meta.env.DEV) {
+      const { log } = await import("@/scripts/lib/log.js")
+      log.log("[xt:stream] native media proxy", proxied.slice(0, 120))
+    }
+    return proxied
+  } catch (error) {
+    const { log } = await import("@/scripts/lib/log.js")
+    log.error("[xt:stream] media_proxy_url failed; using direct URL", error)
     return url
   }
 }
@@ -324,8 +365,33 @@ export function streamUrlsEquivalent(a: string, b: string): boolean {
 }
 
 export function resolveEmbeddedStreamUrl(url: string): string {
-  const normalized = preferHttpsStreamUrl(url)
-  return useDevStreamProxy() ? wrapStreamUrlForDev(normalized) : normalized
+  if (isNativeMediaProxyUrl(url)) return url
+  const normalized = preferPlainHttpForXtreamMedia(preferHttpsStreamUrl(url))
+  if (!useDevStreamProxy()) return normalized
+  const wrapped = wrapStreamUrlForDev(normalized)
+  // iOS dev: absolute same-origin URL so native HLS resolves /__stream segment refs correctly.
+  if (typeof window !== "undefined" && isIosEmbedded()) {
+    try {
+      return new URL(wrapped, window.location.origin).href
+    } catch {}
+  }
+  return wrapped
+}
+
+/** HLS playback URL for embedded players (dev proxy, native proxy, or direct). */
+export async function resolveHlsPlaybackUrl(url: string): Promise<string> {
+  const normalized = preferPlainHttpForXtreamMedia(preferHttpsStreamUrl(url))
+  const resolved = useNativeStreamProxy()
+    ? await resolveNativeStreamProxyUrl(normalized)
+    : resolveEmbeddedStreamUrl(normalized)
+  if (import.meta.env.DEV && isIosEmbedded()) {
+    const { log } = await import("@/scripts/lib/log.js")
+    log.log("[xt:stream] ios hls playback", {
+      via: useNativeStreamProxy() ? "media_proxy" : "dev_proxy",
+      url: resolved.slice(0, 140),
+    })
+  }
+  return resolved
 }
 
 export function devProxyFetchHeaders(mediaHeaders: Headers): HeadersInit {
@@ -337,12 +403,12 @@ export function devProxyFetchHeaders(mediaHeaders: Headers): HeadersInit {
   return out
 }
 
-/**
- * When false, ArtPlayer uses native <video src> for .m3u8.
- * Tauri (incluso iOS) usa hls.js per tracce audio/sottotitoli alternate.
- * Solo Safari iOS nel browser resta nativo (un solo audio track esposto).
- */
+/** When false, ArtPlayer uses native <video src> for .m3u8. */
 export function shouldUseHlsJsForM3u8(): boolean {
+  if (isIosEmbedded()) {
+    // WKWebView native HLS plays proxied TS segments; hls.js/MSE is unreliable on iOS.
+    return false
+  }
   if (isTauriEmbedded()) return true
   if (typeof navigator === "undefined") return true
   const ua = navigator.userAgent || ""

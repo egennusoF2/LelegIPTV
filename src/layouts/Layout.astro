@@ -3,6 +3,7 @@ import Sidebar from "@/components/Sidebar.astro"
 import TitleBar from "@/components/TitleBar.astro"
 import WindowResizeEdges from "@/components/WindowResizeEdges.astro"
 import CatalogWarmingIndicator from "@/components/CatalogWarmingIndicator.svelte"
+import { pwaInfo } from "virtual:pwa-info"
 import "../styles/global.css"
 
 interface Props {
@@ -23,6 +24,16 @@ const documentTitle = pageTitle
       content="width=device-width, initial-scale=1,viewport-fit=cover"
     />
     <title>{documentTitle}</title>
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    {pwaInfo ? <Fragment set:html={pwaInfo.webManifest.linkTag} /> : null}
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Leleg IPTV" />
+    <meta name="application-name" content="Leleg IPTV" />
     <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0e1628" media="(prefers-color-scheme: dark)" />
     <script is:inline>
@@ -37,12 +48,21 @@ const documentTitle = pageTitle
         document.documentElement.style.setProperty("--xt-font-scale", String(fontScale));
         try {
           var uaPlatform = (navigator.userAgent || "").toLowerCase();
-          if (uaPlatform.indexOf("android") !== -1) {
-            document.documentElement.setAttribute("data-platform", "android");
-          }
           var hasTauri = !!window.__TAURI_INTERNALS__ || !!window.__TAURI__;
-          if (hasTauri && uaPlatform.indexOf("android") === -1) {
+          if (hasTauri && uaPlatform.indexOf("android") !== -1) {
+            document.documentElement.setAttribute("data-platform", "android");
+          } else if (hasTauri && /\b(iPad|iPhone|iPod)\b/i.test(uaPlatform)) {
+            document.documentElement.setAttribute("data-platform", "ios");
+          } else if (hasTauri) {
             document.documentElement.setAttribute("data-tauri-desktop", "1");
+          }
+          if (
+            !hasTauri &&
+            (window.matchMedia("(display-mode: standalone)").matches ||
+              window.matchMedia("(display-mode: minimal-ui)").matches ||
+              window.navigator.standalone === true)
+          ) {
+            document.documentElement.setAttribute("data-pwa", "standalone");
           }
         } catch (e) {}
         var cw = parseFloat(localStorage.getItem("xt_channels_w") || "");
@@ -210,6 +230,9 @@ const documentTitle = pageTitle
         window.__applyAndroidStatusBar = applyAndroidStatusBar;
       } catch (e) {}
     </script>
+    <script>
+      import "../scripts/pwa-register.ts"
+    </script>
   </head>
 
   <body
@@ -223,22 +246,14 @@ const documentTitle = pageTitle
       <canvas id="xt-app-splash-bg" aria-hidden="true"></canvas>
       <div class="xt-app-splash__inner">
         <div class="xt-app-splash__mark-wrap">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="xt-app-splash__svg"
+          <img
+            src="/icon-192.png"
+            alt=""
+            width="192"
+            height="192"
+            class="xt-app-splash__icon"
             aria-hidden="true"
-          >
-            <path
-              id="xt-app-splash-path"
-              class="xt-app-splash__base"
-              d="M18.1777 8C23.2737 8 23.2737 16 18.1777 16C13.0827 16 11.0447 8 5.43875 8C0.85375 8 0.85375 16 5.43875 16C11.0447 16 13.0828 8 18.1788 8H18.1777Z"
-            />
-          </svg>
-          <canvas class="xt-app-splash__comet" aria-hidden="true"></canvas>
+          />
         </div>
         <span class="xt-app-splash__wordmark">
           <span class="xt-app-splash__wordmark-1">Leleg</span><span class="xt-app-splash__wordmark-2">&nbsp;IPTV</span>
@@ -373,39 +388,12 @@ const documentTitle = pageTitle
     aspect-ratio: 1 / 1;
   }
 
-  .xt-app-splash__svg {
-    position: relative;
-    z-index: 1;
+  .xt-app-splash__icon {
     width: 100%;
     height: 100%;
-    overflow: visible;
+    object-fit: contain;
+    border-radius: 22%;
     animation: xt-app-splash-mark-in 640ms cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-  .xt-app-splash__base {
-    stroke: var(--color-accent);
-    stroke-width: 0.27;
-    opacity: 0.55;
-    stroke-dasharray: 100;
-    stroke-dashoffset: 100;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .xt-app-splash__base {
-      stroke-dasharray: none;
-      stroke-dashoffset: 0;
-    }
-  }
-  .xt-app-splash__comet {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 2;
-    animation: xt-app-splash-comet-in 320ms ease-out 800ms backwards;
-  }
-  @keyframes xt-app-splash-comet-in {
-    from { opacity: 0; }
-    to   { opacity: 1; }
   }
 
   .xt-app-splash__wordmark {
@@ -439,15 +427,10 @@ const documentTitle = pageTitle
     transition: none;
     background: var(--color-bg);
   }
-  :root[data-perf-mode="on"] .xt-app-splash__svg,
+  :root[data-perf-mode="on"] .xt-app-splash__icon,
   :root[data-perf-mode="on"] .xt-app-splash__wordmark {
     animation: none;
   }
-  :root[data-perf-mode="on"] .xt-app-splash__base {
-    stroke-dasharray: none;
-    stroke-dashoffset: 0;
-  }
-  :root[data-perf-mode="on"] .xt-app-splash__comet { display: none; }
 </style>
 
 <script>
@@ -458,7 +441,6 @@ const documentTitle = pageTitle
   import { initConnectivity } from "@/scripts/lib/connectivity.js"
   import { initTrayHandler } from "@/scripts/lib/tray-handler"
   import { setupSplashBackdrop } from "@/scripts/lib/splash-backdrop"
-  import { setupSplashComet } from "@/scripts/lib/splash-comet"
   initI18n()
   initConnectivity()
 
@@ -468,41 +450,10 @@ const documentTitle = pageTitle
     if (!splash) return
 
     const backdropCleanup = setupSplashBackdrop(splash)
-    const cometCleanup = setupSplashComet(splash)
-
-    const infinityPath = splash.querySelector(
-      "#xt-app-splash-path"
-    ) as SVGPathElement | null
-    let pathLen = 0
-    if (infinityPath) {
-      try { pathLen = infinityPath.getTotalLength() } catch {}
-    }
-    if (infinityPath && pathLen > 0) {
-      const reduce =
-        window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
-        document.documentElement.getAttribute("data-perf-mode") === "on"
-      if (reduce) {
-        infinityPath.style.strokeDasharray = "none"
-        infinityPath.style.strokeDashoffset = "0"
-      } else {
-        infinityPath.style.strokeDasharray = `${pathLen}`
-        infinityPath.style.strokeDashoffset = `${pathLen}`
-        infinityPath.animate(
-          [{ strokeDashoffset: `${pathLen}` }, { strokeDashoffset: "0" }],
-          {
-            duration: 800,
-            delay: 200,
-            easing: "cubic-bezier(0.16, 1, 0.3, 1)",
-            fill: "forwards",
-          }
-        )
-      }
-    }
 
     const MIN_DISPLAY_MS = 3000
     const start = performance.now()
     const remove = () => {
-      cometCleanup()
       backdropCleanup()
       document.documentElement.setAttribute("data-splash-done", "")
       try { sessionStorage.setItem("xt_splash_done", "1") } catch {}

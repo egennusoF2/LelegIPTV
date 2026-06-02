@@ -104,6 +104,23 @@ export function getProviderStats() {
   return { ..._stats }
 }
 
+function isSameOriginMediaProxyUrl(url) {
+  if (typeof window === "undefined") return false
+  try {
+    const parsed = new URL(String(url), window.location.origin)
+    if (parsed.pathname === "/__stream" || parsed.pathname.endsWith("/__stream")) {
+      return parsed.origin === window.location.origin
+    }
+    if (
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+      parsed.pathname.startsWith("/stream")
+    ) {
+      return true
+    }
+  } catch {}
+  return false
+}
+
 export async function providerFetch(url, init = {}) {
   const ua = getUserAgent()
   const u = redactUrl(String(url)).slice(0, 200)
@@ -122,7 +139,7 @@ export async function providerFetch(url, init = {}) {
     }
   }
 
-  const useTauri = isTauri && (ua || forceTauri)
+  const useTauri = isTauri && (ua || forceTauri) && !isSameOriginMediaProxyUrl(url)
 
   if (!useTauri) {
     const headers = new Headers(callInit.headers || {})

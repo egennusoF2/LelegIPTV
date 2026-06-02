@@ -154,7 +154,10 @@ pnpm dev                  # Astro + Svelte at http://localhost:4321
 pnpm tauri dev            # Native desktop shell (auto-spawns pnpm dev)
 pnpm tauri:android        # Android dev shell
 pnpm tauri:ios:dev        # iOS dev shell, after pnpm tauri:ios:init
+pnpm tauri:ios:dev:device # iOS on a physical iPhone/iPad (uses your Mac's LAN IP)
 ```
+
+**iOS dev on a physical device:** Mac and iPhone must be on the same Wi‑Fi. The first launch prompts for **Local Network** access — tap **Allow**, then restart the app if needed. If you previously denied it, enable **Settings → Privacy & Security → Local Network → LelegIPTV**, or delete the app and reinstall. Use `pnpm tauri:ios:dev:device` (or `pnpm tauri:ios:dev --host`) so the dev server is reachable at your Mac's IP instead of `localhost`.
 
 To test the dev server on another device on the LAN (phone, TV), set `XTREAM_HMR_HOST` to your machine's LAN IP so Vite advertises the right HMR host:
 

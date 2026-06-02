@@ -42,6 +42,7 @@ import HubStripsEditor from "@/components/HubStripsEditor.svelte"
 import PlayerPicker from "@/components/PlayerPicker.svelte"
 import TvOverscanCard from "@/components/TvOverscanCard.svelte"
 import CloseToTrayCard from "@/components/CloseToTrayCard.svelte"
+import InstallWebAppCard from "@/components/InstallWebAppCard.svelte"
 import ConnectionLimitBanner from "@/components/ConnectionLimitBanner.svelte"
 
 interface NavCard { id: string; labelKey: string; label: string }
@@ -55,6 +56,7 @@ const navStructure: NavSection[] = [
     { id: "card-perf-mode",         labelKey: "settings.perfMode.title",       label: "Performance mode" },
     { id: "card-tv-overscan",       labelKey: "settings.tvOverscan.title",     label: "TV safe area" },
     { id: "card-hub-strips",        labelKey: "settings.hubStrips.title",      label: "Home page sections" },
+    { id: "card-web-app",           labelKey: "settings.webApp.title",         label: "Install web app" },
     { id: "close-behavior-section", labelKey: "settings.closeBehavior.title",  label: "Close button behavior" },
   ]},
   { id: "settings-watching", labelKey: "settings.group.watching", label: "Watching", cards: [
@@ -315,6 +317,8 @@ const navStructure: NavSection[] = [
         </article>
 
         <CloseToTrayCard client:load />
+
+        <InstallWebAppCard client:load />
 
       </div>
     </section>

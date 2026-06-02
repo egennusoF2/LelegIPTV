@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@import "./theme-fallback.css";
+
 @import "@fontsource-variable/geist";
 @import "@fontsource/instrument-serif/latin-400.css";
 @import "@fontsource/instrument-serif/latin-400-italic.css";

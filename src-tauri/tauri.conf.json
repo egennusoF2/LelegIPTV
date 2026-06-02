@@ -43,6 +43,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "iOS": {
+      "developmentTeam": "F925SY4K37",
+      "minimumSystemVersion": "14.0",
+      "infoPlist": "Info.ios.plist"
+    },
     "publisher": "LelegIPTV",
     "category": "public.app-category.video",
     "copyright": "© 2026 LelegIPTV",

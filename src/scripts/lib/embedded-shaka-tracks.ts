@@ -260,8 +260,11 @@ export async function attachShaka(
       },
     },
     abr: { enabled: true },
-    // Disable native HLS on Safari-like envs so Shaka can expose tracks via its own parser
-    preferNativeHls: false,
+    // On iOS WKWebView, MSE is unreliable — use native HLS player (preferNativeHls: true).
+    // On all other platforms (desktop/Android), force Shaka's own HLS parser so it
+    // can expose audio/subtitle tracks via its own MSE pipeline (preferNativeHls: false).
+    preferNativeHls: typeof navigator !== "undefined"
+      && /\b(iPad|iPhone|iPod)\b/i.test(navigator.userAgent || ""),
   })
 
   const refresh = () => refreshShakaTrackSettings(art, player, opts)

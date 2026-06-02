@@ -15,6 +15,7 @@ import {
   streamUrlsEquivalent,
   vodAssetPathKey,
   vodStreamPathsEquivalent,
+  isNativeMediaProxyUrl,
 } from "../src/scripts/lib/stream-proxy"
 
 describe("preferHttpsStreamUrl", () => {
@@ -173,6 +174,22 @@ describe("streamUrlsEquivalent", () => {
         "http://b.example.com/series/u/p/1.mp4",
       ),
     ).toBe(false)
+  })
+})
+
+describe("isNativeMediaProxyUrl", () => {
+  it("matches local Rust media proxy URLs", () => {
+    expect(
+      isNativeMediaProxyUrl(
+        "http://127.0.0.1:9123/stream?url=http%3A%2F%2Fcdn.example.com%2Flive%2F1.m3u8",
+      ),
+    ).toBe(true)
+  })
+
+  it("does not match dev vite proxy URLs", () => {
+    expect(isNativeMediaProxyUrl("/__stream?url=http%3A%2F%2Fcdn.example.com")).toBe(
+      false,
+    )
   })
 })
 

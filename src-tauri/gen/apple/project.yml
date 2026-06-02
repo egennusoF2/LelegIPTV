@@ -54,6 +54,12 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 1.6.0
         CFBundleVersion: "1.6.0"
+        NSLocalNetworkUsageDescription: LelegIPTV needs access to your local network to connect to the development server on your Mac during development.
+        NSBonjourServices:
+          - _http._tcp.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoadsInMedia: true
+          NSAllowsLocalNetworking: true
     entitlements:
       path: app_iOS/app_iOS.entitlements
     scheme:

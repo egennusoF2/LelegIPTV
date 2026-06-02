@@ -26,9 +26,12 @@ import {
 import {
   preferPlainHttpForXtreamMedia,
   resolveEmbeddedStreamUrl,
+  resolveHlsPlaybackUrl,
   resolveNativeStreamProxyUrl,
   isContainerUrl,
+  isIosEmbedded,
   useDevStreamProxy,
+  useNativeStreamProxy,
 } from "@/scripts/lib/stream-proxy"
 import {
   probeStreamKind,
@@ -604,8 +607,11 @@ function setArtplayerLoading(art: { loading?: { show: boolean } }, show: boolean
 }
 
 async function resolveArtNativePlayUrl(playUrl: string): Promise<string> {
-  const embedded = resolveEmbeddedStreamUrl(playUrl)
-  return resolveNativeStreamProxyUrl(embedded)
+  const normalized = preferPlainHttpForXtreamMedia(playUrl)
+  if (useNativeStreamProxy()) {
+    return resolveNativeStreamProxyUrl(normalized)
+  }
+  return resolveEmbeddedStreamUrl(normalized)
 }
 
 function wireArtLoadingUntilPlay(art: {
@@ -806,10 +812,12 @@ async function mountVideoJs(
     try { player.pause?.() } catch {}
     try { player.reset() } catch {}
     const videoElement = getUnderlyingVideo()
-    const { resolveEmbeddedStreamUrl } = await import(
-      "@/scripts/lib/embedded-media-fetch.js"
-    )
-    const resolved = resolveEmbeddedStreamUrl(src)
+    const resolved = await resolveHlsPlaybackUrl(src)
+    const { shouldUseHlsJsForM3u8 } = await import("@/scripts/lib/stream-proxy.js")
+    if (!shouldUseHlsJsForM3u8()) {
+      player.src({ src: resolved, type: "application/x-mpegURL" })
+      return
+    }
     if (!videoElement) {
       player.src({ src: resolved, type: "application/x-mpegURL" })
       return
@@ -1220,6 +1228,17 @@ async function mountArtPlayer(
       },
       async m3u8(video, url) {
         destroyActiveEmbeddedHandles()
+
+        // iOS fast path — MUST run before any `await` to keep the user-gesture
+        // activation context alive (WKWebView invalidates it in one microtask turn).
+        // `url` is already fully proxy-resolved by loadArtSrc, no further work needed.
+        if (isIosEmbedded()) {
+          video.playsInline = true
+          video.src = url
+          try { video.load() } catch {}
+          return
+        }
+
         const vodFallbackUrl = !isLive ? pendingVodFallbackUrl : null
         const { isVodHlsDenied } = await import(
           "@/scripts/lib/embedded-vod-playback.js"
@@ -1264,10 +1283,7 @@ async function mountArtPlayer(
           }
         }
         if (!shouldUseHlsJsForM3u8()) {
-          const { resolveEmbeddedStreamUrl } = await import(
-            "@/scripts/lib/embedded-media-fetch.js"
-          )
-          video.src = resolveEmbeddedStreamUrl(url)
+          video.src = url
           video.addEventListener("error", fallbackToVodContainer, { once: true })
           return
         }
@@ -1585,7 +1601,9 @@ async function mountArtPlayer(
     const resolvedUrl =
       hint === "native"
         ? await resolveArtNativePlayUrl(playUrl)
-        : resolveEmbeddedStreamUrl(playUrl)
+        : hint === "hls"
+          ? await resolveHlsPlaybackUrl(playUrl)
+          : resolveEmbeddedStreamUrl(playUrl)
 
     if (hint === "hls" || hint === "ts" || hint === "dash" || hint === "native") {
       await assignArtPlayback(src, playUrl, type, hint, resolvedUrl, generation)
