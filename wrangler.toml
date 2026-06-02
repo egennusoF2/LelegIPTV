@@ -1,0 +1,12 @@
+# Cloudflare Pages — https://developers.cloudflare.com/pages/
+name = "leleg-iptv"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "dist"
+
+# Dashboard (Workers & Pages → Builds):
+#   Build command:   pnpm build:pages
+#   Deploy command:  pnpm deploy:pages
+#
+# Classic Pages Git (solo build command + output dir):
+#   Build command:   pnpm build:pages
+#   Output directory: dist

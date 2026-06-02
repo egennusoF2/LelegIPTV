@@ -70,20 +70,22 @@ export function isAppleEmbedded(): boolean {
   )
 }
 
-/** True when Astro/Vite dev server stream proxy should be used. */
+/** True when the browser should fetch IPTV media via same-origin `/__stream`. */
 export function useDevStreamProxy(): boolean {
   if (typeof window === "undefined") return false
-  // In dev mode, both browser and Tauri can reach the Vite proxy at /__stream.
-  // Tauri dev connects to localhost:4321, so the proxy is always reachable.
-  // Production Tauri builds don't have the Vite server → proxy unavailable.
+  // Vite dev server and `astro preview` on localhost.
   if (import.meta.env.DEV) return true
   if (isTauri) return false
+  // Production web deploy (Cloudflare Pages Function at /__stream).
+  if (import.meta.env.PUBLIC_WEB_STREAM_PROXY === "true") return true
   try {
     const host = window.location?.hostname || ""
-    return host === "localhost" || host === "127.0.0.1" || host === "[::1]"
+    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true
+    if (/\.pages\.dev$/i.test(host)) return true
   } catch {
     return false
   }
+  return false
 }
 
 /** True for raw IPv4/IPv6 CDN hosts (common in Xtream HLS playlists). */
@@ -245,9 +247,16 @@ export function wrapStreamUrlForDev(url: string): string {
 /** True when streams should go through the Tauri Rust media proxy (127.0.0.1/stream). */
 export function useNativeStreamProxy(): boolean {
   if (isIosEmbedded()) {
-    // Dev WebView loads from the Mac LAN host — native HLS must use same-origin /__stream.
-    // Loopback 127.0.0.1/stream is not reachable from a remote-origin WKWebView page.
-    if (useDevStreamProxy()) return false
+    // iOS: ALWAYS use the on-device Rust proxy, even in dev mode.
+    //
+    // Previous logic returned false in dev mode citing "loopback not reachable from
+    // remote-origin WKWebView". That restriction applies only to WKWebView fetch/XHR.
+    // AVFoundation (native <video src>) CAN reach 127.0.0.1 on the same device.
+    //
+    // Critical reason: CDN providers (e.g. spid-token CDNs) bind segment tokens to the
+    // session IP. When the Mac's Vite proxy fetches segments, the CDN sees the Mac's IP
+    // (not the iPhone's) and returns 502. The Rust proxy runs ON the device, so CDN
+    // requests originate from the iPhone's IP — matching the authenticated session.
     return isTauriEmbedded()
   }
   return isTauriEmbedded() && !useDevStreamProxy()

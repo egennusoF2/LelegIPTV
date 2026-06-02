@@ -206,6 +206,9 @@ fn resolve_upstream_user_agent(url: &str, client_ua: Option<&str>) -> String {
     if url.contains(".m3u8") || url.contains("/live/") {
         return IPTV_UA_HLS.to_string();
     }
+    if url.contains("/movie/") || url.contains("/series/") {
+        return DEFAULT_USER_AGENT.to_string();
+    }
     if is_iptv_media_url(url) {
         return IPTV_UA_HLS.to_string();
     }
@@ -395,7 +398,7 @@ fn fetch_upstream(
 ) -> Result<reqwest::blocking::Response, reqwest::Error> {
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(5))
-        .timeout(Duration::from_secs(25))
+        .connect_timeout(Duration::from_secs(10))
         .build()?;
     let request_method = if method == "HEAD" {
         reqwest::Method::HEAD
@@ -499,19 +502,46 @@ fn write_upstream(
     target_url: &str,
     user_agent: Option<&str>,
     referer: Option<&str>,
-    response: reqwest::blocking::Response,
+    mut response: reqwest::blocking::Response,
 ) -> std::io::Result<()> {
     let status = response.status().as_u16();
     let headers = response.headers().clone();
     let content_type = headers
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
-    let mut body = if method == "HEAD" {
+
+    // For binary media responses (TS segments, MP4, etc.) stream directly without
+    // buffering the full body in RAM. Buffering causes live HLS stalls because
+    // AVFoundation must wait for the entire segment before decoding can begin.
+    // M3U8 manifests must still be buffered to rewrite segment URLs.
+    let is_head = method == "HEAD";
+    let needs_rewrite = !is_head && body_looks_like_m3u8(&[], target_url, content_type);
+
+    if !is_head && !needs_rewrite {
+        // Streaming path: write headers then pipe body directly
+        write_common_headers(stream, status, status_text(status))?;
+        for (header, dst) in [
+            (reqwest::header::CONTENT_TYPE, "Content-Type"),
+            (reqwest::header::CONTENT_LENGTH, "Content-Length"),
+            (reqwest::header::CONTENT_RANGE, "Content-Range"),
+            (reqwest::header::ACCEPT_RANGES, "Accept-Ranges"),
+        ] {
+            if let Some(value) = headers.get(&header).and_then(|v| v.to_str().ok()) {
+                write!(stream, "{dst}: {value}\r\n")?;
+            }
+        }
+        write!(stream, "\r\n")?;
+        std::io::copy(&mut response, stream)?;
+        return stream.flush();
+    }
+
+    // Buffered path: M3U8 (needs URL rewriting) or HEAD
+    let mut body = if is_head {
         Vec::new()
     } else {
         response.bytes().map(|b| b.to_vec()).unwrap_or_default()
     };
-    if method != "HEAD" {
+    if !is_head {
         if let Some(port) = PORT.get().copied() {
             if body_looks_like_m3u8(&body, target_url, content_type) {
                 let text = String::from_utf8_lossy(&body);
@@ -529,17 +559,17 @@ fn write_upstream(
         (reqwest::header::ACCEPT_RANGES, "Accept-Ranges"),
     ] {
         if let Some(value) = headers.get(&header).and_then(|v| v.to_str().ok()) {
-            if header == reqwest::header::CONTENT_LENGTH && method != "HEAD" {
+            if header == reqwest::header::CONTENT_LENGTH && !is_head {
                 continue;
             }
             write!(stream, "{dst}: {value}\r\n")?;
         }
     }
-    if !headers.contains_key(reqwest::header::CONTENT_LENGTH) || method != "HEAD" {
+    if !headers.contains_key(reqwest::header::CONTENT_LENGTH) || !is_head {
         write!(stream, "Content-Length: {}\r\n", body.len())?;
     }
     write!(stream, "\r\n")?;
-    if method != "HEAD" {
+    if !is_head {
         stream.write_all(&body)?;
     }
     stream.flush()

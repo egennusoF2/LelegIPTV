@@ -23,6 +23,7 @@
     "build:all": "node ./scripts/build-all.mjs",
     "build:all:web": "node ./scripts/build-all.mjs --only=web,tizen --skip-test --skip-lint",
     "build:web": "astro build",
+    "build:pages": "PUBLIC_WEB_STREAM_PROXY=true astro build",
     "build:desktop": "tauri build",
     "build:android": "tauri android build",
     "build:ios": "tauri ios build",
@@ -34,7 +35,9 @@
     "screenshots": "node ./src/scripts/capture-screenshots.mjs",
     "msix": "node ./buildfiles/make-msix-template.mjs",
     "sync-version": "node ./buildfiles/sync-version.mjs",
-    "icons:sync": "bash ./scripts/sync-brand-icons.sh"
+    "icons:sync": "bash ./scripts/sync-brand-icons.sh",
+    "deploy:web": "pnpm build:pages && wrangler pages deploy --project-name=leleg-iptv",
+    "deploy:pages": "wrangler pages deploy --project-name=leleg-iptv"
   },
   "dependencies": {
     "@astrojs/netlify": "^7.0.9",
@@ -69,6 +72,7 @@
     "video.js": "^8.23.7"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260602.1",
     "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.11.1",
     "@vite-pwa/astro": "^1.2.0",
@@ -84,6 +88,7 @@
     "typescript-eslint": "^8.59.3",
     "vite": "^7.3.3",
     "vitest": "^4.1.6",
-    "workbox-window": "^7.4.1"
+    "workbox-window": "^7.4.1",
+    "wrangler": "^4.97.0"
   }
 }

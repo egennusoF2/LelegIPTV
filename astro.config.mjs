@@ -10,7 +10,12 @@ import AstroPWA from "@vite-pwa/astro"
 const tauriDevHost = process.env.TAURI_DEV_HOST
 const hmrHost = process.env.XTREAM_HMR_HOST || tauriDevHost
 
+/** Set by Netlify (`URL`), Cloudflare Pages (`CF_PAGES_URL`), or other hosts at build time. */
+const deploySite =
+  process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.CF_PAGES_URL || ""
+
 export default defineConfig({
+  site: deploySite || undefined,
   devToolbar: {
     enabled: false,
   },
