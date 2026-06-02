@@ -277,6 +277,22 @@ export function isContainerUrl(url: string): boolean {
   return false
 }
 
+/** Same VOD file path (ignores host/query) — e.g. backup panel with identical `/movie/.../id.mkv`. */
+export function vodAssetPathKey(url: string): string {
+  if (!url) return ""
+  const target = unwrapStreamProxyUrl(url)
+  try {
+    return new URL(target).pathname.toLowerCase()
+  } catch {
+    return target.split("?")[0]?.toLowerCase() || target
+  }
+}
+
+export function vodStreamPathsEquivalent(a: string, b: string): boolean {
+  if (!a || !b) return a === b
+  return vodAssetPathKey(a) === vodAssetPathKey(b)
+}
+
 /** Avoid pointless player reload when backup-domain resolve returns the same asset. */
 export function streamUrlsEquivalent(a: string, b: string): boolean {
   if (!a || !b) return a === b

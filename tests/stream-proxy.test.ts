@@ -13,6 +13,8 @@ import {
   preferPlainHttpForXtreamMedia,
   isContainerUrl,
   streamUrlsEquivalent,
+  vodAssetPathKey,
+  vodStreamPathsEquivalent,
 } from "../src/scripts/lib/stream-proxy"
 
 describe("preferHttpsStreamUrl", () => {
@@ -106,6 +108,39 @@ describe("isContainerUrl", () => {
   it("matches series and movie mp4 paths", () => {
     expect(isContainerUrl("http://panel.example.com/series/u/p/9.mp4")).toBe(true)
     expect(isContainerUrl("http://panel.example.com/movie/u/p/1.mp4")).toBe(true)
+  })
+})
+
+describe("vodStreamPathsEquivalent", () => {
+  it("matches same movie path on different hosts", () => {
+    expect(
+      vodStreamPathsEquivalent(
+        "http://panel-a.example.com/movie/u/p/643637.mkv",
+        "http://panel-b.example.com/movie/u/p/643637.mkv",
+      ),
+    ).toBe(true)
+  })
+
+  it("unwraps dev stream proxy before comparing", () => {
+    const upstream = "http://panel.example.com/movie/u/p/1.mkv"
+    expect(
+      vodStreamPathsEquivalent(
+        `/__stream?url=${encodeURIComponent(upstream)}`,
+        upstream,
+      ),
+    ).toBe(true)
+    expect(vodAssetPathKey(`/__stream?url=${encodeURIComponent(upstream)}`)).toBe(
+      "/movie/u/p/1.mkv",
+    )
+  })
+
+  it("rejects different asset paths", () => {
+    expect(
+      vodStreamPathsEquivalent(
+        "http://a.example.com/movie/u/p/1.mkv",
+        "http://a.example.com/movie/u/p/2.mkv",
+      ),
+    ).toBe(false)
   })
 })
 

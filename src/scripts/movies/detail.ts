@@ -46,7 +46,10 @@ import { fmtImdbRating } from "@/scripts/lib/format.js"
 import { setRichPresence, clearRichPresence } from "@/scripts/lib/discord-rpc.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
 import { mountPlayer, getExternalLauncher } from "@/scripts/lib/player-runtime.ts"
-import { streamUrlsEquivalent } from "@/scripts/lib/stream-proxy"
+import {
+  streamUrlsEquivalent,
+  vodStreamPathsEquivalent,
+} from "@/scripts/lib/stream-proxy"
 import { getPlayerBackend, getUserAgent } from "@/scripts/lib/app-settings.js"
 import { setEmbeddedMediaFetchContext } from "@/scripts/lib/embedded-media-fetch.js"
 import { toast } from "@/scripts/lib/toast.js"
@@ -473,6 +476,12 @@ async function startPlayback() {
     void resolveStreamUrl(detailSrcBuilder)
       .then((resolved) => {
         if (!resolved || streamUrlsEquivalent(resolved, playSrc)) return
+        // Same file on a backup host — update URLs but keep playback (no re-probe / play() abort).
+        if (vodStreamPathsEquivalent(resolved, playSrc)) {
+          detailSrc = resolved
+          playSrc = resolved
+          return
+        }
         detailSrc = resolved
         playSrc = resolved
         player.src({

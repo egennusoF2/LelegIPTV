@@ -35,6 +35,7 @@ import {
   streamKindFromUrl,
   type StreamKind as ProbedStreamKind,
 } from "@/scripts/lib/stream-probe.js"
+import { shouldIgnoreContainerVideoError } from "@/scripts/lib/artplayer-track-settings.js"
 
 export type PlayerBackend = "videojs" | "artplayer" | "mpv" | "vlc"
 export type ExternalPlayerKind = "mpv" | "vlc"
@@ -1208,6 +1209,10 @@ async function mountArtPlayer(
       async "xt-native"(video, url) {
         destroyActiveEmbeddedHandles()
         art.hls = null
+        const { bootstrapArtplayerSubtitleTrack } = await import(
+          "@/scripts/lib/embedded-container-tracks.js"
+        )
+        bootstrapArtplayerSubtitleTrack(art, video)
         video.src = url
         try {
           video.load()
@@ -1368,11 +1373,20 @@ async function mountArtPlayer(
     const probeUrl =
       (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
       playUrl
-    markContainerTracksPending(playUrl)
-    void import("@/scripts/lib/embedded-container-tracks.js")
-      .then(({ attachContainerTracksForArtplayer }) =>
-        attachContainerTracksForArtplayer(art, probeUrl),
-      )
+    void import("@/scripts/lib/stream-proxy.js")
+      .then(({ vodAssetPathKey }) => {
+        const key = vodAssetPathKey(probeUrl)
+        if (art._xtContainerTracks && art._xtContainerProbeKey === key) {
+          art._xtPendingContainerTracks = false
+          return
+        }
+        markContainerTracksPending(playUrl)
+        return import("@/scripts/lib/embedded-container-tracks.js")
+      })
+      .then((mod) => {
+        if (!mod?.attachContainerTracksForArtplayer) return
+        return mod.attachContainerTracksForArtplayer(art, probeUrl)
+      })
       .catch((error) => {
         art._xtPendingContainerTracks = false
         if (import.meta.env.DEV) {
@@ -1431,11 +1445,35 @@ async function mountArtPlayer(
       return
     }
     art.type = artplayerTypeForUrl(playUrl, kind === "unknown" ? "native" : kind)
-    if (kind === "native" || art.type === "xt-native") {
+    const isNativeContainer = kind === "native" || art.type === "xt-native"
+    if (isNativeContainer) {
+      const { vodStreamPathsEquivalent } = await import(
+        "@/scripts/lib/stream-proxy.js"
+      )
+      const currentSrc =
+        (art.video as HTMLVideoElement | undefined)?.src ||
+        (typeof art.url === "string" ? art.url : "")
+      if (
+        art._xtContainerTracks &&
+        currentSrc &&
+        vodStreamPathsEquivalent(currentSrc, resolvedUrl)
+      ) {
+        if (
+          typeof art._xtContainerProbeUrl !== "string" ||
+          !art._xtContainerProbeUrl
+        ) {
+          art._xtContainerProbeUrl =
+            (typeof art._xtContainerSourceUrl === "string" &&
+              art._xtContainerSourceUrl) ||
+            playUrl
+        }
+        resumePlayAfterSourceChange()
+        return
+      }
       markContainerTracksPending(playUrl)
     }
     art.url = resolvedUrl
-    if (kind === "native" || art.type === "xt-native") {
+    if (isNativeContainer) {
       attachContainerTracksLater(playUrl)
     }
     resumePlayAfterSourceChange()
@@ -1463,6 +1501,9 @@ async function mountArtPlayer(
     log.debug("[xt:player] VOD upgrading to HLS after quick container start", {
       hls: redactUrl(resolvedHls).slice(0, 120),
     })
+    art._xtContainerTracks = false
+    art._xtContainerProbeKey = undefined
+    art._xtContainerAttachInflight = undefined
     art.type = "m3u8"
     art.url = resolvedHls
   }
@@ -1495,6 +1536,16 @@ async function mountArtPlayer(
     art.hls = null
     art._xtVodSourceUrl = src
     art._xtContainerProbeUrl = remoteSourceUrl || ""
+    const { vodAssetPathKey } = await import("@/scripts/lib/stream-proxy.js")
+    const incomingVodKey = vodAssetPathKey(remoteSourceUrl || src)
+    const keepingSameVodAsset =
+      typeof art._xtContainerProbeKey === "string" &&
+      art._xtContainerProbeKey === incomingVodKey
+    if (!keepingSameVodAsset) {
+      art._xtContainerTracks = false
+      art._xtContainerProbeKey = undefined
+      art._xtContainerAttachInflight = undefined
+    }
     wireArtLoadingUntilPlay(art)
 
     const {
@@ -1613,12 +1664,35 @@ async function mountArtPlayer(
       return value
     },
     on(event, fn) {
+      if (event === "error") {
+        const listener = (ev: Event) => {
+          if (shouldIgnoreContainerVideoError(art)) {
+            log.debug("[xt:player] ignored video error during track swap")
+            return
+          }
+          fn(ev)
+        }
+        art.video?.addEventListener(event, listener)
+        return
+      }
       art.video?.addEventListener(event, fn as EventListener)
     },
     off(event, fn) {
       art.video?.removeEventListener(event, fn as EventListener)
     },
     one(event, fn) {
+      if (event === "error") {
+        const listener = (ev: Event) => {
+          if (shouldIgnoreContainerVideoError(art)) {
+            log.debug("[xt:player] ignored video error during track swap")
+            return
+          }
+          art.video?.removeEventListener(event, listener)
+          fn(ev)
+        }
+        art.video?.addEventListener(event, listener)
+        return
+      }
       art.video?.addEventListener(event, fn as EventListener, { once: true })
     },
     el() {

@@ -82,6 +82,16 @@ export function formatContainerAudioLabel(
   return `Audio ${n}`
 }
 
+function humanizeSubtitleCodec(codec: string | undefined): string {
+  const name = clean(codec).toLowerCase()
+  if (!name) return ""
+  if (name.includes("subrip") || name === "srt") return "SRT"
+  if (name.includes("ass") || name.includes("ssa")) return "ASS"
+  if (name.includes("webvtt")) return "VTT"
+  if (name.includes("mov_text")) return "Text"
+  return name.toUpperCase()
+}
+
 export function formatContainerSubtitleLabel(
   track: ContainerTrackLabelInput,
   listPosition: number,
@@ -89,11 +99,15 @@ export function formatContainerSubtitleLabel(
   const lang = languageDisplayName(track.language || "")
   const title = clean(track.label)
   const titleOk =
-    title && !BORING_LANG.has(title.toLowerCase()) && title.toLowerCase() !== lang.toLowerCase()
-  const parts = dedupeParts([lang, titleOk ? title : ""])
+    title &&
+    !BORING_LANG.has(title.toLowerCase()) &&
+    title.toLowerCase() !== lang.toLowerCase() &&
+    title.toLowerCase() !== humanizeSubtitleCodec(track.codec).toLowerCase()
+  const codec = humanizeSubtitleCodec(track.codec)
+  const parts = dedupeParts([lang, titleOk ? title : "", codec])
   if (parts.length > 0) return parts.join(" · ")
   const n = typeof track.index === "number" ? track.index + 1 : listPosition + 1
-  return `${lang || "Subtitle"} ${n}`
+  return `Subtitle ${n}`
 }
 
 /** Native `audioTracks` / HLS manifest fields. */

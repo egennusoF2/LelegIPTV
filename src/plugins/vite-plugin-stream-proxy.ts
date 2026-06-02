@@ -5,7 +5,7 @@
 import type { Plugin, ViteDevServer } from "vite"
 import { createHash } from "node:crypto"
 import { spawn } from "node:child_process"
-import { mkdir, stat, unlink } from "node:fs/promises"
+import { mkdir, stat, unlink, writeFile } from "node:fs/promises"
 import { createReadStream, createWriteStream } from "node:fs"
 import { PassThrough } from "node:stream"
 import { join } from "node:path"
@@ -22,6 +22,7 @@ import {
   resolveUpstreamUserAgent,
   IPTV_UA_VOD,
 } from "../scripts/lib/stream-proxy.ts"
+import { listExtractableSubtitleTracks } from "../scripts/lib/vod-subtitle-tracks.ts"
 
 const PROXY_PATH = "/__stream"
 const SUBTITLE_PATH = "/__vod_subtitles"
@@ -170,15 +171,6 @@ async function listMediaStreams(
   return parsed.streams || []
 }
 
-function isExtractableTextSubtitle(codec: string | undefined): boolean {
-  const name = (codec || "").toLowerCase()
-  if (!name) return true
-  if (name.includes("hdmv") || name.includes("pgssub") || name === "dvd_subtitle") {
-    return false
-  }
-  return true
-}
-
 function subtitleCachePaths(
   target: string,
   userAgent: string,
@@ -248,7 +240,20 @@ function remuxInflightKey(
   return `${hash}:${audioIndex}`
 }
 
-async function cachedRemuxFile(outPath: string): Promise<boolean> {
+function remuxReadyMarkerPath(outPath: string): string {
+  return `${outPath}.ready`
+}
+
+async function cachedRemuxFileComplete(outPath: string): Promise<boolean> {
+  try {
+    await stat(remuxReadyMarkerPath(outPath))
+    return (await stat(outPath)).size > 0
+  } catch {
+    return false
+  }
+}
+
+async function cachedRemuxFilePartial(outPath: string): Promise<boolean> {
   try {
     return (await stat(outPath)).size >= REMUX_READY_BYTES
   } catch {
@@ -259,7 +264,12 @@ async function cachedRemuxFile(outPath: string): Promise<boolean> {
 async function waitForRemuxFileReady(
   outPath: string,
   job: Promise<boolean>,
+  partialOk: boolean,
 ): Promise<boolean> {
+  if (!partialOk) {
+    return job
+  }
+
   const deadline = Date.now() + REMUX_EXTRACT_MS
   while (Date.now() < deadline) {
     try {
@@ -332,6 +342,49 @@ async function serveMediaFileWithRange(
   createReadStream(filePath).pipe(res)
 }
 
+function buildRemuxFfmpegArgs(
+  target: string,
+  headerBlock: string,
+  audioIndex: number,
+  outPath: string,
+  videoCodec: string,
+): string[] {
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-probesize",
+    "32M",
+    "-analyzeduration",
+    "10M",
+    ...(headerBlock ? ["-headers", headerBlock] : []),
+    "-i",
+    target,
+    "-map",
+    "0:v:0?",
+    "-map",
+    `0:a:${audioIndex}?`,
+    "-c:v",
+    "copy",
+  ]
+  if (videoCodec === "hevc" || videoCodec === "h265") {
+    args.push("-tag:v", "hvc1")
+  }
+  args.push(
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-movflags",
+    "+faststart",
+    "-f",
+    "mp4",
+    "-y",
+    outPath,
+  )
+  return args
+}
+
 function runRemuxToFile(
   target: string,
   userAgent: string,
@@ -340,65 +393,62 @@ function runRemuxToFile(
   outPath: string,
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const headers = ffmpegHeaders(userAgent, referer)
-    const args = [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-probesize",
-      "32M",
-      "-analyzeduration",
-      "10M",
-      ...(headers ? ["-headers", headers] : []),
-      "-i",
-      target,
-      "-map",
-      "0:v:0?",
-      "-map",
-      `0:a:${audioIndex}`,
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-movflags",
-      "+frag_keyframe+empty_moov+default_base_moof",
-      "-f",
-      "mp4",
-      "-y",
-      outPath,
-    ]
-    const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] })
-    let stderr = ""
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL")
-      } catch {}
-      resolve(false)
-    }, REMUX_EXTRACT_MS)
+    const headerBlock = ffmpegHeaders(userAgent, referer)
+    const readyPath = remuxReadyMarkerPath(outPath)
 
-    child.stderr.setEncoding("utf8")
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk
-    })
-    child.on("error", () => {
-      clearTimeout(timer)
-      void unlink(outPath).catch(() => {})
-      resolve(false)
-    })
-    child.on("close", (code) => {
-      clearTimeout(timer)
-      if (code !== 0) {
-        if (stderr.trim()) {
-          console.warn("[xt:vod-remux] ffmpeg", stderr.trim().slice(0, 240))
-        }
-        void unlink(outPath).catch(() => {})
+    const startFfmpeg = (videoCodec: string) => {
+      const args = buildRemuxFfmpegArgs(
+        target,
+        headerBlock,
+        audioIndex,
+        outPath,
+        videoCodec,
+      )
+      const child = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] })
+      let stderr = ""
+      const timer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL")
+        } catch {}
         resolve(false)
-        return
-      }
-      resolve(true)
-    })
+      }, REMUX_EXTRACT_MS)
+
+      child.stderr.setEncoding("utf8")
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk
+      })
+      child.on("error", () => {
+        clearTimeout(timer)
+        void unlink(outPath).catch(() => {})
+        void unlink(readyPath).catch(() => {})
+        resolve(false)
+      })
+      child.on("close", (code) => {
+        clearTimeout(timer)
+        if (code !== 0) {
+          if (stderr.trim()) {
+            console.warn("[xt:vod-remux] ffmpeg", stderr.trim().slice(0, 240))
+          }
+          void unlink(outPath).catch(() => {})
+          void unlink(readyPath).catch(() => {})
+          resolve(false)
+          return
+        }
+        void writeFile(readyPath, "")
+          .then(() => resolve(true))
+          .catch(() => resolve(true))
+      })
+    }
+
+    void listMediaStreams(target, userAgent, referer)
+      .then((streams) => {
+        const videoCodec =
+          streams.find((stream) => stream.codec_type === "video")?.codec_name || ""
+        startFfmpeg(videoCodec)
+      })
+      .catch(() => {
+        startFfmpeg("")
+      })
   })
 }
 
@@ -408,14 +458,18 @@ async function ensureRemuxFile(
   referer: string,
   audioIndex: number,
   outPath: string,
+  options?: { partialOk?: boolean },
 ): Promise<boolean> {
-  if (await cachedRemuxFile(outPath)) return true
+  const partialOk = options?.partialOk === true
+  if (!partialOk && (await cachedRemuxFileComplete(outPath))) return true
+  if (partialOk && (await cachedRemuxFilePartial(outPath))) return true
 
   const key = remuxInflightKey(target, userAgent, referer, audioIndex)
   let job = remuxInflight.get(key)
   if (!job) {
     const { dir } = remuxCachePaths(target, userAgent, referer, audioIndex)
     await mkdir(dir, { recursive: true }).catch(() => {})
+    void unlink(remuxReadyMarkerPath(outPath)).catch(() => {})
     job = runRemuxToFile(target, userAgent, referer, audioIndex, outPath).finally(
       () => {
         remuxInflight.delete(key)
@@ -423,7 +477,7 @@ async function ensureRemuxFile(
     )
     remuxInflight.set(key, job)
   }
-  return waitForRemuxFileReady(outPath, job)
+  return waitForRemuxFileReady(outPath, job, partialOk)
 }
 
 /**
@@ -548,29 +602,29 @@ function listSubtitleMetadata(
   streams: MediaProbeStream[],
   target: string,
 ): Array<{ index: number; label: string; language: string; src: string; codec: string }> {
-  const subtitleStreams = streams.filter((s) => s.codec_type === "subtitle")
-  const tracks: Array<{
-    index: number
-    label: string
-    language: string
-    src: string
-    codec: string
-  }> = []
-  for (let i = 0; i < Math.min(subtitleStreams.length, MAX_SUBTITLE_TRACKS); i++) {
-    const stream = subtitleStreams[i]
-    const codec = stream.codec_name || ""
-    if (!isExtractableTextSubtitle(codec)) continue
-    const language = stream.tags?.language || ""
-    const label = stream.tags?.title || language || `Subtitle ${i + 1}`
-    tracks.push({
-      index: i,
-      language,
-      label,
-      codec,
-      src: `${VOD_SUBTITLE_PATH}?url=${encodeURIComponent(target)}&index=${i}`,
-    })
+  return listExtractableSubtitleTracks(
+    streams,
+    (subtitleStreamIndex) =>
+      `${VOD_SUBTITLE_PATH}?url=${encodeURIComponent(target)}&index=${subtitleStreamIndex}`,
+    MAX_SUBTITLE_TRACKS,
+  )
+}
+
+async function ensureSubtitleExtracted(
+  target: string,
+  userAgent: string,
+  referer: string,
+  subtitleIndex: number,
+  outPath: string,
+): Promise<boolean> {
+  if (await cachedSubtitleFile(outPath)) return true
+
+  const inflight = subtitleInflightKey(target, userAgent, referer, subtitleIndex)
+  if (subtitleExtractInflight.has(inflight)) {
+    return subtitleExtractInflight.get(inflight)!
   }
-  return tracks
+
+  return runSubtitleExtract(target, userAgent, referer, subtitleIndex, outPath, null)
 }
 
 async function vodSubtitleHandler(
@@ -580,6 +634,8 @@ async function vodSubtitleHandler(
   let target = requestParam(req, "url")
   if (target) target = preferHttpsStreamUrl(target)
   const subtitleIndex = Math.max(0, parseInt(requestParam(req, "index") || "0", 10) || 0)
+  const waitOnly = requestParam(req, "wait") === "1"
+  const statusOnly = requestParam(req, "status") === "1"
   if (!target || !isAllowedTarget(target)) {
     res.statusCode = 400
     res.end("invalid url")
@@ -593,6 +649,36 @@ async function vodSubtitleHandler(
 
   const { dir, outPath } = subtitleCachePaths(target, userAgent, referer, subtitleIndex)
   await mkdir(dir, { recursive: true })
+
+  if (statusOnly) {
+    const inflight = subtitleInflightKey(target, userAgent, referer, subtitleIndex)
+    const ready = await cachedSubtitleFile(outPath)
+    sendJson(res, 200, {
+      ready,
+      inflight: subtitleExtractInflight.has(inflight),
+    })
+    return
+  }
+
+  if (waitOnly) {
+    const ready = await ensureSubtitleExtracted(
+      target,
+      userAgent,
+      referer,
+      subtitleIndex,
+      outPath,
+    )
+    if (!ready) {
+      res.statusCode = 502
+      res.setHeader("Content-Type", "text/plain; charset=utf-8")
+      res.end("subtitle extract failed")
+      return
+    }
+    applyCorsHeaders(res)
+    res.statusCode = 204
+    res.end()
+    return
+  }
 
   if (await cachedSubtitleFile(outPath)) {
     console.log("[xt:vod-subtitle] cache hit", subtitleIndex)
@@ -688,13 +774,16 @@ async function vodStreamsHandler(
         codec: stream.codec_name || "",
       }))
     const subtitles = listSubtitleMetadata(streams, target)
+    const rawSubCount = streams.filter((s) => s.codec_type === "subtitle").length
     console.log(
       "[xt:vod-streams] tracks",
       "audio:",
       audio.length,
       "subtitles:",
       subtitles.length,
-      "(lazy extract)",
+      rawSubCount > subtitles.length
+        ? `(deduped from ${rawSubCount} embedded)`
+        : "(lazy extract)",
     )
     sendJson(res, 200, { audio, subtitles })
   } catch (err) {
@@ -710,6 +799,8 @@ async function vodRemuxHandler(
   let target = requestParam(req, "url")
   if (target) target = preferHttpsStreamUrl(target)
   const audioIdx = Math.max(0, parseInt(requestParam(req, "audio") || "0", 10) || 0)
+  const waitOnly = requestParam(req, "wait") === "1"
+  const statusOnly = requestParam(req, "status") === "1"
   if (!target || !isAllowedTarget(target)) {
     res.statusCode = 400
     res.end("invalid url")
@@ -721,14 +812,42 @@ async function vodRemuxHandler(
   const userAgent = upstreamUserAgent(target, clientUa)
   const { referer } = mediaRequestHeaders(req, target)
   const { outPath } = remuxCachePaths(target, userAgent, referer, audioIdx)
+  const rangeHeader =
+    typeof req.headers.range === "string" ? req.headers.range : ""
+  const partialOk = Boolean(rangeHeader) && !waitOnly && !statusOnly
 
-  console.log("[xt:vod-remux]", redactStreamUrl(target).slice(0, 160), "audio:", audioIdx)
+  if (statusOnly) {
+    const key = remuxInflightKey(target, userAgent, referer, audioIdx)
+    const ready = await cachedRemuxFileComplete(outPath)
+    sendJson(res, 200, {
+      ready,
+      inflight: remuxInflight.has(key),
+    })
+    return
+  }
 
-  const ready = await ensureRemuxFile(target, userAgent, referer, audioIdx, outPath)
+  console.log(
+    "[xt:vod-remux]",
+    redactStreamUrl(target).slice(0, 160),
+    "audio:",
+    audioIdx,
+    waitOnly ? "(wait)" : partialOk ? "(partial)" : "(play)",
+  )
+
+  const ready = await ensureRemuxFile(target, userAgent, referer, audioIdx, outPath, {
+    partialOk,
+  })
   if (!ready) {
     res.statusCode = 502
     res.setHeader("Content-Type", "text/plain; charset=utf-8")
     res.end("remux failed")
+    return
+  }
+
+  if (waitOnly) {
+    applyCorsHeaders(res)
+    res.statusCode = 204
+    res.end()
     return
   }
 
