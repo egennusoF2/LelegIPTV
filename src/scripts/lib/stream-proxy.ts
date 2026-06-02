@@ -277,10 +277,25 @@ export function isContainerUrl(url: string): boolean {
   return false
 }
 
-/** Same VOD file path (ignores host/query) — e.g. backup panel with identical `/movie/.../id.mkv`. */
+const VOD_REMUX_PATH_SEGMENT = "/__vod_remux"
+
+function unwrapVodRemuxTarget(url: string): string {
+  try {
+    const parsed = new URL(url, "http://127.0.0.1/")
+    const path = parsed.pathname
+    if (path === VOD_REMUX_PATH_SEGMENT || path.endsWith(VOD_REMUX_PATH_SEGMENT)) {
+      const inner = parsed.searchParams.get("url")
+      if (inner) return decodeURIComponent(inner)
+    }
+  } catch {}
+  return url
+}
+
+/** Same VOD file path (ignores host/query/proxy wrapper) — e.g. backup host or remux vs direct. */
 export function vodAssetPathKey(url: string): string {
   if (!url) return ""
-  const target = unwrapStreamProxyUrl(url)
+  let target = unwrapStreamProxyUrl(url)
+  target = unwrapVodRemuxTarget(target)
   try {
     return new URL(target).pathname.toLowerCase()
   } catch {

@@ -82,6 +82,21 @@ function abortAudioSwitch(art: any): void {
     } catch {}
     art._xtAudioSwitchAbort = null
   }
+  if (typeof art._xtAudioSwitchCleanup === "function") {
+    try {
+      art._xtAudioSwitchCleanup()
+    } catch {}
+    art._xtAudioSwitchCleanup = null
+  }
+}
+
+function setArtplayerNativeSource(art: any, video: HTMLVideoElement, url: string): void {
+  art.type = "xt-native"
+  art.url = url
+  try {
+    if (video.src !== url) video.src = url
+    video.load()
+  } catch {}
 }
 
 function isAudioSwitchStale(art: any, gen: number): boolean {
@@ -1039,6 +1054,39 @@ function isBenignVideoSwapError(video: HTMLVideoElement): boolean {
   return code === 1
 }
 
+function wireAudioSwitchReady(
+  art: any,
+  video: HTMLVideoElement,
+  gen: number,
+  restore: () => void,
+  onVideoError?: () => void,
+): () => void {
+  const onReady = () => {
+    if (isAudioSwitchStale(art, gen)) return
+    restore()
+  }
+  const onError = () => {
+    onVideoError?.()
+  }
+  if (typeof art.once === "function") {
+    art.once("video:canplay", onReady)
+    if (onVideoError) art.once("video:error", onError)
+  } else {
+    video.addEventListener("canplay", onReady, { once: true })
+    if (onVideoError) {
+      video.addEventListener("error", onError, { once: true })
+    }
+  }
+  return () => {
+    try {
+      art.off?.("video:canplay", onReady)
+      art.off?.("video:error", onError)
+    } catch {}
+    video.removeEventListener("canplay", onReady)
+    video.removeEventListener("error", onError)
+  }
+}
+
 function scheduleSubtitleTrackRebindAfterSourceChange(
   art: any,
   video: HTMLVideoElement,
@@ -1128,9 +1176,6 @@ async function switchContainerAudio(
     readyState: video.readyState,
   })
 
-  await waitForContainerVideoReady(video)
-  if (isAudioSwitchStale(art, gen)) return
-
   try {
     art.notice.show = switchingMsg
   } catch {}
@@ -1139,9 +1184,16 @@ async function switchContainerAudio(
   art._xtContainerAudioIndex = audioIndex
 
   let restored = false
+  const detachReadyListeners = () => {
+    if (typeof art._xtAudioSwitchCleanup === "function") {
+      art._xtAudioSwitchCleanup()
+      art._xtAudioSwitchCleanup = null
+    }
+  }
   const restore = () => {
     if (isAudioSwitchStale(art, gen) || restored) return
     restored = true
+    detachReadyListeners()
     clearContainerPlaybackGuard(art)
     try {
       art.notice.show = ""
@@ -1165,6 +1217,7 @@ async function switchContainerAudio(
 
   const showFail = (rollback = false) => {
     if (isAudioSwitchStale(art, gen)) return
+    detachReadyListeners()
     if (rollback) {
       art._xtContainerAudioIndex = previousIndex
     }
@@ -1192,31 +1245,28 @@ async function switchContainerAudio(
       })
       art._xtContainerAudioIndex = 0
       markContainerPlaybackGuard(art, 8_000)
-      art.type = "xt-native"
-      art.url = directUrl
-      video.addEventListener("canplay", restore, { once: true })
-      video.addEventListener("loadedmetadata", restore, { once: true })
+      setArtplayerNativeSource(art, video, directUrl)
+      wireAudioSwitchReady(art, video, gen, restore)
       showFail()
       return
     }
     showFail(true)
   }
 
-  video.addEventListener("canplay", restore, { once: true })
-  video.addEventListener("loadedmetadata", restore, { once: true })
-  video.addEventListener("error", onVideoError, { once: true })
+  const detachReady = wireAudioSwitchReady(art, video, gen, restore, onVideoError)
+  art._xtAudioSwitchCleanup = detachReady
 
   try {
     if (useDirect) {
       if (isAudioSwitchStale(art, gen)) return
-      art.type = "xt-native"
-      art.url = directUrl
+      setArtplayerNativeSource(art, video, directUrl)
       trackSettingsDebug("container.audio.switch.direct", {
         index: audioIndex,
         gen,
         videoSrc: redactUrl(video.src).slice(0, 100),
       })
       scheduleSubtitleTrackRebindAfterSourceChange(art, video)
+      if (video.readyState >= 3) restore()
       return
     }
 
@@ -1243,14 +1293,15 @@ async function switchContainerAudio(
     })
     if (isAudioSwitchStale(art, gen)) return
 
-    art.type = "xt-native"
-    art.url = `${remuxBase}&_=${Date.now()}`
+    const playUrl = `${remuxBase}&_=${Date.now()}`
+    setArtplayerNativeSource(art, video, playUrl)
     trackSettingsDebug("container.audio.switch.remux", {
       index: audioIndex,
       gen,
       videoSrc: redactUrl(video.src).slice(0, 100),
     })
     scheduleSubtitleTrackRebindAfterSourceChange(art, video)
+    if (video.readyState >= 3) restore()
   } catch (error) {
     if (isAudioSwitchStale(art, gen)) return
     if ((error as Error)?.name === "AbortError") return
@@ -1466,6 +1517,7 @@ function refreshContainerAudioMenu(
       }
       saveTrackPreference("audio", track)
       art._xtContainerAudioIndex = track.index
+      if (track.index > 0) prefetchContainerRemux(sourceUrl, track.index)
       void switchContainerAudio(art, video, sourceUrl, track.index).finally(() => {
         if (art._xtContainerAudioIndex === track.index) {
           refreshContainerAudioMenu(art, video, sourceUrl, audioTracks, track.index)
@@ -1709,11 +1761,7 @@ async function attachContainerTracksForArtplayerInner(
   art._xtContainerTracks = true
   art._xtContainerProbeKey = vodAssetPathKey(probeUrl)
   art._xtContainerSourceUrl = probeUrl
-  if (art.video?.src) {
-    art._xtContainerDirectPlayUrl = art.video.src
-  } else if (typeof art.url === "string" && art.url) {
-    art._xtContainerDirectPlayUrl = art.url
-  }
+  art._xtContainerDirectPlayUrl = resolveEmbeddedStreamUrl(probeUrl)
   removeNativeTrackSettings(art)
 
   const video = art.video as HTMLVideoElement
@@ -1740,9 +1788,7 @@ async function attachContainerTracksForArtplayerInner(
       }
     }
     refreshContainerAudioMenu(art, video, probeUrl, audioTracks, activeIndex)
-    for (const audioTrack of audioTracks) {
-      prefetchContainerRemux(probeUrl, audioTrack.index)
-    }
+    if (activeIndex > 0) prefetchContainerRemux(probeUrl, activeIndex)
   } else if (audioTracks.length === 1) {
     refreshContainerAudioSingleOnly(art, audioTracks[0]!)
   }

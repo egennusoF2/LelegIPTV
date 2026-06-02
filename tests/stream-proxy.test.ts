@@ -134,6 +134,18 @@ describe("vodStreamPathsEquivalent", () => {
     )
   })
 
+  it("treats remux proxy URL as the same upstream asset", () => {
+    const upstream = "http://panel.example.com/movie/u/p/643637.mkv"
+    const remux = `/__vod_remux?url=${encodeURIComponent(upstream)}&audio=1`
+    expect(vodStreamPathsEquivalent(remux, upstream)).toBe(true)
+    expect(
+      vodStreamPathsEquivalent(
+        remux,
+        `/__stream?url=${encodeURIComponent(upstream)}`,
+      ),
+    ).toBe(true)
+  })
+
   it("rejects different asset paths", () => {
     expect(
       vodStreamPathsEquivalent(
