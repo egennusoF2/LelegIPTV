@@ -664,7 +664,7 @@
   "player.subtitle.off": "Off",
   "player.subtitle.loading": "Loading subtitles…",
   "player.subtitle.extractFailed": "Could not load this subtitle track",
-  "player.track.audioSwitching": "Switching audio track…",
+  "player.track.audioSwitching": "Preparing audio track (first switch may take a minute)…",
   "player.track.audioSwitchFailed": "Could not switch audio track",
   "player.track.audio": "Audio",
   "player.track.subtitle": "Subtitle",

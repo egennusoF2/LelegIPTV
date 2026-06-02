@@ -624,7 +624,7 @@
   "player.subtitle.off": "Off",
   "player.subtitle.loading": "Caricamento sottotitoli…",
   "player.subtitle.extractFailed": "Impossibile caricare questa traccia sottotitoli",
-  "player.track.audioSwitching": "Cambio traccia audio…",
+  "player.track.audioSwitching": "Preparazione traccia audio (può richiedere un minuto la prima volta)…",
   "player.track.audioSwitchFailed": "Impossibile cambiare traccia audio",
   "player.track.audio": "Audio",
   "player.track.subtitle": "Sottotitolo",

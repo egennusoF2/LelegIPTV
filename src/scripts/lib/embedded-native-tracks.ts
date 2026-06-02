@@ -1,4 +1,3 @@
-import { log } from "@/scripts/lib/log.js"
 import { t } from "@/scripts/lib/i18n.js"
 import { isContainerUrl, useDevStreamProxy } from "@/scripts/lib/stream-proxy"
 import { isXtreamVodContainerUrl } from "@/scripts/lib/embedded-vod-playback.js"
@@ -8,6 +7,10 @@ import {
   saveTrackPreference,
 } from "@/scripts/lib/media-track-preferences"
 import { formatMediaTrackLabel } from "@/scripts/lib/media-track-labels.js"
+import {
+  trackSettingsDebug,
+  type ArtplayerSelectorRow,
+} from "@/scripts/lib/artplayer-track-settings.js"
 
 export const NATIVE_SETTING_AUDIO = "xt-native-audio"
 export const NATIVE_SETTING_SUBTITLE = "xt-native-subtitle"
@@ -48,13 +51,13 @@ function refreshNativeAudioSettings(art: any, video: HTMLVideoElement): void {
     art.setting.remove(SETTING_AUDIO)
   } catch {}
 
-  const selector: Array<{ html: string; default?: boolean; onSelect?: () => void }> = []
+  const selector: ArtplayerSelectorRow[] = []
   if (!tracks || tracks.length === 0) {
     selector.push({
       html:
         t("player.track.audioEmbeddedOnly") ||
         "Use the HLS stream for multiple audio tracks (browser limitation)",
-      onSelect() {},
+      _xtKind: "noop",
     })
     art.setting.add({
       name: SETTING_AUDIO,
@@ -80,13 +83,8 @@ function refreshNativeAudioSettings(art: any, video: HTMLVideoElement): void {
     selector.push({
       html: label,
       default: track.enabled,
-      onSelect() {
-        for (let j = 0; j < tracks.length; j++) {
-          tracks[j].enabled = j === i
-        }
-        saveTrackPreference("audio", track)
-        log.log("[xt:player] native audio track", i, label)
-      },
+      _xtKind: "native-audio",
+      _xtPayload: { index: i, track },
     })
   }
 
@@ -95,6 +93,17 @@ function refreshNativeAudioSettings(art: any, video: HTMLVideoElement): void {
     html: t("player.menu.audio") || "Audio",
     width: 280,
     selector,
+    onSelect(item: ArtplayerSelectorRow) {
+      const payload = item?._xtPayload as { index: number; track: unknown } | undefined
+      if (item?._xtKind !== "native-audio" || !payload) return item?.html || ""
+      const { index, track } = payload
+      for (let j = 0; j < tracks.length; j++) {
+        tracks[j].enabled = j === index
+      }
+      saveTrackPreference("audio", track)
+      trackSettingsDebug("native.audio.applied", { index })
+      return item.html || ""
+    },
   })
 }
 
@@ -116,16 +125,11 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
     subtitleTracks[preferred].mode = "showing"
   }
 
-  const selector: Array<{ html: string; default?: boolean; onSelect?: () => void }> = [
+  const selector: ArtplayerSelectorRow[] = [
     {
       html: t("player.subtitle.off") || "Off",
       default: subtitleTracks.every((tr) => tr.mode === "disabled" || tr.mode === "hidden"),
-      onSelect() {
-        for (const tr of textTracks) {
-          tr.mode = "disabled"
-        }
-        clearTrackPreference("subtitle")
-      },
+      _xtKind: "native-subtitle-off",
     },
     ...subtitleTracks.map((track, index) => ({
       html: formatMediaTrackLabel(
@@ -134,21 +138,15 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
         "subtitle",
       ),
       default: track.mode === "showing",
-      onSelect() {
-        for (const tr of textTracks) {
-          tr.mode = "disabled"
-        }
-        track.mode = "showing"
-        saveTrackPreference("subtitle", track)
-        log.log("[xt:player] native subtitle track", index, track.label)
-      },
+      _xtKind: "native-subtitle",
+      _xtPayload: { index, track },
     })),
   ]
 
   if (subtitleTracks.length === 0) {
     selector.push({
       html: t("player.subtitle.unavailable") || "Not available on this stream",
-      onSelect() {},
+      _xtKind: "noop",
     })
   }
 
@@ -157,6 +155,25 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
     html: t("player.menu.subtitle") || "Subtitles",
     width: 280,
     selector,
+    onSelect(item: ArtplayerSelectorRow) {
+      if (item?._xtKind === "native-subtitle-off") {
+        for (const tr of textTracks) {
+          tr.mode = "disabled"
+        }
+        clearTrackPreference("subtitle")
+        return item.html || ""
+      }
+      const payload = item?._xtPayload as { index: number; track: TextTrack } | undefined
+      if (item?._xtKind === "native-subtitle" && payload) {
+        for (const tr of textTracks) {
+          tr.mode = "disabled"
+        }
+        payload.track.mode = "showing"
+        saveTrackPreference("subtitle", payload.track)
+        trackSettingsDebug("native.subtitle.applied", { index: payload.index })
+      }
+      return item?.html || ""
+    },
   })
 }
 

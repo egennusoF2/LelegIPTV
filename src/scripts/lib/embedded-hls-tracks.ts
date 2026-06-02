@@ -18,6 +18,10 @@ import {
 } from "@/scripts/lib/media-track-preferences"
 import { removeNativeTrackSettings } from "@/scripts/lib/embedded-native-tracks.js"
 import { formatMediaTrackLabel } from "@/scripts/lib/media-track-labels.js"
+import {
+  trackSettingsDebug,
+  type ArtplayerSelectorRow,
+} from "@/scripts/lib/artplayer-track-settings.js"
 
 const SETTING_AUDIO = "xt-hls-audio"
 const SETTING_SUBTITLE = "xt-hls-subtitle"
@@ -134,21 +138,11 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
       ? embeddedLabel
       : audioTrackLabel(audioTracks[currentAudio] || {}, currentAudio)
 
-  const audioSelector: Array<{
-    html: string
-    default?: boolean
-    onSelect?: () => void
-  }> = [
+  const audioSelector: ArtplayerSelectorRow[] = [
     {
       html: embeddedLabel + (muxedHint ? "" : " ⚠"),
       default: currentAudio === -1,
-      onSelect() {
-        hls.audioTrack = -1
-        clearTrackPreference("audio")
-        enforceMuxedHlsAudio(hls)
-        ensureVideoAudible(art.video, art)
-        log.log("[xt:player] HLS audio: muxed main stream")
-      },
+      _xtKind: "hls-audio-muxed",
     },
     ...audioTracks.map(
       (
@@ -157,12 +151,8 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
       ) => ({
         html: audioTrackLabel(track, index),
         default: currentAudio === index,
-        onSelect() {
-          hls.audioTrack = index
-          saveTrackPreference("audio", track)
-          ensureVideoAudible(art.video, art)
-          log.log("[xt:player] HLS audio alternate", index, track)
-        },
+        _xtKind: "hls-audio",
+        _xtPayload: { track, index },
       }),
     ),
   ]
@@ -172,14 +162,14 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
       html:
         t("player.track.audioEmbeddedOnly") ||
         "Only the main audio track is available on this stream",
-      onSelect() {},
+      _xtKind: "noop",
     })
   }
 
   if (codecHint) {
     audioSelector.push({
       html: `${t("player.track.codec") || "Codec"}: ${codecHint}`,
-      onSelect() {},
+      _xtKind: "noop",
     })
   }
 
@@ -188,6 +178,26 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
     html: settingTitle(t("player.menu.audio") || "Audio", activeAudioLabel),
     width: 280,
     selector: audioSelector,
+    onSelect(item: ArtplayerSelectorRow) {
+      trackSettingsDebug("hls.audio.menu.select", { kind: item?._xtKind, html: item?.html })
+      if (item?._xtKind === "hls-audio-muxed") {
+        hls.audioTrack = -1
+        clearTrackPreference("audio")
+        enforceMuxedHlsAudio(hls)
+        ensureVideoAudible(art.video, art)
+        return item.html || ""
+      }
+      const payload = item?._xtPayload as
+        | { track: { name?: string; lang?: string }; index: number }
+        | undefined
+      if (item?._xtKind === "hls-audio" && payload) {
+        hls.audioTrack = payload.index
+        saveTrackPreference("audio", payload.track)
+        ensureVideoAudible(art.video, art)
+        trackSettingsDebug("hls.audio.applied", { index: payload.index })
+      }
+      return item?.html || ""
+    },
   })
 
   const subtitleTracks = hls.subtitleTracks || []
@@ -196,35 +206,18 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
     currentSubtitle === -1
       ? t("player.subtitle.off") || "Off"
       : subtitleTrackLabel(subtitleTracks[currentSubtitle] || {}, currentSubtitle)
-  const subtitleSelector: Array<{
-    html: string
-    default?: boolean
-    onSelect?: () => void
-  }> = [
+  const subtitleSelector: ArtplayerSelectorRow[] = [
     {
       html: t("player.subtitle.off") || "Off",
       default: currentSubtitle === -1,
-      onSelect() {
-        hls.subtitleTrack = -1
-        hls.subtitleDisplay = false
-        clearTrackPreference("subtitle")
-      },
+      _xtKind: "hls-subtitle-off",
     },
     ...subtitleTracks.map(
       (track: { name?: string; lang?: string; id?: string }, index: number) => ({
         html: subtitleTrackLabel(track, index),
         default: currentSubtitle === index,
-        onSelect() {
-          hls.subtitleTrack = index
-          hls.subtitleDisplay = true
-          saveTrackPreference("subtitle", track)
-          if (art.video) {
-            for (const tr of Array.from(art.video.textTracks || [])) {
-              tr.mode = "disabled"
-            }
-          }
-          log.log("[xt:player] HLS subtitle", index, track)
-        },
+        _xtKind: "hls-subtitle",
+        _xtPayload: { track, index },
       }),
     ),
   ]
@@ -232,7 +225,7 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
   if (subtitleTracks.length === 0) {
     subtitleSelector.push({
       html: t("player.subtitle.unavailable") || "Not available on this stream",
-      onSelect() {},
+      _xtKind: "noop",
     })
   }
 
@@ -241,6 +234,30 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
     html: settingTitle(t("player.menu.subtitle") || "Subtitles", activeSubtitleLabel),
     width: 280,
     selector: subtitleSelector,
+    onSelect(item: ArtplayerSelectorRow) {
+      trackSettingsDebug("hls.subtitle.menu.select", { kind: item?._xtKind })
+      if (item?._xtKind === "hls-subtitle-off") {
+        hls.subtitleTrack = -1
+        hls.subtitleDisplay = false
+        clearTrackPreference("subtitle")
+        return item.html || ""
+      }
+      const payload = item?._xtPayload as
+        | { track: { name?: string; lang?: string; id?: string }; index: number }
+        | undefined
+      if (item?._xtKind === "hls-subtitle" && payload) {
+        hls.subtitleTrack = payload.index
+        hls.subtitleDisplay = true
+        saveTrackPreference("subtitle", payload.track)
+        if (art.video) {
+          for (const tr of Array.from(art.video.textTracks || [])) {
+            tr.mode = "disabled"
+          }
+        }
+        trackSettingsDebug("hls.subtitle.applied", { index: payload.index })
+      }
+      return item?.html || ""
+    },
   })
 }
 

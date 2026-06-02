@@ -24,6 +24,10 @@ import {
   formatContainerAudioLabel,
   formatContainerSubtitleLabel,
 } from "@/scripts/lib/media-track-labels.js"
+import {
+  trackSettingsDebug,
+  type ArtplayerSelectorRow,
+} from "@/scripts/lib/artplayer-track-settings.js"
 
 const VOD_STREAMS_PATH = "/__vod_streams"
 const VOD_REMUX_PATH = "/__vod_remux"
@@ -67,6 +71,47 @@ function settingTitle(title: string, hint: string): string {
   return compact
     ? `${title} <span class="opacity-70 text-2xs">· ${compact}</span>`
     : title
+}
+
+const EMPTY_VTT =
+  "data:text/vtt;charset=utf-8,WEBVTT%0A%0A"
+
+function ensureArtplayerSubtitleTrack(video: HTMLVideoElement): void {
+  if (video.textTracks?.length) return
+  const track = document.createElement("track")
+  track.kind = "metadata"
+  track.label = "xt"
+  track.src = EMPTY_VTT
+  video.appendChild(track)
+}
+
+function revokeSubtitleBlob(art: any): void {
+  const prev = art._xtSubtitleBlobUrl
+  if (typeof prev === "string" && prev.startsWith("blob:")) {
+    try {
+      URL.revokeObjectURL(prev)
+    } catch {}
+  }
+  art._xtSubtitleBlobUrl = ""
+}
+
+async function fetchSubtitleBlobUrl(
+  subtitlePath: string,
+  sourceUrl: string,
+): Promise<string> {
+  const url = absoluteAssetUrl(subtitlePath)
+  const headers = resolveMediaHeaders(sourceUrl)
+  const response = await fetch(url, {
+    headers: devProxyFetchHeaders(headers),
+  })
+  if (!response.ok) {
+    throw new Error(`subtitle HTTP ${response.status}`)
+  }
+  const blob = await response.blob()
+  if (!blob.size) {
+    throw new Error("subtitle empty")
+  }
+  return URL.createObjectURL(blob)
 }
 
 function absoluteAssetUrl(path: string): string {
@@ -146,12 +191,12 @@ export async function countContainerAudioTracks(sourceUrl: string): Promise<numb
   return payload?.audio?.length ?? 0
 }
 
-function switchContainerAudio(
+async function switchContainerAudio(
   art: any,
   video: HTMLVideoElement,
   sourceUrl: string,
   audioIndex: number,
-): void {
+): Promise<void> {
   const baseUrl =
     (typeof art._xtContainerSourceUrl === "string" && art._xtContainerSourceUrl) ||
     (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
@@ -162,19 +207,36 @@ function switchContainerAudio(
       : Number.isFinite(video.currentTime)
         ? video.currentTime
         : 0
-  const remux = `${absoluteAssetUrl(wrapVodRemuxUrl(baseUrl, audioIndex))}&_=${Date.now()}`
   const switchingMsg =
     t("player.track.audioSwitching") || "Switching audio track…"
-  log.log("[xt:container-tracks] audio switch (remux)", {
+  const failMsg =
+    t("player.track.audioSwitchFailed") || "Could not switch audio track"
+
+  const directUrl =
+    typeof art._xtContainerDirectPlayUrl === "string"
+      ? art._xtContainerDirectPlayUrl
+      : ""
+  const useDirect =
+    audioIndex === 0 &&
+    directUrl &&
+    !directUrl.includes(VOD_REMUX_PATH)
+
+  trackSettingsDebug("container.audio.switch.start", {
     index: audioIndex,
     resumeAt,
-    url: redactUrl(remux).slice(0, 100),
+    mode: useDirect ? "direct" : "remux",
+    baseUrl: redactUrl(baseUrl).slice(0, 80),
+    directUrl: redactUrl(directUrl).slice(0, 80),
+    videoSrcBefore: redactUrl(video.src || "").slice(0, 80),
   })
+
   try {
     art.notice.show = switchingMsg
   } catch {}
+
   art.hls = null
   art._xtContainerAudioIndex = audioIndex
+
   let restored = false
   const restore = () => {
     if (restored) return
@@ -187,15 +249,11 @@ function switchContainerAudio(
         art.currentTime = resumeAt
       } catch {}
     }
-    const playPromise = art.play?.()
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(() => {})
-    }
+    void art.play?.()?.catch(() => {})
   }
   const onFail = () => {
     try {
-      art.notice.show =
-        t("player.track.audioSwitchFailed") || "Could not switch audio track"
+      art.notice.show = failMsg
     } catch {}
     setTimeout(() => {
       try {
@@ -203,15 +261,59 @@ function switchContainerAudio(
       } catch {}
     }, 3500)
   }
+
   art.once("video:canplay", restore)
   art.once("video:loadedmetadata", restore)
   video.addEventListener("error", onFail, { once: true })
-  // Same ArtPlayer type may not re-run customType on `art.url` alone — reload <video> directly.
-  video.pause()
-  video.src = remux
+
   try {
-    video.load()
-  } catch {}
+    if (useDirect) {
+      art.type = "xt-native"
+      art.url = directUrl
+      trackSettingsDebug("container.audio.switch.direct", {
+        index: audioIndex,
+        videoSrc: redactUrl(video.src).slice(0, 100),
+      })
+      return
+    }
+
+    const remuxBase = absoluteAssetUrl(wrapVodRemuxUrl(baseUrl, audioIndex))
+    const headers = resolveMediaHeaders(baseUrl)
+    trackSettingsDebug("container.audio.remux.prime", {
+      index: audioIndex,
+      remux: redactUrl(remuxBase).slice(0, 100),
+    })
+    const prime = await fetch(remuxBase, {
+      headers: {
+        ...devProxyFetchHeaders(headers),
+        Range: "bytes=0-131071",
+      },
+    })
+    trackSettingsDebug("container.audio.remux.prime.done", {
+      index: audioIndex,
+      status: prime.status,
+      contentType: prime.headers.get("content-type"),
+      contentLength: prime.headers.get("content-length"),
+    })
+    if (!prime.ok) {
+      throw new Error(`remux prime HTTP ${prime.status}`)
+    }
+    await prime.arrayBuffer().catch(() => new ArrayBuffer(0))
+
+    art.type = "xt-native"
+    art.url = `${remuxBase}&_=${Date.now()}`
+    trackSettingsDebug("container.audio.switch.remux", {
+      index: audioIndex,
+      videoSrc: redactUrl(video.src).slice(0, 100),
+    })
+  } catch (error) {
+    log.warn("[xt:container-tracks] audio switch failed", error)
+    trackSettingsDebug("container.audio.switch.error", {
+      index: audioIndex,
+      error: String((error as Error)?.message || error),
+    })
+    onFail()
+  }
 }
 
 async function applyContainerSubtitle(
@@ -219,36 +321,51 @@ async function applyContainerSubtitle(
   track: ContainerSubtitleTrack | null,
 ): Promise<void> {
   if (!track?.src) {
+    revokeSubtitleBlob(art)
     try {
       await art.subtitle.switch("")
     } catch {}
     log.log("[xt:container-tracks] subtitles off")
     return
   }
-  const url = absoluteAssetUrl(track.src)
+  const probeUrl =
+    (typeof art._xtContainerSourceUrl === "string" && art._xtContainerSourceUrl) ||
+    ""
   const loadingMsg =
     t("player.subtitle.loading") || "Preparing subtitles (first time may take a moment)…"
   try {
     art.notice.show = loadingMsg
-    log.log("[xt:container-tracks] subtitle extract start", {
+    trackSettingsDebug("container.subtitle.start", {
       index: track.index,
       lang: track.language,
       label: track.label,
+      textTracks: art.video?.textTracks?.length ?? 0,
     })
     const started = Date.now()
-    const subtitleUrl = `${url}${url.includes("?") ? "&" : "?"}_=${Date.now()}`
-    await art.subtitle.switch(subtitleUrl, {
+    if (art.video) {
+      ensureArtplayerSubtitleTrack(art.video as HTMLVideoElement)
+    }
+    revokeSubtitleBlob(art)
+    const blobUrl = await fetchSubtitleBlobUrl(track.src, probeUrl)
+    art._xtSubtitleBlobUrl = blobUrl
+    await art.subtitle.switch(blobUrl, {
       name: track.label || track.language || "Subtitle",
       type: "vtt",
     })
-    log.log("[xt:container-tracks] subtitle active", {
+    trackSettingsDebug("container.subtitle.active", {
       lang: track.language,
       label: track.label,
       ms: Date.now() - started,
-      url: redactUrl(url).slice(0, 100),
+      blobUrl: blobUrl.slice(0, 40),
+      subtitleUrl: art.subtitle?.url?.slice?.(0, 40),
+      activeCues: art.subtitle?.activeCues?.length ?? 0,
     })
   } catch (error) {
     log.warn("[xt:container-tracks] subtitle switch failed", error)
+    trackSettingsDebug("container.subtitle.error", {
+      index: track.index,
+      error: String((error as Error)?.message || error),
+    })
     art.notice.show =
       t("player.subtitle.extractFailed") || "Could not load this subtitle track"
     setTimeout(() => {
@@ -281,14 +398,11 @@ function refreshContainerAudioMenu(
     ? formatContainerAudioLabel(activeTrack, activePos)
     : ""
 
-  const selector = audioTracks.map((track, listPos) => ({
+  const selector: ArtplayerSelectorRow[] = audioTracks.map((track, listPos) => ({
     html: formatContainerAudioLabel(track, listPos),
     default: track.index === activeIndex,
-    onSelect() {
-      saveTrackPreference("audio", track)
-      switchContainerAudio(art, video, sourceUrl, track.index)
-      refreshContainerAudioMenu(art, video, sourceUrl, audioTracks, track.index)
-    },
+    _xtKind: "container-audio",
+    _xtPayload: track,
   }))
 
   art.setting.add({
@@ -296,6 +410,27 @@ function refreshContainerAudioMenu(
     html: settingTitle(t("player.menu.audio") || "Audio", activeLabel),
     width: 280,
     selector,
+    onSelect(item: ArtplayerSelectorRow) {
+      const track = item?._xtPayload as ContainerAudioTrack | undefined
+      trackSettingsDebug("container.audio.menu.select", {
+        html: item?.html,
+        trackIndex: track?.index,
+        activeBefore: art._xtContainerAudioIndex,
+      })
+      if (!track || item._xtKind !== "container-audio") {
+        trackSettingsDebug("container.audio.menu.skip", { kind: item?._xtKind })
+        return item?.html || ""
+      }
+      saveTrackPreference("audio", track)
+      void switchContainerAudio(art, video, sourceUrl, track.index).then(() => {
+        refreshContainerAudioMenu(art, video, sourceUrl, audioTracks, track.index)
+      })
+      return item.html || ""
+    },
+  })
+  trackSettingsDebug("container.audio.menu.wired", {
+    tracks: audioTracks.length,
+    activeIndex,
   })
 }
 
@@ -314,25 +449,17 @@ function refreshContainerSubtitleMenu(
     ? formatContainerSubtitleLabel(activeTrack, activeListIndex)
     : t("player.subtitle.off") || "Off"
 
-  const selector: Array<{ html: string; default?: boolean; onSelect?: () => void }> = [
+  const selector: ArtplayerSelectorRow[] = [
     {
       html: t("player.subtitle.off") || "Off",
       default: activeListIndex < 0,
-      onSelect() {
-        clearTrackPreference("subtitle")
-        void applyContainerSubtitle(art, null)
-        refreshContainerSubtitleMenu(art, subtitleTracks, -1)
-      },
+      _xtKind: "container-subtitle-off",
     },
     ...subtitleTracks.map((track, listIndex) => ({
       html: formatContainerSubtitleLabel(track, listIndex),
       default: listIndex === activeListIndex,
-      onSelect() {
-        saveTrackPreference("subtitle", track)
-        void applyContainerSubtitle(art, track).then(() => {
-          refreshContainerSubtitleMenu(art, subtitleTracks, listIndex)
-        })
-      },
+      _xtKind: "container-subtitle",
+      _xtPayload: { track, listIndex },
     })),
   ]
 
@@ -341,6 +468,32 @@ function refreshContainerSubtitleMenu(
     html: settingTitle(t("player.menu.subtitle") || "Subtitles", activeLabel),
     width: 280,
     selector,
+    onSelect(item: ArtplayerSelectorRow) {
+      trackSettingsDebug("container.subtitle.menu.select", {
+        html: item?.html,
+        kind: item?._xtKind,
+      })
+      if (item?._xtKind === "container-subtitle-off") {
+        clearTrackPreference("subtitle")
+        void applyContainerSubtitle(art, null)
+        refreshContainerSubtitleMenu(art, subtitleTracks, -1)
+        return item.html || ""
+      }
+      const payload = item?._xtPayload as
+        | { track: ContainerSubtitleTrack; listIndex: number }
+        | undefined
+      if (!payload?.track || item._xtKind !== "container-subtitle") {
+        return item?.html || ""
+      }
+      saveTrackPreference("subtitle", payload.track)
+      void applyContainerSubtitle(art, payload.track).then(() => {
+        refreshContainerSubtitleMenu(art, subtitleTracks, payload.listIndex)
+      })
+      return item.html || ""
+    },
+  })
+  trackSettingsDebug("container.subtitle.menu.wired", {
+    tracks: subtitleTracks.length,
   })
 }
 
@@ -464,6 +617,11 @@ export async function attachContainerTracksForArtplayer(
 
   art._xtContainerTracks = true
   art._xtContainerSourceUrl = probeUrl
+  if (art.video?.src) {
+    art._xtContainerDirectPlayUrl = art.video.src
+  } else if (typeof art.url === "string" && art.url) {
+    art._xtContainerDirectPlayUrl = art.url
+  }
   removeNativeTrackSettings(art)
 
   const video = art.video as HTMLVideoElement
@@ -475,7 +633,7 @@ export async function attachContainerTracksForArtplayer(
     const active = pref >= 0 ? audioTracks[pref] : audioTracks[0]
     const activeIndex = active?.index ?? 0
     if (activeIndex > 0) {
-      switchContainerAudio(art, video, probeUrl, activeIndex)
+      void switchContainerAudio(art, video, probeUrl, activeIndex)
     }
     refreshContainerAudioMenu(art, video, probeUrl, audioTracks, activeIndex)
   } else if (audioTracks.length === 1) {
@@ -492,10 +650,11 @@ export async function attachContainerTracksForArtplayer(
     refreshContainerSubtitleMenuEmpty(art)
   }
 
-  log.log("[xt:container-tracks] menus wired", {
+  trackSettingsDebug("container.menus.wired", {
     source: redactUrl(probeUrl).slice(0, 100),
     audio: audioTracks.length,
     subtitles: subtitleTracks.length,
+    directPlayUrl: redactUrl(art._xtContainerDirectPlayUrl || "").slice(0, 80),
   })
 
   if (art.video?.paused && art._xtPlayAfterSourceLoad) {

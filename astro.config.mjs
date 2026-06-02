@@ -22,6 +22,14 @@ export default defineConfig({
       hmr: hmrHost
         ? { host: hmrHost, protocol: "ws", port: 4321 }
         : undefined,
+      warmup: {
+        clientFiles: [
+          "./src/scripts/movies/detail.ts",
+          "./src/scripts/series/detail.ts",
+          "./src/scripts/lib/player-runtime.ts",
+          "./src/components/PlaylistSwitcher.svelte",
+        ],
+      },
     },
     build: {
       chunkSizeWarningLimit: 800,
@@ -29,12 +37,19 @@ export default defineConfig({
     optimizeDeps: {
       include: [
         "@tauri-apps/api/app",
+        "@tauri-apps/api/window",
+        "@tauri-apps/api/event",
         "@tauri-apps/plugin-process",
         "@tauri-apps/plugin-updater",
         "@tauri-apps/plugin-http",
         "@tauri-apps/plugin-fs",
         "@tauri-apps/plugin-dialog",
+        "@tauri-apps/plugin-notification",
+        "@tauri-apps/plugin-opener",
         "tauri-plugin-android-fs-api",
+        "@tabler/icons-svelte/icons/chevron-down",
+        "@tabler/icons-svelte/icons/plus",
+        "@tabler/icons-svelte/icons/refresh",
         "artplayer",
         "hls.js",
         "video.js",
