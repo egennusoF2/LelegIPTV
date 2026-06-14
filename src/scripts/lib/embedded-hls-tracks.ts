@@ -27,6 +27,15 @@ const SETTING_AUDIO = "xt-hls-audio"
 const SETTING_SUBTITLE = "xt-hls-subtitle"
 const NO_AUDIO_CHECK_MS = 4500
 
+function hasContainerTrackProbe(art: any): boolean {
+  const probeUrl =
+    typeof art?._xtContainerProbeUrl === "string" ? art._xtContainerProbeUrl : ""
+  return (
+    Boolean(art?._xtPendingContainerTracks || art?._xtContainerTracks) ||
+    /\.(mkv|mp4|avi|mov|m4v)(?:[?#]|$)/i.test(probeUrl)
+  )
+}
+
 function writeHlsDebug(detail: unknown): void {
   if (!import.meta.env.DEV) return
   try {
@@ -88,7 +97,10 @@ function settingTitle(title: string, hint: string): string {
     : title
 }
 
-function applyPreferredHlsTracks(hls: any, opts: { audio?: boolean; subtitle?: boolean } = {}): void {
+export function applyPreferredHlsTracks(
+  hls: any,
+  opts: { audio?: boolean; subtitle?: boolean } = {},
+): void {
   if (!hls) return
   if (opts.audio !== false) {
     const audioIndex = findPreferredTrackIndex("audio", hls.audioTracks || [])
@@ -120,10 +132,15 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
   } catch {}
 
   const audioTracks = hls.audioTracks || []
+  const subtitleTracks = hls.subtitleTracks || []
+  if (audioTracks.length === 0 && subtitleTracks.length === 0 && hasContainerTrackProbe(art)) {
+    trackSettingsDebug("hls.track.menu.skip", { reason: "container-probe" })
+    return
+  }
   if (import.meta.env.DEV) {
     log.log("[xt:player] HLS track menu", {
       audio: audioTracks.length,
-      subtitle: (hls.subtitleTracks || []).length,
+      subtitle: subtitleTracks.length,
     })
   }
   const currentAudio =
@@ -200,7 +217,6 @@ export function refreshHlsTrackSettings(art: any, hls: any): void {
     },
   })
 
-  const subtitleTracks = hls.subtitleTracks || []
   const currentSubtitle = hls.subtitleTrack ?? -1
   const activeSubtitleLabel =
     currentSubtitle === -1

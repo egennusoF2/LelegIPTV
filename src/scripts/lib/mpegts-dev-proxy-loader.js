@@ -2,6 +2,7 @@
  * mpegts.js loader for Astro dev: fetches via /__stream proxy (same-origin, UA/referer).
  */
 import { wrapStreamUrlForDev, devProxyFetchHeaders } from "@/scripts/lib/stream-proxy"
+import { log } from "@/scripts/lib/log.js"
 
 const LoaderStatus = {
   kIdle: 0,
@@ -14,6 +15,18 @@ const LoaderStatus = {
 const LoaderErrors = {
   EXCEPTION: "Exception",
   HTTP_STATUS_CODE_INVALID: "HttpStatusCodeInvalid",
+}
+
+function isLoopbackMediaProxyUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return (
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+      /^\/__(?:transcode|stream)\b/.test(parsed.pathname)
+    )
+  } catch {
+    return false
+  }
 }
 
 /** @param {(url: string) => Headers} getBaseHeaders */
@@ -111,12 +124,12 @@ export function createMpegtsDevProxyLoader(getBaseHeaders) {
       }
 
       const seekConfig = this._seekHandler.getConfig(sourceURL, range)
-      const mediaHeaders = this._getBaseHeaders(seekConfig.url)
-
-      const proxyUrl = wrapStreamUrlForDev(seekConfig.url)
+      const loopbackProxy = isLoopbackMediaProxyUrl(seekConfig.url)
+      const mediaHeaders = loopbackProxy ? new Headers() : this._getBaseHeaders(seekConfig.url)
+      const proxyUrl = loopbackProxy ? seekConfig.url : wrapStreamUrlForDev(seekConfig.url)
       const params = {
         method: "GET",
-        headers: devProxyFetchHeaders(mediaHeaders),
+        headers: loopbackProxy ? mediaHeaders : devProxyFetchHeaders(mediaHeaders),
       }
 
       if (typeof AbortController !== "undefined") {
@@ -125,6 +138,9 @@ export function createMpegtsDevProxyLoader(getBaseHeaders) {
       }
 
       this._status = LoaderStatus.kConnecting
+      if (loopbackProxy) {
+        log.info("[xt:mpegts-dev-loader] loopback fetch", proxyUrl.replace(/url=[^&]+/, "url=***"))
+      }
       fetch(proxyUrl, params)
         .then((res) => {
           if (this._requestAbort) {
@@ -187,7 +203,11 @@ export function createMpegtsDevProxyLoader(getBaseHeaders) {
           return reader.cancel?.()
         }
         this._status = LoaderStatus.kBuffering
-        const chunk = result.value.buffer
+        const value = result.value
+        const chunk =
+          value.byteOffset === 0 && value.byteLength === value.buffer.byteLength
+            ? value.buffer
+            : value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
         const byteStart = (this._range?.from ?? 0) + this._receivedLength
         this._receivedLength += chunk.byteLength
         this._onDataArrival?.(chunk, byteStart, this._receivedLength)

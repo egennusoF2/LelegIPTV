@@ -55,3 +55,42 @@
     }
   }
 }
+
+/* Chromium < 111 / Tizen TV 7: oklch() not supported. Hex fallbacks for dark mode.
+   Tizen TV always runs in dark mode (inline script sets colorScheme = "dark"). */
+@supports not (color: oklch(0 0 0)) {
+  :root,
+  html[style*="color-scheme: dark"] {
+    --color-bg:         #161b2b;
+    --color-surface:    #1e2335;
+    --color-surface-2:  #262d42;
+    --color-surface-3:  #2f3750;
+    --color-line:       #333d55;
+    --color-line-soft:  #28304a;
+    --color-fg:         #f0f1f6;
+    --color-fg-2:       #b8bac6;
+    --color-fg-3:       #888a99;
+    --color-accent:     #52b4e8;
+    --color-accent-soft:rgba(82,180,232,0.18);
+    --color-ok:         #3dc98e;
+    --color-warn:       #d9b540;
+    --color-bad:        #e85f4a;
+  }
+
+  html[style*="color-scheme: light"] {
+    --color-bg:         #f8f9fb;
+    --color-surface:    #ffffff;
+    --color-surface-2:  #f2f3f8;
+    --color-surface-3:  #e6e8ef;
+    --color-line:       #dde0e9;
+    --color-line-soft:  #eceef4;
+    --color-fg:         #272c3e;
+    --color-fg-2:       #52586c;
+    --color-fg-3:       #657080;
+    --color-accent:     #2278d2;
+    --color-accent-soft:rgba(34,120,210,0.12);
+    --color-ok:         #0f9669;
+    --color-warn:       #a68209;
+    --color-bad:        #c43927;
+  }
+}

@@ -54,6 +54,7 @@ export function paintPoster(
 export function chooseMime(url: string | null | undefined): string {
     if (!url) return "video/mp4"
     const lower = (url.split("?")[0] ?? "").toLowerCase()
+    if (/\/__vod_hls(?:\/|$)/i.test(lower)) return "application/x-mpegURL"
     if (lower.endsWith(".m3u8")) return "application/x-mpegURL"
     if (lower.endsWith(".mpd")) return "application/dash+xml"
     if (lower.endsWith(".webm")) return "video/webm"

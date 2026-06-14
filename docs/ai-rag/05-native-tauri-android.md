@@ -154,6 +154,17 @@ Android playback notes:
 - VLC can be launched directly when installed; otherwise the system intent
   chooser is used.
 
+Known limitation:
+
+- Android currently does not have an integrated native media player backend.
+  It is still WebView plus JavaScript players plus external intent handoff.
+- Treat local VOD/HLS or transcode paths as unsupported on Android unless a
+  real FFmpeg binary/library or a native player bridge exists for the target
+  build.
+- The recommended next Android implementation is a Media3/ExoPlayer backend
+  behind the shared playback contract described in
+  `08-native-playback-rebuild-strategy.md`.
+
 ## Capabilities and permissions
 
 Files:
@@ -168,6 +179,9 @@ Rules:
 - Keep desktop-only commands out of Android where not supported.
 - Test command availability from frontend guards.
 - Do not assume Tauri plugin is available in web preview.
+- `native_playback_status` is currently registered only on desktop in
+  `src-tauri/src/lib.rs`. Android and iOS do not expose it; frontend code must
+  tolerate `getNativePlaybackStatus()` returning `null`.
 
 ## Android generated files
 
@@ -243,6 +257,15 @@ Runtime constraints:
   backends; verify HLS, DASH, and MPEG-TS on real TV firmware.
 - D-pad/spatial navigation, focus rings, overscan, and TV performance mode are
   mandatory release checks.
+
+Known limitation:
+
+- The current Tizen package is a Web App, not a native media app.
+- Do not assume hls.js/Shaka/browser playback on Samsung firmware behaves like
+  Chrome desktop.
+- The recommended next Tizen implementation is a `webapis.avplay` backend with
+  browser playback as fallback, as described in
+  `08-native-playback-rebuild-strategy.md`.
 
 ## Native change checklist
 

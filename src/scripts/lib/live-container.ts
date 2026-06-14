@@ -40,8 +40,14 @@ export function mseAudioCodecSupported(codec: string): boolean {
   }
 }
 
-/** Auto TS fallback is only useful when the user chose TS or MSE can play typical IPTV audio. */
+/** Auto TS fallback when the user chose TS, MSE can play IPTV audio, or Tauri HLS segments fail. */
 export function allowAutoTsFallback(creds?: LiveContainerCreds | null): boolean {
   if (preferredLiveContainer(creds) === "ts") return true
-  return mseAudioCodecSupported("ec-3")
+  if (mseAudioCodecSupported("ec-3")) return true
+  const isTauri =
+    typeof window !== "undefined" &&
+    (!!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ ||
+      !!(window as Window & { __TAURI__?: unknown }).__TAURI__)
+  if (isTauri && mpegtsMseLikelySupported()) return true
+  return false
 }

@@ -9,6 +9,8 @@ export function streamKindFromUrl(
   src: string,
   mime?: string | null,
 ): StreamKind | "unknown" {
+  if (/\/__transcode(?:\?|$)/i.test(src)) return "ts"
+  if (/\/__vod_hls(?:\/|[?#]|$)/i.test(src)) return "hls"
   if (/\.m3u8(\?|$)/i.test(src)) return "hls"
   if (/\.mpd(\?|$)/i.test(src)) return "dash"
   if (/\.ts(\?|$)/i.test(src)) return "ts"

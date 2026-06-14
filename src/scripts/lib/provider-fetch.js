@@ -1,9 +1,36 @@
 import { log, redactUrl } from "@/scripts/lib/log.js"
 import { getUserAgent } from "@/scripts/lib/app-settings.js"
+import {
+  STREAM_PROXY_PATH,
+  useDevStreamProxy,
+  devProxyFetchHeaders,
+  resolveUpstreamUserAgent,
+  isStreamProxyFetchUrl,
+  isNativeMediaProxyUrl,
+  streamProxyOrigin,
+  unwrapStreamProxyUrl,
+} from "@/scripts/lib/stream-proxy.ts"
 
 const isTauri =
   typeof window !== "undefined" &&
   (!!window.__TAURI_INTERNALS__ || !!window.__TAURI__)
+
+/** Route cross-origin provider API/EPG through same-origin /__stream (bypasses CORS). */
+function wrapProviderUrlForWeb(url) {
+  if (!useDevStreamProxy() || typeof window === "undefined") return url
+  if (String(url).startsWith(STREAM_PROXY_PATH + "?")) return url
+  try {
+    const parsed = new URL(String(url), window.location.origin)
+    if (parsed.origin === window.location.origin) return url
+  } catch {
+    return url
+  }
+  const base = streamProxyOrigin()
+  if (base && isTauri) {
+    return `${base}${STREAM_PROXY_PATH}?url=${encodeURIComponent(String(url))}`
+  }
+  return `${STREAM_PROXY_PATH}?url=${encodeURIComponent(String(url))}`
+}
 
 let tauriFetchPromise = null
 async function getTauriFetch() {
@@ -26,7 +53,10 @@ async function nativeFetch(url, init, u, callerSignal) {
     return r
   } catch (e) {
     if (!callerSignal?.aborted) {
-      log.error("[xt:net] native fetch failed", { url: u, error: e })
+      log.error("[xt:net] native fetch failed", {
+        url: u,
+        error: String(e?.message || e || "unknown"),
+      })
     }
     throw e
   }
@@ -104,6 +134,85 @@ export function getProviderStats() {
   return { ..._stats }
 }
 
+function parseNativeProxyRequest(url) {
+  try {
+    let current = String(url)
+    let ua
+    let referer
+    for (let depth = 0; depth < 6; depth++) {
+      const parsed = new URL(current)
+      if (
+        !(
+          (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+          (parsed.pathname === "/__stream" || parsed.pathname === "/stream")
+        )
+      ) {
+        break
+      }
+      const inner = parsed.searchParams.get("url")
+      if (!inner) return null
+      ua = ua || parsed.searchParams.get("ua") || undefined
+      referer = referer || parsed.searchParams.get("referer") || undefined
+      current = decodeURIComponent(inner)
+    }
+    return {
+      target: unwrapStreamProxyUrl(current),
+      ua,
+      referer,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function invokeMediaProxyFetch(url, init, u, callerSignal) {
+  const req = parseNativeProxyRequest(url)
+  if (!req?.target) throw new Error("invalid native proxy URL")
+  const headers = new Headers(init.headers || {})
+  const upstream = req.target
+  const effectiveUa =
+    headers.get("x-xt-ua") ||
+    headers.get("User-Agent") ||
+    req.ua ||
+    resolveUpstreamUserAgent(upstream)
+  const referer =
+    headers.get("x-xt-referer") ||
+    headers.get("Referer") ||
+    req.referer ||
+    undefined
+  const range = headers.get("Range") || undefined
+  const method = String(init.method || "GET").toUpperCase()
+
+  const { invoke } = await import("@tauri-apps/api/core")
+  log.log(`[xt:net] proxy invoke`, redactUrl(upstream).slice(0, 200))
+  const result = await invoke("media_proxy_fetch", {
+    url: upstream,
+    method,
+    range,
+    userAgent: effectiveUa,
+    referer,
+  })
+  if (callerSignal?.aborted) {
+    throw new DOMException("Aborted", "AbortError")
+  }
+  const raw = result?.body
+  const bytes =
+    raw instanceof Uint8Array
+      ? raw
+      : Array.isArray(raw)
+        ? new Uint8Array(raw)
+        : new Uint8Array(0)
+  const hdrs = new Headers()
+  for (const [key, value] of Object.entries(result?.headers || {})) {
+    if (value != null && value !== "") hdrs.set(key, String(value))
+  }
+  log.log(`[xt:net] proxy ok ${result?.status ?? 0}`, u)
+  return new Response(bytes, {
+    status: Number(result?.status) || 0,
+    headers: hdrs,
+  })
+}
+
 function isSameOriginMediaProxyUrl(url) {
   if (typeof window === "undefined") return false
   try {
@@ -119,6 +228,60 @@ function isSameOriginMediaProxyUrl(url) {
     }
   } catch {}
   return false
+}
+
+/** Fetch upstream IPTV URL via Rust (no loopback HTTP). Use for probes and native proxy mode. */
+export async function providerFetchUpstream(url, init = {}) {
+  if (!isTauri) {
+    return providerFetch(url, init)
+  }
+  const u = redactUrl(String(url)).slice(0, 200)
+  const callInit = { ...init }
+  delete callInit.forceTauri
+  log.log(`[xt:net] proxy start`, u)
+  try {
+    const headers = new Headers(callInit.headers || {})
+    const upstream = unwrapStreamProxyUrl(String(url))
+    const effectiveUa =
+      headers.get("x-xt-ua") ||
+      headers.get("User-Agent") ||
+      resolveUpstreamUserAgent(upstream)
+    const referer =
+      headers.get("x-xt-referer") ||
+      headers.get("Referer") ||
+      undefined
+    const range = headers.get("Range") || undefined
+    const method = String(callInit.method || "GET").toUpperCase()
+    const { invoke } = await import("@tauri-apps/api/core")
+    log.log(`[xt:net] proxy invoke`, redactUrl(upstream).slice(0, 200))
+    const result = await invoke("media_proxy_fetch", {
+      url: upstream,
+      method,
+      range,
+      userAgent: effectiveUa,
+      referer,
+    })
+    const raw = result?.body
+    const bytes =
+      raw instanceof Uint8Array
+        ? raw
+        : Array.isArray(raw)
+          ? new Uint8Array(raw)
+          : new Uint8Array(0)
+    const hdrs = new Headers()
+    for (const [key, value] of Object.entries(result?.headers || {})) {
+      if (value != null && value !== "") hdrs.set(key, String(value))
+    }
+    log.log(`[xt:net] proxy ok ${result?.status ?? 0}`, u)
+    noteSuccess(Number(result?.status) || 0)
+    return new Response(bytes, {
+      status: Number(result?.status) || 0,
+      headers: hdrs,
+    })
+  } catch (e) {
+    noteFailure(e)
+    throw e
+  }
 }
 
 export async function providerFetch(url, init = {}) {
@@ -139,7 +302,30 @@ export async function providerFetch(url, init = {}) {
     }
   }
 
-  const useTauri = isTauri && (ua || forceTauri) && !isSameOriginMediaProxyUrl(url)
+  // Cross-origin IPTV + loopback /__stream must use plugin-http (WKWebView fetch fails on both).
+  const useTauri =
+    forceTauri ||
+    (isTauri &&
+      (isNativeMediaProxyUrl(url) ||
+        (!isSameOriginMediaProxyUrl(url) &&
+          !isStreamProxyFetchUrl(url))))
+
+  if (isTauri && isNativeMediaProxyUrl(url)) {
+    log.log(`[xt:net] proxy start`, u)
+    try {
+      const r = await invokeMediaProxyFetch(url, callInit, u, callerSignal)
+      noteSuccess(r.status)
+      return r
+    } catch (e) {
+      if (callerSignal?.aborted) throw e
+      log.error("[xt:net] proxy invoke failed", {
+        url: u,
+        error: String(e?.message || e),
+      })
+      noteFailure(e)
+      throw e
+    }
+  }
 
   if (!useTauri) {
     const headers = new Headers(callInit.headers || {})
@@ -147,9 +333,16 @@ export async function providerFetch(url, init = {}) {
       headers.set("User-Agent", ua)
     }
     callInit.headers = headers
+    const fetchUrl = wrapProviderUrlForWeb(url)
+    if (fetchUrl !== url) {
+      for (const [key, value] of Object.entries(devProxyFetchHeaders(headers))) {
+        if (value) headers.set(key, value)
+      }
+      callInit.headers = headers
+    }
     log.log(`[xt:net] native start`, u)
     try {
-      const r = await nativeFetch(url, callInit, u, callerSignal)
+      const r = await nativeFetch(fetchUrl, callInit, u, callerSignal)
       noteSuccess(r.status)
       return r
     } catch (e) {
@@ -171,15 +364,14 @@ export async function providerFetch(url, init = {}) {
     }
   }
 
-  log.log(`[xt:net] tauri start ua=${ua || "(default)"}`, u)
+  log.log(`[xt:net] tauri start ua=${ua || "(iptv-default)"}`, u)
   const headers = new Headers(callInit.headers || {})
-  if (ua) {
-    headers.set("User-Agent", ua)
-  } else if (forceTauri) {
-    headers.set(
-      "User-Agent",
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    )
+  const upstream = isStreamProxyFetchUrl(url)
+    ? unwrapStreamProxyUrl(url)
+    : String(url)
+  const effectiveUa = ua || resolveUpstreamUserAgent(upstream)
+  if (effectiveUa) {
+    headers.set("User-Agent", effectiveUa)
   }
   try {
     const r = await tauriFetch(url, { ...callInit, headers })
@@ -188,10 +380,19 @@ export async function providerFetch(url, init = {}) {
     return r
   } catch (e) {
     if (callerSignal?.aborted) throw e
-    log.warn(
-      "[xt:net] tauri fetch failed, falling back to native:",
-      String(e?.message || e)
-    )
+    const msg = String(e?.message || e)
+    if (
+      /not allowed on the configured scope/i.test(msg) &&
+      isNativeMediaProxyUrl(url)
+    ) {
+      log.error(
+        "[xt:net] loopback /__stream blocked by Tauri HTTP scope (rebuild .app after capabilities change):",
+        msg
+      )
+      noteFailure(e)
+      throw e
+    }
+    log.warn("[xt:net] tauri fetch failed, falling back to native:", msg)
     try {
       const r = await nativeFetch(url, callInit, u, callerSignal)
       noteSuccess(r.status)

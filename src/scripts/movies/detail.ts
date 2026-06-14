@@ -45,15 +45,19 @@ import { togglePip } from "@/scripts/lib/pip-toggle.js"
 import { fmtImdbRating } from "@/scripts/lib/format.js"
 import { setRichPresence, clearRichPresence } from "@/scripts/lib/discord-rpc.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
-import { mountPlayer, getExternalLauncher } from "@/scripts/lib/player-runtime.ts"
+import {
+  getNativePlaybackStatus,
+  mountPlaybackSession,
+} from "@/scripts/lib/playback-session.ts"
 import {
   streamUrlsEquivalent,
   vodStreamPathsEquivalent,
+  isTauriEmbedded,
+  preferPlainHttpForXtreamMedia,
 } from "@/scripts/lib/stream-proxy"
 import { getPlayerBackend, getUserAgent } from "@/scripts/lib/app-settings.js"
 import { setEmbeddedMediaFetchContext } from "@/scripts/lib/embedded-media-fetch.js"
-import { toast } from "@/scripts/lib/toast.js"
-import { setupExternalPlayerButton, surfaceLaunchError } from "@/scripts/lib/external-player-button.ts"
+import { setupExternalPlayerButton } from "@/scripts/lib/external-player-button.ts"
 import {
   setResumePosition,
   setStreamStatus,
@@ -88,13 +92,42 @@ let trailerUrl = ""
 const urlParams = new URLSearchParams(location.search)
 const movieId = Number(urlParams.get("id") || "0")
 let wantsAutoplay = urlParams.get("autoplay") === "1"
+const detailDebugEnabled = urlParams.get("debug") === "1" || isTauriEmbedded()
 /** Xtream `container_extension` from get_vod_info (e.g. mkv) — skips slow HLS probes. */
 let vodContainerExtension = ""
+let vodDurationSeconds = 0
 let activePlaylistId = ""
 let creds = { host: "", port: "", user: "", pass: "" }
 let movie = null
 let detailSrc = ""
 let detailSrcBuilder = null
+
+function detailDebug(message: string, data?: unknown): void {
+  if (!detailDebugEnabled) return
+  const time = new Date().toLocaleTimeString("it-IT", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+  const safeData =
+    data === undefined
+      ? ""
+      : ` ${JSON.stringify(data, (_key, value) =>
+          typeof value === "string" ? redactUrl(value) : value,
+        )}`
+  const line = `[${time}] ${message}${safeData}`
+  log.warn("[xt:movie-detail-debug]", line)
+  let panel = document.getElementById("movie-detail-debug-log")
+  if (!panel) {
+    panel = document.createElement("pre")
+    panel.id = "movie-detail-debug-log"
+    panel.className =
+      "mx-auto mt-3 max-w-[calc(60dvh*16/9)] max-h-56 overflow-auto rounded-lg border border-line bg-surface-2/95 p-3 text-[11px] leading-relaxed text-fg-2 whitespace-pre-wrap"
+    playerWrap?.insertAdjacentElement("afterend", panel)
+  }
+  panel.textContent = `${panel.textContent || ""}${line}\n`
+  panel.scrollTop = panel.scrollHeight
+}
 
 const setAmbient = (url) => setAmbientOn(ambientEl, url)
 const paintPoster = (name, logo) => paintPosterOn(posterEl, name, logo)
@@ -135,6 +168,22 @@ function fmtDuration(value) {
   const mm = totalMin % 60
   if (!h) return `${mm} min`
   return `${h}h ${mm.toString().padStart(2, "0")}m`
+}
+
+function parseDurationSeconds(value) {
+  if (value == null || value === "") return 0
+  const raw = String(value).trim()
+  if (!raw) return 0
+  if (raw.includes(":")) {
+    const parts = raw.split(":").map((part) => parseInt(part, 10))
+    if (parts.some((part) => !Number.isFinite(part))) return 0
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    if (parts.length === 2) return parts[0] * 60 + parts[1]
+    return 0
+  }
+  const num = Number(raw)
+  if (!Number.isFinite(num) || num <= 0) return 0
+  return num > 300 ? Math.round(num) : Math.round(num * 60)
 }
 
 function applyVodInfo(data) {
@@ -209,6 +258,10 @@ function applyVodInfo(data) {
     movieData.duration ||
     info.duration ||
     (durationSecs > 0 ? Math.round(durationSecs / 60) : "")
+  vodDurationSeconds =
+    durationSecs > 0
+      ? durationSecs
+      : parseDurationSeconds(movieData.duration || info.duration || "")
   const rating =
     movieData.rating || info.rating || movieData.rating_5based || ""
   const genre = movieData.genre || info.genre || movieData.category || ""
@@ -354,50 +407,95 @@ function setupPipButton(player) {
   pipBtn.addEventListener("click", () => togglePip(player))
 }
 
-async function ensureEmbeddedPlayer(backend) {
+async function ensureEmbeddedPlayer(backend, nativeStatus = null) {
   if (vjs) return vjs
   const videoEl = document.getElementById("movie-player")
   if (!videoEl) return null
   const hasNativePipBridge = !!window.AndroidPip
-  const mounted = await mountPlayer(videoEl, backend, {
+  const session = await mountPlaybackSession(videoEl, backend, {
     liveui: false,
     fluid: true,
     preload: "auto",
     autoplay: false,
     aspectRatio: "16:9",
     pictureInPictureToggle: !hasNativePipBridge,
+    nativeStatus,
   })
-  if (mounted.kind !== "embedded") return null
-  vjs = mounted.handle
-  if (mounted.backend === "videojs") {
+  if (!session) return null
+  if (playerWrap) {
+    if (session.kind === "native") {
+      playerWrap.dataset.nativePlayback = "on"
+    } else {
+      delete playerWrap.dataset.nativePlayback
+    }
+  }
+  vjs = session.handle
+  if (session.backend === "videojs") {
     attachPlayerFocusKeeper(vjs)
   }
   return vjs
 }
 
 async function startPlayback() {
-  if (!movie) return
+  detailDebug("play click", { movieId, hasMovie: Boolean(movie), detailSrc })
+  if (!movie) {
+    detailDebug("play aborted: movie missing")
+    return
+  }
 
   // detailSrc may not be ready yet if the network fetch is in flight.
   let waited = 0
   while (!detailSrc && waited < 4000) {
+    if (waited === 0) detailDebug("waiting for detailSrc")
     await new Promise((r) => setTimeout(r, 100))
     waited += 100
   }
   if (!detailSrc) {
+    detailDebug("play aborted: detailSrc missing after wait", { waited })
     if (plotEl) plotEl.textContent = t("detail.error.noStream")
     return
   }
+  detailDebug("stream source ready", {
+    src: detailSrc,
+    containerExtension: vodContainerExtension,
+    duration: vodDurationSeconds,
+  })
 
   if (activePlaylistId) {
     pushRecent(activePlaylistId, "vod", movie.id, movie.name, movie.logo || null)
   }
 
-  if (await tryAndroidIntentPlayback(detailSrc)) return
+  if (await tryAndroidIntentPlayback(detailSrc)) {
+    detailDebug("play handed to Android intent")
+    return
+  }
 
   const remoteSrc = detailSrc
   const localSrc = await getLocalPlayableSrc(detailSrc)
   let playSrc = localSrc || detailSrc
+  detailDebug("play source selected", { local: Boolean(localSrc), playSrc })
+  try {
+    setEmbeddedMediaFetchContext({
+      userAgent: getUserAgent() || null,
+      referer:
+        /\.m3u8(?:[?#]|$)/i.test(playSrc) || /\/(movie|series)\//i.test(playSrc)
+          ? playSrc
+          : creds.host
+            ? `${fmtBase(creds.host, creds.port)}/`
+            : null,
+    })
+  } catch {}
+  if (!localSrc && !isTauriEmbedded()) {
+    const { preferVodHlsUrl, isXtreamVodContainerUrl, containerExtensionFromUrl } =
+      await import("@/scripts/lib/embedded-vod-playback.js")
+    const normalized = preferPlainHttpForXtreamMedia(playSrc)
+    if (isXtreamVodContainerUrl(normalized)) {
+      playSrc = await preferVodHlsUrl(playSrc, {
+        containerExtension:
+          vodContainerExtension || containerExtensionFromUrl(playSrc),
+      })
+    }
+  }
   const saved = activePlaylistId
     ? getProgress(activePlaylistId, "vod", movie.id)
     : null
@@ -411,15 +509,8 @@ async function startPlayback() {
       : 0
 
   const backend = getPlayerBackend()
-
-  if (backend === "mpv" || backend === "vlc") {
-    try {
-      await launchExternalPlayback(backend, playSrc, resumePos)
-    } catch (err) {
-      surfaceLaunchError(err, backend)
-    }
-    return
-  }
+  const nativeStatus = await getNativePlaybackStatus()
+  detailDebug("backend selected", { backend, nativeIntegrated: nativeStatus?.integrated, resumePos })
 
   if (posterEl) posterEl.classList.add("hidden")
   if (playerWrap) playerWrap.classList.remove("hidden")
@@ -427,20 +518,22 @@ async function startPlayback() {
   const videoEl = document.getElementById("movie-player")
   videoEl?.removeAttribute("hidden")
 
-  const player = await ensureEmbeddedPlayer(backend)
+  const player = await ensureEmbeddedPlayer(backend, nativeStatus)
   if (!player) {
+    detailDebug("play aborted: embedded player not mounted", { backend })
     setPlayerLoading(false)
     return
   }
+  detailDebug("embedded player mounted", { backend })
   bindPlayerLoadingEvents(player)
   setupPipButton(player)
-  try {
-    setEmbeddedMediaFetchContext({
-      userAgent: getUserAgent() || null,
-      referer: creds.host ? `${fmtBase(creds.host, creds.port)}/` : null,
-    })
-  } catch {}
   const mime = chooseMime(playSrc)
+  const remoteSourceForTracks =
+    isTauriEmbedded() && remoteSrc && !streamUrlsEquivalent(playSrc, remoteSrc)
+      ? remoteSrc
+      : localSrc
+        ? remoteSrc
+        : undefined
 
   player.one("playing", () => setStreamStatus(playSrc, "online"))
   player.one("error", () => {
@@ -452,6 +545,11 @@ async function startPlayback() {
       code: e?.code,
       message: e?.message,
       src: redactUrl(currentSrc),
+    })
+    detailDebug("player error", {
+      code: e?.code,
+      message: e?.message,
+      src: currentSrc,
     })
     setStreamStatus(playSrc, "offline")
   })
@@ -465,17 +563,90 @@ async function startPlayback() {
     })
   }
 
+  if (!isTauriEmbedded() && /\.mkv(\?|#|$)/i.test(playSrc) && !/\.m3u8(?:[?#]|$)/i.test(playSrc)) {
+    const {
+      toHlsSiblingUrl,
+      toMp4SiblingUrl,
+      preferVodHlsUrl,
+      probeNativeMp4Playable,
+    } = await import("@/scripts/lib/embedded-vod-playback.js")
+    const hlsSibling = toHlsSiblingUrl(playSrc)
+    if (hlsSibling) {
+      const hlsPlay = await preferVodHlsUrl(hlsSibling, {
+        containerExtension: vodContainerExtension || undefined,
+        optimistic: false,
+      })
+      if (/\.m3u8(?:[?#]|$)/i.test(hlsPlay)) {
+        playSrc = hlsPlay
+        detailDebug("web mkv switched to hls", { playSrc })
+        log.info("[xt:movie-detail] MKV skipped; using HLS for tracks", {
+          src: redactUrl(playSrc),
+        })
+      }
+    }
+    if (/\.mkv(\?|#|$)/i.test(playSrc) && !/\.m3u8(?:[?#]|$)/i.test(playSrc)) {
+      const mp4Sibling = toMp4SiblingUrl(playSrc)
+      if (mp4Sibling && (await probeNativeMp4Playable(mp4Sibling))) {
+        playSrc = mp4Sibling
+        detailDebug("web mkv switched to mp4", { playSrc })
+        log.info("[xt:movie-detail] MKV skipped; using MP4", { src: redactUrl(playSrc) })
+      }
+    }
+    if (/\.mkv(\?|#|$)/i.test(playSrc)) {
+      detailDebug("play aborted: web mkv unsupported", { playSrc })
+      log.warn(
+        "[xt:movie-detail] MKV not playable in WebView; use ArtPlayer HLS or external player",
+        { src: redactUrl(playSrc) },
+      )
+      if (plotEl) {
+        plotEl.textContent =
+          t("detail.error.noStream") +
+          " — " +
+          (t("player.backend.mpv") || "MPV/VLC") +
+          " " +
+          (t("settings.player.title") || "player")
+      }
+      setPlayerLoading(false)
+      return
+    }
+  }
+
+  log.info("[xt:movie-detail] play", { src: redactUrl(playSrc), mime })
+  detailDebug("calling player.src", {
+    playSrc,
+    mime,
+    remoteSourceForTracks,
+    resumePos,
+    expectedDurationSeconds: vodDurationSeconds,
+  })
+
   player.src({
     src: playSrc,
     type: mime,
     containerExtension: vodContainerExtension || undefined,
-    remoteSourceUrl: localSrc ? remoteSrc : undefined,
+    remoteSourceUrl: remoteSourceForTracks,
+    startSeconds: resumePos,
+    expectedDurationSeconds: vodDurationSeconds,
+    userAgent: getUserAgent() || null,
+    referer:
+      /\.m3u8(?:[?#]|$)/i.test(playSrc) || /\/(movie|series)\//i.test(playSrc)
+        ? playSrc
+        : creds.host
+          ? `${fmtBase(creds.host, creds.port)}/`
+          : null,
   })
 
   if (detailSrcBuilder) {
     void resolveStreamUrl(detailSrcBuilder)
-      .then((resolved) => {
+      .then(async (resolved) => {
         if (!resolved || streamUrlsEquivalent(resolved, playSrc)) return
+        const { shouldPreserveVodPlaySrc } = await import(
+          "@/scripts/lib/embedded-vod-playback.js"
+        )
+        if (shouldPreserveVodPlaySrc(playSrc, resolved)) {
+          detailSrc = resolved
+          return
+        }
         // Same file on a backup host — update URLs but keep playback (no re-probe / play() abort).
         if (vodStreamPathsEquivalent(resolved, playSrc)) {
           detailSrc = resolved
@@ -488,6 +659,8 @@ async function startPlayback() {
           src: playSrc,
           type: chooseMime(playSrc),
           containerExtension: vodContainerExtension || undefined,
+          remoteSourceUrl: isTauriEmbedded() ? resolved : undefined,
+          expectedDurationSeconds: vodDurationSeconds,
         })
       })
       .catch((err) => {
@@ -499,10 +672,13 @@ async function startPlayback() {
     const playResult = player.play?.()
     if (playResult && typeof playResult.then === "function") {
       void playResult.catch((err: unknown) => {
+        detailDebug("player.play rejected", { error: String((err as Error)?.message || err) })
         log.warn("[xt:movie-detail] play() failed:", (err as Error)?.message || err)
       })
     }
+    detailDebug("player.play invoked")
   } catch (err) {
+    detailDebug("player.play threw", { error: String((err as Error)?.message || err) })
     log.warn("[xt:movie-detail] play() failed:", (err as Error)?.message || err)
   }
 
@@ -544,20 +720,6 @@ async function startPlayback() {
   }
 }
 
-async function launchExternalPlayback(backend, src, resumeSeconds) {
-  const launcher = getExternalLauncher(backend)
-  toast({
-    title: t("settings.playback.launching", { player: backend.toUpperCase() })
-      || `Launching ${backend.toUpperCase()}…`,
-    duration: 2000,
-  })
-  return launcher.launch(src, {
-    resumeSeconds,
-    userAgent: getUserAgent() || null,
-    referer: creds.host ? `${fmtBase(creds.host, creds.port)}/` : null,
-  })
-}
-
 playBtn?.addEventListener("click", startPlayback)
 
 restartBtn?.addEventListener("click", () => {
@@ -593,6 +755,11 @@ document.addEventListener("xt:progress-changed", (e) => {
   if (detail.kind !== "vod") return
   if (movie?.id !== detail.id) return
   syncResumeUI()
+})
+
+document.addEventListener("xt:player-debug", (e) => {
+  const detail = (e as CustomEvent).detail || {}
+  detailDebug(detail.message || "player debug", detail.data)
 })
 
 window.addEventListener("pagehide", () => {

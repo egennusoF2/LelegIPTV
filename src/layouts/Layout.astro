@@ -85,6 +85,7 @@ const documentTitle = pageTitle
                 ua.indexOf(" tv ") !== -1 ||
                 ua.indexOf("smart-tv") !== -1 ||
                 ua.indexOf("smarttv") !== -1 ||
+                ua.indexOf("tizen") !== -1 ||
                 ua.indexOf("googletv") !== -1 ||
                 ua.indexOf("appletv") !== -1 ||
                 ua.indexOf("hbbtv") !== -1 ||
@@ -229,6 +230,40 @@ const documentTitle = pageTitle
         }
         window.__applyAndroidStatusBar = applyAndroidStatusBar;
       } catch (e) {}
+
+      // Inline splash dismissal — runs even when module scripts fail to load
+      // (e.g. Tizen TV widget:// scheme, file:// CORS restrictions).
+      // The module script version (splash-backdrop + animations) takes over
+      // when it loads. This is the guaranteed fallback.
+      ;(function () {
+        if (document.documentElement.hasAttribute("data-splash-done")) return;
+        function removeSplash() {
+          try {
+            var s = document.getElementById("xt-app-splash");
+            if (s) s.remove();
+          } catch (e) {}
+          document.documentElement.setAttribute("data-splash-done", "");
+          try { sessionStorage.setItem("xt_splash_done", "1"); } catch (e) {}
+        }
+        // Minimum display time: show splash for at least 3s, max 10s
+        var MIN_MS = 0;
+        var MAX_MS = 5000;
+        var t0 = Date.now();
+        function onReady() {
+          var elapsed = Date.now() - t0;
+          var wait = Math.max(0, MIN_MS - elapsed);
+          setTimeout(removeSplash, wait);
+        }
+        // Hard cap — always fires regardless of module loading
+        setTimeout(function () {
+          if (!document.documentElement.hasAttribute("data-splash-done")) removeSplash();
+        }, MAX_MS);
+        if (document.readyState === "complete") {
+          onReady();
+        } else {
+          window.addEventListener("load", onReady, { once: true });
+        }
+      })();
     </script>
     <script>
       import "../scripts/pwa-register.ts"
@@ -241,6 +276,7 @@ const documentTitle = pageTitle
            flex flex-col
            pt-[env(safe-area-inset-top)]
            pr-[env(safe-area-inset-right)]"
+    style="height:100vh;height:100dvh"
   >
     <div id="xt-app-splash" aria-hidden="true">
       <canvas id="xt-app-splash-bg" aria-hidden="true"></canvas>
@@ -258,6 +294,7 @@ const documentTitle = pageTitle
         <span class="xt-app-splash__wordmark">
           <span class="xt-app-splash__wordmark-1">Leleg</span><span class="xt-app-splash__wordmark-2">&nbsp;IPTV</span>
         </span>
+        <span id="xt-splash-dbg" style="position:fixed;top:1rem;left:0;right:0;text-align:center;font-size:2rem;font-weight:bold;color:yellow;z-index:9999;text-shadow:0 0 4px black">v3-debug</span>
       </div>
     </div>
     <TitleBar />
@@ -441,8 +478,17 @@ const documentTitle = pageTitle
   import { initConnectivity } from "@/scripts/lib/connectivity.js"
   import { initTrayHandler } from "@/scripts/lib/tray-handler"
   import { setupSplashBackdrop } from "@/scripts/lib/splash-backdrop"
+  import {
+    installDevStreamFetchPatch,
+    installTauriStreamFetchPatch,
+  } from "@/scripts/lib/dev-stream-fetch-patch"
+  installDevStreamFetchPatch()
+  void installTauriStreamFetchPatch()
   initI18n()
   initConnectivity()
+
+  // Signal that JS modules loaded — the inline fallback checks this flag.
+  ;(window as any).__xt_modules_loaded = true
 
   ;(function dismissSplash() {
     if (document.documentElement.hasAttribute("data-splash-done")) return

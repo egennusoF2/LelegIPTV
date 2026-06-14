@@ -12,9 +12,24 @@ import {
 } from "@/scripts/lib/stream-proxy"
 import { log } from "@/scripts/lib/log.js"
 
-const isTauri =
-  typeof window !== "undefined" &&
-  (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
+function isTauriRuntime(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
+  )
+}
+
+function isLoopbackMediaProxyUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return (
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+      /^\/__(?:stream|transcode|vod_hls)\b/.test(parsed.pathname)
+    )
+  } catch {
+    return false
+  }
+}
 
 export interface EmbeddedMediaFetchContext {
   userAgent?: string | null
@@ -34,7 +49,7 @@ export function clearEmbeddedMediaFetchContext(): void {
 }
 
 export function shouldUseProviderFetchForMedia(): boolean {
-  if (!isTauri) return false
+  if (!isTauriRuntime()) return false
   // In Tauri dev mode the Vite proxy at /__stream is reachable from the WebView
   // (the app connects to localhost:4321). Route HLS through the proxy instead of
   // the Tauri HTTP plugin IPC — gives the same speed as the web browser version.
@@ -77,16 +92,17 @@ export function buildHlsStreamRequest(
   initParams?: RequestInit,
 ): Request {
   const targetUrl = preferHttpsStreamUrl(url)
+  const loopbackProxy = isLoopbackMediaProxyUrl(targetUrl)
   const headers = resolveMediaHeaders(targetUrl)
   const incoming = new Headers(initParams?.headers || {})
   incoming.forEach((value, key) => {
     headers.set(key, value)
   })
 
-  const requestUrl = useDevStreamProxy()
+  const requestUrl = useDevStreamProxy() && !loopbackProxy
     ? wrapStreamUrlForDev(targetUrl)
     : targetUrl
-  const requestHeaders = useDevStreamProxy()
+  const requestHeaders = useDevStreamProxy() && !loopbackProxy
     ? devProxyFetchHeaders(headers)
     : headers
 
@@ -112,14 +128,15 @@ export function buildHlsXhrSetup(
   url: string,
 ): void {
   const upstream = preferHttpsStreamUrl(unwrapStreamProxyUrl(url))
-  const requestUrl = useDevStreamProxy()
+  const loopbackProxy = isLoopbackMediaProxyUrl(url) || isLoopbackMediaProxyUrl(upstream)
+  const requestUrl = useDevStreamProxy() && !loopbackProxy
     ? wrapStreamUrlForDev(url)
     : upstream
   if (useDevStreamProxy() && import.meta.env.DEV) {
     log.log("[xt:stream] hls xhr", requestUrl.slice(0, 140))
   }
   xhr.open("GET", requestUrl, true)
-  applyProxyHeadersToXhr(xhr, upstream)
+  if (!loopbackProxy) applyProxyHeadersToXhr(xhr, upstream)
 }
 
 export { resolveEmbeddedStreamUrl }
@@ -138,12 +155,16 @@ export async function createEmbeddedHlsConfig(
     enableIMSC1: true,
     enableCEA708Captions: true,
     renderTextTracksNatively: false,
-    lowLatencyMode: isLive,
+    // Xtream panels: LL-HLS often pulls expired segments (200 + empty body).
+    lowLatencyMode: false,
     startFragPrefetch: isLive,
     ...(isLive
       ? {
-          liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 5,
+          liveStartIndex: -1,
+          initialLiveManifestSize: 1,
+          liveSyncDurationCount: tauriMedia ? 1 : 3,
+          liveMaxLatencyDurationCount: tauriMedia ? 4 : 8,
+          maxLiveSyncPlaybackRate: 1.5,
         }
       : {
           maxBufferLength: 60,
@@ -156,7 +177,7 @@ export async function createEmbeddedHlsConfig(
     const { createHlsProviderFetchLoader } = await import(
       "@/scripts/lib/hls-provider-loader.js"
     )
-    config.loader = createHlsProviderFetchLoader()
+    config.loader = createHlsProviderFetchLoader({ live: isLive })
     return config
   }
 
@@ -171,7 +192,10 @@ export async function createEmbeddedHlsConfig(
 }
 
 /** mpegts.js player config: provider loader on Tauri; dev proxy in browser dev. */
-export async function createEmbeddedMpegtsConfig(): Promise<Record<string, unknown>> {
+export async function createEmbeddedMpegtsConfig(
+  opts: { live?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const isLive = opts.live !== false
   const headers: Record<string, string> = {}
   const ua = mediaFetchContext?.userAgent || getUserAgent()
   if (ua) headers["User-Agent"] = ua
@@ -179,9 +203,20 @@ export async function createEmbeddedMpegtsConfig(): Promise<Record<string, unkno
   if (referer) headers["Referer"] = referer
 
   const config: Record<string, unknown> = {
-    enableWorker: true,
-    enableStashBuffer: false,
-    stashInitialSize: 128,
+    // Keep mpegts.js on the main thread when a custom loader is in use. The
+    // loader depends on app-side fetch bridges and local loopback streams that
+    // are less reliable when initialized from the transmux worker in WKWebView.
+    enableWorker: false,
+    enableStashBuffer: !isLive,
+    stashInitialSize: isLive ? 128 : 384,
+    // VOD transcodes are served as one continuous loopback stream. mpegts.js
+    // lazyLoad defaults to keeping ~3 minutes, then aborts the HTTP request;
+    // aborting our loopback stream kills ffmpeg and makes long movies appear
+    // truncated. Keep lazy loading only for true live streams.
+    lazyLoad: isLive,
+    autoCleanupSourceBuffer: isLive,
+    autoCleanupMaxBackwardDuration: isLive ? 30 : 300,
+    autoCleanupMinBackwardDuration: isLive ? 15 : 120,
     ...(Object.keys(headers).length ? { headers } : {}),
   }
 

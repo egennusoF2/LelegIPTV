@@ -3,6 +3,8 @@
  * (Tauri plugin-http) so live .ts streams are not blocked by CDN CORS redirects.
  */
 import { providerFetch } from "@/scripts/lib/provider-fetch.js"
+import { resolveMediaHeaders } from "@/scripts/lib/embedded-media-fetch.js"
+import { log } from "@/scripts/lib/log.js"
 
 const LoaderStatus = {
   kIdle: 0,
@@ -16,6 +18,18 @@ const LoaderErrors = {
   OK: "OK",
   EXCEPTION: "Exception",
   HTTP_STATUS_CODE_INVALID: "HttpStatusCodeInvalid",
+}
+
+function isLoopbackMediaProxyUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return (
+      (parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost") &&
+      /^\/__(?:transcode|stream)\b/.test(parsed.pathname)
+    )
+  } catch {
+    return false
+  }
 }
 
 export function createMpegtsProviderFetchLoader() {
@@ -112,6 +126,7 @@ export function createMpegtsProviderFetchLoader() {
 
       const seekConfig = this._seekHandler.getConfig(sourceURL, range)
       const headers = new Headers()
+      const loopbackProxy = isLoopbackMediaProxyUrl(seekConfig.url)
       if (typeof seekConfig.headers === "object" && seekConfig.headers) {
         for (const key of Object.keys(seekConfig.headers)) {
           headers.append(key, seekConfig.headers[key])
@@ -122,17 +137,25 @@ export function createMpegtsProviderFetchLoader() {
           headers.append(key, this._config.headers[key])
         }
       }
-      if (!headers.has("Referer")) {
+      if (!loopbackProxy) {
         try {
-          headers.set("Referer", `${new URL(seekConfig.url).origin}/`)
+          const mediaHeaders = resolveMediaHeaders(seekConfig.url)
+          mediaHeaders.forEach((value, key) => {
+            if (!headers.has(key)) headers.set(key, value)
+          })
         } catch {}
+        if (!headers.has("Referer")) {
+          try {
+            headers.set("Referer", `${new URL(seekConfig.url).origin}/`)
+          } catch {}
+        }
       }
 
       const params = {
         method: "GET",
         headers,
-        forceTauri: true,
       }
+      if (!loopbackProxy) params.forceTauri = true
 
       if (typeof AbortController !== "undefined") {
         this._abortController = new AbortController()
@@ -140,7 +163,11 @@ export function createMpegtsProviderFetchLoader() {
       }
 
       this._status = LoaderStatus.kConnecting
-      providerFetch(seekConfig.url, params)
+      const fetcher = loopbackProxy ? fetch : providerFetch
+      if (loopbackProxy) {
+        log.info("[xt:mpegts-loader] loopback fetch", seekConfig.url.replace(/url=[^&]+/, "url=***"))
+      }
+      fetcher(seekConfig.url, params)
         .then((res) => {
           if (this._requestAbort) {
             this._status = LoaderStatus.kIdle
@@ -217,7 +244,11 @@ export function createMpegtsProviderFetchLoader() {
           return reader.cancel?.()
         }
         this._status = LoaderStatus.kBuffering
-        const chunk = result.value.buffer
+        const value = result.value
+        const chunk =
+          value.byteOffset === 0 && value.byteLength === value.buffer.byteLength
+            ? value.buffer
+            : value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
         const byteStart = (this._range?.from ?? 0) + this._receivedLength
         this._receivedLength += chunk.byteLength
         this._onDataArrival?.(chunk, byteStart, this._receivedLength)

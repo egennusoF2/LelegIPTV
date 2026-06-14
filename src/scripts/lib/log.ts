@@ -14,8 +14,67 @@
 
 const isDev = Boolean(import.meta.env?.DEV)
 
+const isTauri =
+    typeof window !== "undefined" &&
+    (!!(window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ ||
+        !!(window as Window & { __TAURI__?: unknown }).__TAURI__)
+
+/** Shipping Tauri builds: persist [xt:*] lines via tauri-plugin-log (see ~/Library/Logs/...). */
+const tauriLogs = isTauri && !isDev
+
 type LogFn = (...args: unknown[]) => void
 const noop: LogFn = () => {}
+
+let tauriLogReady: Promise<{
+    error: (msg: string) => Promise<void>
+    warn: (msg: string) => Promise<void>
+    info: (msg: string) => Promise<void>
+    debug: (msg: string) => Promise<void>
+} | null> | null = null
+
+function getTauriLog() {
+    if (!tauriLogs) return null
+    if (!tauriLogReady) {
+        tauriLogReady = import("@tauri-apps/plugin-log")
+            .then((mod) => mod)
+            .catch(() => null)
+    }
+    return tauriLogReady
+}
+
+function formatArgs(args: unknown[]): string {
+    return args
+        .map((a) => {
+            if (a == null) return String(a)
+            if (typeof a === "string") return a
+            try {
+                return JSON.stringify(a)
+            } catch {
+                return String(a)
+            }
+        })
+        .join(" ")
+}
+
+function mirror(
+    level: "error" | "warn" | "info" | "debug" | "log",
+    consoleFn: LogFn,
+    ...args: unknown[]
+): void {
+    consoleFn(...args)
+    if (!tauriLogs) return
+    void getTauriLog().then((plugin) => {
+        if (!plugin) return
+        const line = formatArgs(args)
+        const send =
+            level === "log"
+                ? plugin.info
+                : level === "debug"
+                  ? plugin.debug
+                  : plugin[level]
+        void send(line).catch(() => {})
+    })
+}
 
 export const log: {
     error: LogFn
@@ -24,11 +83,17 @@ export const log: {
     debug: LogFn
     log: LogFn
 } = {
-    error: console.error.bind(console),
-    warn: console.warn.bind(console),
-    info: isDev ? console.info.bind(console) : noop,
-    debug: isDev ? console.debug.bind(console) : noop,
-    log: isDev ? console.log.bind(console) : noop,
+    error: (...args) => mirror("error", console.error.bind(console), ...args),
+    warn: (...args) => mirror("warn", console.warn.bind(console), ...args),
+    info: isDev || tauriLogs
+        ? (...args) => mirror("info", console.info.bind(console), ...args)
+        : noop,
+    debug: isDev || tauriLogs
+        ? (...args) => mirror("debug", console.debug.bind(console), ...args)
+        : noop,
+    log: isDev || tauriLogs
+        ? (...args) => mirror("log", console.log.bind(console), ...args)
+        : noop,
 }
 
 const SENSITIVE_PARAMS = /(\b(?:username|user|password|pass|token|auth|key|api_key|apikey)=)([^&#\s]*)/gi

@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LelegIPTV - Installazione dispositivi</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070b10;
+      --panel: #101820;
+      --panel-2: #142231;
+      --line: #294050;
+      --text: #eef7fb;
+      --muted: #a8b7c4;
+      --accent: #45c7f0;
+      --accent-2: #8ee7ff;
+      --ok: #49d18d;
+      --warn: #ffd166;
+      --bad: #ff6b6b;
+      --code: #071018;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background:
+        radial-gradient(circle at 15% 0%, rgba(69, 199, 240, 0.16), transparent 28rem),
+        radial-gradient(circle at 85% 8%, rgba(73, 209, 141, 0.10), transparent 26rem),
+        var(--bg);
+      color: var(--text);
+    }
+
+    a {
+      color: var(--accent-2);
+    }
+
+    header,
+    main,
+    footer {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 42px 0 22px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .logo {
+      display: inline-grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(69, 199, 240, 0.55);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 20px 0 10px;
+      max-width: 880px;
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .lede {
+      max-width: 860px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    nav {
+      margin-top: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    nav a,
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(16, 24, 32, 0.75);
+      color: var(--text);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    section {
+      margin: 28px 0;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(16, 24, 32, 0.82);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.22);
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 22px 0 8px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 8px 0;
+    }
+
+    ul,
+    ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 7px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    th,
+    td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: var(--accent-2);
+      background: rgba(69, 199, 240, 0.08);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: rgba(7, 16, 24, 0.95);
+      color: #d7f4ff;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      overflow-x: auto;
+      border: 1px solid rgba(69, 199, 240, 0.18);
+      border-radius: 8px;
+      background: var(--code);
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: #d7f4ff;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .card {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(20, 34, 49, 0.82);
+    }
+
+    .card h3 {
+      margin-top: 0;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+
+    .ok .dot { background: var(--ok); }
+    .warn .dot { background: var(--warn); }
+    .bad .dot { background: var(--bad); }
+
+    .note {
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
+      background: rgba(69, 199, 240, 0.09);
+      color: var(--muted);
+    }
+
+    .warnbox {
+      border-left-color: var(--warn);
+      background: rgba(255, 209, 102, 0.10);
+    }
+
+    footer {
+      padding: 18px 0 42px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 720px) {
+      section {
+        padding: 18px;
+      }
+
+      table,
+      thead,
+      tbody,
+      th,
+      td,
+      tr {
+        display: block;
+      }
+
+      thead {
+        display: none;
+      }
+
+      tr {
+        border-bottom: 1px solid var(--line);
+      }
+
+      tr:last-child {
+        border-bottom: 0;
+      }
+
+      td {
+        border-bottom: 0;
+      }
+
+      td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: 4px;
+        color: var(--accent-2);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="logo">∞</span><span>LelegIPTV local artifacts</span></div>
+    <h1>Installazione su web, desktop, mobile e Smart TV</h1>
+    <p class="lede">
+      Questa pagina documenta i percorsi locali e le procedure di installazione per ogni versione generata dal repository.
+      Non punta agli store ufficiali: usa solo gli artefatti creati in locale o firmati con gli strumenti del dispositivo.
+    </p>
+    <nav aria-label="Indice">
+      <a href="#verifica">Verifica repo</a>
+      <a href="#artefatti">Artefatti</a>
+      <a href="#web">Web</a>
+      <a href="#android">Android</a>
+      <a href="#android-tv">Android TV</a>
+      <a href="#tizen">Samsung Tizen TV</a>
+      <a href="#apple">iOS, iPadOS, macOS</a>
+      <a href="#desktop">Windows e Linux</a>
+      <a href="#checklist">Checklist finale</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="verifica">
+      <h2>Verifica del codice Android e Samsung TV</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Android / Android TV</h3>
+          <p class="status ok"><span class="dot"></span>Struttura presente nel repo</p>
+          <ul>
+            <li>Package e application ID: <code>com.lelegiptv.player</code>.</li>
+            <li>Manifest con <code>INTERNET</code>, servizio media playback, PiP e <code>LEANBACK_LAUNCHER</code>.</li>
+            <li><code>network_security_config.xml</code> consente HTTP chiaro, necessario per provider Xtream non HTTPS.</li>
+            <li>WebView con fullscreen HTML5, mixed content, debug su build debuggable e bridge per player esterni.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>Samsung Smart TV / Tizen</h3>
+          <p class="status ok"><span class="dot"></span>Pacchetto Web App presente</p>
+          <ul>
+            <li>Preparazione Tizen: <code>build/tizen-web/</code>.</li>
+            <li>Widget generato: <code>build/tizen-web/LelegIPTV.wgt</code>.</li>
+            <li>Profilo TV: <code>&lt;tizen:profile name="tv"/&gt;</code>.</li>
+            <li>Versione Tizen richiesta: <code>6.0</code>.</li>
+          </ul>
+        </article>
+
+        <article class="card">
+          <h3>Nota firma Android</h3>
+          <p class="status warn"><span class="dot"></span>APK release attuale non firmato</p>
+          <p>
+            L'artefatto trovato e' <code>app-universal-release-unsigned.apk</code>. Per distribuzione stabile bisogna configurare il keystore
+            con <code>XTREAM_KEYSTORE_FILE</code>, <code>XTREAM_KEYSTORE_PASSWORD</code>, <code>XTREAM_KEY_ALIAS</code> e <code>XTREAM_KEY_PASSWORD</code>,
+            oppure firmare manualmente l'APK.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="artefatti">
+      <h2>Artefatti locali da usare</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Piattaforma</th>
+            <th>Comando build</th>
+            <th>Percorso artefatto</th>
+            <th>Stato trovato</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="Piattaforma">Web / PWA</td>
+            <td data-label="Comando"><code>pnpm build</code></td>
+            <td data-label="Percorso"><code>dist/</code></td>
+            <td data-label="Stato">Build statica da pubblicare o servire localmente.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">Android phone / tablet</td>
+            <td data-label="Comando"><code>pnpm tauri:android:build</code></td>
+            <td data-label="Percorso"><code>src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk</code></td>
+            <td data-label="Stato">Presente, 88 MB, release unsigned.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">Android App Bundle</td>
+            <td data-label="Comando"><code>pnpm tauri:android:build</code></td>
+            <td data-label="Percorso"><code>src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab</code></td>
+            <td data-label="Stato">Presente, 36 MB.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">Android TV / Google TV</td>
+            <td data-label="Comando"><code>pnpm tauri:android:build</code></td>
+            <td data-label="Percorso">Stesso APK Android; il manifest contiene <code>LEANBACK_LAUNCHER</code>.</td>
+            <td data-label="Stato">Installabile via sideload o <code>adb</code>.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">Samsung Tizen TV</td>
+            <td data-label="Comando"><code>pnpm build &amp;&amp; pnpm tizen:prepare</code>, poi Tizen CLI</td>
+            <td data-label="Percorso"><code>build/tizen-web/LelegIPTV.wgt</code></td>
+            <td data-label="Stato">Presente, 1.7 MB.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">iOS / iPadOS</td>
+            <td data-label="Comando"><code>pnpm tauri:ios:build</code> o Xcode Archive</td>
+            <td data-label="Percorso"><code>src-tauri/gen/apple/build/LelegIPTV.ipa</code></td>
+            <td data-label="Stato">Presente, 26 MB.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">macOS</td>
+            <td data-label="Comando"><code>pnpm build:mac</code></td>
+            <td data-label="Percorso"><code>src-tauri/target/release/bundle/macos/*.app</code>, <code>src-tauri/target/release/bundle/dmg/*.dmg</code></td>
+            <td data-label="Stato">Da usare solo dopo rebuild locale aggiornato.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">Windows</td>
+            <td data-label="Comando"><code>pnpm build:desktop</code> su Windows</td>
+            <td data-label="Percorso"><code>src-tauri/target/release/bundle/nsis/*.exe</code>, <code>src-tauri/target/release/bundle/msi/*.msi</code></td>
+            <td data-label="Stato">Host-specific: va compilato su Windows o CI Windows.</td>
+          </tr>
+          <tr>
+            <td data-label="Piattaforma">Linux</td>
+            <td data-label="Comando"><code>pnpm build:desktop</code> su Linux</td>
+            <td data-label="Percorso"><code>src-tauri/target/release/bundle/deb/*.deb</code>, <code>rpm/*.rpm</code>, <code>appimage/*.AppImage</code></td>
+            <td data-label="Stato">Host-specific: va compilato su Linux o CI Linux.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="web">
+      <h2>Web browser e PWA</h2>
+      <h3>Build</h3>
+      <pre><code>pnpm install
+pnpm build</code></pre>
+      <p>
+        Pubblica il contenuto di <code>dist/</code> su hosting HTTPS, oppure servilo localmente per test. Per PWA, usa HTTPS o
+        <code>localhost</code>; molti browser non permettono l'installazione PWA da HTTP remoto.
+      </p>
+      <h3>Installazione sul dispositivo</h3>
+      <ol>
+        <li>Apri l'URL pubblico o locale in Chrome, Safari, Edge o browser TV compatibile.</li>
+        <li>Se il browser mostra <strong>Installa app</strong> o <strong>Aggiungi a schermata Home</strong>, usa quel comando.</li>
+        <li>Verifica login, Live TV, VOD, tracce audio e sottotitoli dal dispositivo reale.</li>
+      </ol>
+    </section>
+
+    <section id="android">
+      <h2>Android phone e tablet</h2>
+      <h3>Build</h3>
+      <pre><code>pnpm install
+pnpm tauri:android:build</code></pre>
+      <p>
+        Se la shell non trova <code>pnpm</code>, apri un terminale login o aggiungi al <code>PATH</code> la directory in cui e' installato
+        Node/pnpm, per esempio Homebrew su macOS.
+      </p>
+      <h3>Installazione via ADB</h3>
+      <pre><code>adb devices
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk</code></pre>
+      <h3>Installazione manuale</h3>
+      <ol>
+        <li>Copia l'APK sul telefono o tablet.</li>
+        <li>Abilita l'installazione da sorgenti sconosciute per l'app con cui apri il file.</li>
+        <li>Apri l'APK e completa l'installazione.</li>
+      </ol>
+      <p class="note warnbox">
+        Per installazione ripetibile su piu dispositivi conviene firmare l'APK con lo stesso keystore. Se installi una build firmata con una
+        chiave diversa da quella gia presente, Android richiede la disinstallazione della vecchia app.
+      </p>
+    </section>
+
+    <section id="android-tv">
+      <h2>Android TV e Google TV</h2>
+      <p>
+        La stessa app Android e' configurata anche per TV: il manifest espone <code>LEANBACK_LAUNCHER</code>, banner TV e supporto D-pad non
+        obbligatorio.
+      </p>
+      <h3>Installazione via rete</h3>
+      <ol>
+        <li>Su TV abilita <strong>Opzioni sviluppatore</strong> e <strong>Debug di rete</strong> o <strong>ADB debugging</strong>.</li>
+        <li>Dal Mac o PC collegato alla stessa rete esegui:</li>
+      </ol>
+      <pre><code>adb connect IP_DELLA_TV:5555
+adb install -r src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk</code></pre>
+      <h3>Installazione via USB / file manager</h3>
+      <ol>
+        <li>Copia l'APK su chiavetta USB o usa un file manager TV.</li>
+        <li>Abilita installazione da sorgenti sconosciute.</li>
+        <li>Installa e avvia <strong>LelegIPTV</strong> dalla schermata app o dalla sezione TV.</li>
+      </ol>
+      <p class="note">
+        Test obbligatori su TV reale: focus D-pad, fullscreen, audio, sottotitoli, HLS/DASH, ritorno indietro e standby/risveglio.
+      </p>
+    </section>
+
+    <section id="tizen">
+      <h2>Samsung Smart TV / Tizen</h2>
+      <p>
+        Samsung Tizen non usa Tauri nativo. La versione TV e' una Web Application pacchettizzata in <code>.wgt</code> a partire da
+        <code>dist/</code>.
+      </p>
+      <h3>Prerequisiti</h3>
+      <ul>
+        <li>Tizen Studio con TV Extension installata.</li>
+        <li>Samsung Certificate Profile valido, creato da Tizen Studio Certificate Manager.</li>
+        <li>TV Samsung in Developer Mode, sulla stessa rete del computer.</li>
+        <li>Tizen TV 6.0 o superiore, come dichiarato in <code>packaging/tizen/config.xml</code>.</li>
+      </ul>
+      <h3>Build e packaging</h3>
+      <pre><code>pnpm install
+pnpm build
+pnpm tizen:prepare
+tizen package -t wgt -s NOME_PROFILO_CERTIFICATO -- build/tizen-web</code></pre>
+      <p>
+        Nel repo e' gia presente <code>build/tizen-web/LelegIPTV.wgt</code>. Se rigeneri la build, usa sempre il pacchetto appena prodotto e
+        non uno vecchio rimasto nella cartella.
+      </p>
+      <h3>Installazione su TV con CLI</h3>
+      <pre><code>sdb connect IP_DELLA_TV
+sdb devices
+tizen install -n build/tizen-web/LelegIPTV.wgt -t NOME_DEVICE</code></pre>
+      <h3>Installazione con Tizen Studio</h3>
+      <ol>
+        <li>Apri Device Manager e collega la TV.</li>
+        <li>Assicurati che il certificate profile sia selezionato.</li>
+        <li>Installa il file <code>LelegIPTV.wgt</code> dal menu package/install.</li>
+      </ol>
+      <p class="note warnbox">
+        Tizen non ha i plugin Tauri desktop/mobile. Richieste provider, storage e playback seguono il percorso web del browser TV; per questo
+        vanno testati su firmware Samsung reale.
+      </p>
+    </section>
+
+    <section id="apple">
+      <h2>iOS, iPadOS e macOS</h2>
+      <h3>iPhone e iPad</h3>
+      <pre><code>pnpm tauri:ios:dev:device
+pnpm tauri:ios:build</code></pre>
+      <ol>
+        <li>Apri <code>src-tauri/gen/apple/</code> in Xcode se devi firmare, archiviare o esportare.</li>
+        <li>Usa il team Apple configurato nel progetto: <code>F925SY4K37</code>.</li>
+        <li>Installa su dispositivo con Xcode Devices, Apple Configurator, TestFlight o export <code>.ipa</code> firmato.</li>
+      </ol>
+      <p>Artefatto trovato: <code>src-tauri/gen/apple/build/LelegIPTV.ipa</code>.</p>
+
+      <h3>macOS</h3>
+      <pre><code>pnpm build:mac</code></pre>
+      <ol>
+        <li>Apri il <code>.dmg</code> generato in <code>src-tauri/target/release/bundle/dmg/</code>.</li>
+        <li>Trascina <code>LelegIPTV.app</code> in <code>/Applications</code>.</li>
+        <li>Se Gatekeeper blocca l'app non notarizzata, apri <strong>Impostazioni di Sistema &gt; Privacy e Sicurezza</strong> e scegli
+          <strong>Apri comunque</strong>.</li>
+      </ol>
+      <p>Alternativa da terminale per build locali non notarizzate:</p>
+      <pre><code>xattr -dr com.apple.quarantine "/Applications/LelegIPTV.app"</code></pre>
+    </section>
+
+    <section id="desktop">
+      <h2>Windows e Linux</h2>
+      <p>
+        I pacchetti desktop Tauri sono host-specific: compila Windows su Windows e Linux su Linux, a meno di avere una pipeline CI dedicata.
+      </p>
+      <h3>Windows</h3>
+      <pre><code>pnpm install
+pnpm build:desktop</code></pre>
+      <p>Installa l'artefatto in <code>src-tauri/target/release/bundle/nsis/*.exe</code> o <code>msi/*.msi</code>.</p>
+
+      <h3>Linux</h3>
+      <pre><code>pnpm install
+pnpm build:desktop</code></pre>
+      <p>Installa il pacchetto adatto alla distribuzione: <code>.deb</code>, <code>.rpm</code> o <code>.AppImage</code>.</p>
+    </section>
+
+    <section id="checklist">
+      <h2>Checklist finale prima di distribuire</h2>
+      <ol>
+        <li>Rigenera sempre gli artefatti dopo modifiche al codice: non riusare pacchetti vecchi.</li>
+        <li>Controlla nome app, icona e ID: <code>LelegIPTV</code> e <code>com.lelegiptv.player</code>.</li>
+        <li>Per Android firma l'APK/AAB con keystore stabile prima di consegnarlo a utenti finali.</li>
+        <li>Per Samsung firma il <code>.wgt</code> con Samsung certificate profile e installalo su TV reale.</li>
+        <li>Testa almeno un canale live, un VOD, una serie, sottotitoli, tracce audio, resume e fullscreen per ogni famiglia di dispositivi.</li>
+        <li>Annota in release il percorso preciso dell'artefatto installato, cosi si evita confusione tra build vecchie e nuove.</li>
+      </ol>
+      <h3>Comandi rapidi di controllo</h3>
+      <pre><code>find src-tauri/gen/android/app/build/outputs -name "*.apk" -o -name "*.aab"
+find src-tauri/gen/apple/build -name "*.ipa"
+unzip -l build/tizen-web/LelegIPTV.wgt | head
+plutil -p src-tauri/tauri.conf.json</code></pre>
+    </section>
+
+    <section id="fonti">
+      <h2>Riferimenti ufficiali</h2>
+      <ul>
+        <li><a href="https://v2.tauri.app/start/prerequisites/#android" rel="noopener">Tauri Android prerequisites</a></li>
+        <li><a href="https://v2.tauri.app/develop/mobile/" rel="noopener">Tauri mobile development</a></li>
+        <li><a href="https://developer.android.com/tools/adb" rel="noopener">Android Debug Bridge</a></li>
+        <li><a href="https://docs.tizen.org/application/tizen-studio/common-tools/command-line-interface/" rel="noopener">Tizen Studio command line interface</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    Generato per LelegIPTV 1.6.0. Aggiorna questa pagina ogni volta che cambiano ID app, firma, percorsi artefatti o target supportati.
+  </footer>
+</body>
+</html>

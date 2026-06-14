@@ -53,6 +53,10 @@ interface SpatialNavigationApi {
   set: (sectionId: string, config: Record<string, unknown>) => void
 }
 
+/** Injected by `astro.config.mjs` vite.define for Tauri builds that use the web `/__stream` proxy. */
+declare const __XT_STREAM_PROXY_ORIGIN__: string
+declare const __XT_WEB_STREAM_PROXY__: string
+
 declare global {
   interface Window {
     __TAURI__?: unknown

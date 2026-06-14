@@ -27,9 +27,16 @@ export function removeNativeTrackSettings(art: any): void {
   } catch {}
 }
 
+function isAdaptiveArtplayerType(type: unknown): boolean {
+  return type === "m3u8" || type === "ts" || type === "mpd"
+}
+
 export function shouldWireNativeTracks(art: any): boolean {
   if (!art || art.hls) return false
   if (art._xtContainerTracks || art._xtPendingContainerTracks) return false
+  // Live / HLS / TS / DASH: track menus come from embedded-hls-tracks (or Shaka).
+  if (art.option?.isLive) return false
+  if (isAdaptiveArtplayerType(art.type)) return false
   if (!useDevStreamProxy()) return true
   const probe =
     (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
@@ -179,7 +186,10 @@ function refreshNativeSubtitleSettings(art: any, video: HTMLVideoElement): void 
 
 export function refreshNativeTrackSettings(art: any, video: HTMLVideoElement | null): void {
   if (!art?.setting || !video) return
-  if (!shouldWireNativeTracks(art)) return
+  if (!shouldWireNativeTracks(art)) {
+    removeNativeTrackSettings(art)
+    return
+  }
   refreshNativeAudioSettings(art, video)
   refreshNativeSubtitleSettings(art, video)
 }

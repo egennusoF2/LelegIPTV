@@ -441,12 +441,23 @@ behavior, and resolves stream URLs with cheap probe fallback.
 
 ### `src/scripts/lib/player-runtime.ts`
 
-Playback abstraction. Detects embedded/external/Android options, builds MPV/VLC
-args, launches Tauri external players, opens Android intents, detects stream
-kind, mounts Video.js/Artplayer/HLS/DASH/mpegts, and returns a unified mounted
+Lower-level playback runtime. Detects embedded/external/Android options, builds
+MPV/VLC args, launches Tauri external players, opens Android intents, detects
+stream kind, mounts Video.js/Artplayer/HLS/DASH/mpegts, and returns a mounted
 player handle. HLS uses Video.js/Hls.js, DASH uses `dashjs`, MPEG-TS uses
 `mpegts.js`, and native browser media falls back to the underlying video
 element.
+
+### `src/scripts/lib/playback-session.ts`
+
+Shared playback entry point for pages. `mountPlaybackSession(...)` is used by
+movies, series, and live TV, and currently returns a `WebPlaybackSession` around
+`player-runtime.ts`. It also probes Tauri desktop with
+`native_playback_status` when available and emits `xt:playback-session-mounted`
+with capability fields for future native backends.
+
+Do not bypass this file for new app-release playback work. Add macOS, Android,
+iOS, and Tizen engines behind this contract.
 
 ### `src/scripts/lib/stream-urls.ts`
 
@@ -692,6 +703,18 @@ Tauri binary entry point. Calls `app_lib::run()`.
 Tauri app builder. Registers plugins, desktop-only updater/window-state/Discord
 external-player/tray commands, Android FS plugin, logging in debug, custom
 window chrome behavior, and runs generated context.
+
+### `src-tauri/src/native_playback.rs`
+
+Desktop-only native playback bridge. `native_playback_status` reports the
+recommended future backend name, such as `macos-libmpv`. When `mpv` is
+installed, the module can spawn/control MPV via JSON IPC and implements
+`load`, `play`, `pause`, `stop`, `seek`, volume, audio/subtitle selection,
+subtitle delay, and state/track snapshots.
+
+Important limitation: it still reports `integrated: false` because the MPV video
+surface is not embedded in the Tauri window. This is a native engine bridge, not
+the final in-app video surface.
 
 ### `src-tauri/src/external_player.rs`
 

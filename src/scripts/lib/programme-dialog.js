@@ -56,29 +56,43 @@ function fmtDuration(start, stop) {
   return `${h}h ${m}m`
 }
 
+const DIALOG_PANEL_CLASS = "programme-dialog-panel"
+
+function applyDialogShell(node) {
+  node.className = [
+    `${DIALOG_PANEL_CLASS} fixed inset-0 m-auto rounded-2xl border border-line bg-surface text-fg p-0`,
+    "w-[min(40rem,calc(100vw-2rem))] h-[min(80dvh,42rem)] max-h-[min(80dvh,42rem)]",
+    "flex flex-col overflow-hidden",
+    "backdrop:bg-black/60",
+  ].join(" ")
+}
+
 function ensureDialog() {
   if (dlg) return dlg
   if (typeof document === "undefined") return null
   const existing = document.getElementById(DIALOG_ID)
   if (existing instanceof HTMLDialogElement) {
-    dlg = existing
-    return dlg
+    if (!existing.classList.contains(DIALOG_PANEL_CLASS)) {
+      try {
+        existing.close()
+      } catch {}
+      existing.remove()
+    } else {
+      dlg = existing
+      return dlg
+    }
   }
 
   const node = document.createElement("dialog")
   node.id = DIALOG_ID
   node.setAttribute("aria-labelledby", `${DIALOG_ID}-title`)
-  node.className = [
-    "fixed inset-0 m-auto rounded-2xl border border-line bg-surface text-fg p-0",
-    "w-[min(40rem,calc(100vw-2rem))] max-h-[min(80dvh,42rem)]",
-    "backdrop:bg-black/60",
-  ].join(" ")
+  applyDialogShell(node)
   node.innerHTML = `
-    <div class="flex flex-col h-full p-5 sm:p-6 gap-4">
+    <div class="flex flex-col flex-1 min-h-0 p-5 sm:p-6 gap-4 overflow-hidden">
       <header class="flex items-start justify-between gap-3 shrink-0">
-        <div class="flex flex-col gap-1 min-w-0">
+        <div class="flex flex-col gap-1 min-w-0 flex-1">
           <div data-role="meta" class="text-eyebrow font-medium uppercase tracking-widest text-fg-3"></div>
-          <h2 id="${DIALOG_ID}-title" data-role="title" class="text-xl font-semibold tracking-[-0.01em]"></h2>
+          <h2 id="${DIALOG_ID}-title" data-role="title" class="text-xl font-semibold tracking-[-0.01em] break-words"></h2>
           <div data-role="time" class="text-sm text-fg-2 tabular-nums"></div>
         </div>
         <button
@@ -91,7 +105,7 @@ function ensureDialog() {
           <span data-i18n="common.close">Close</span>
         </button>
       </header>
-      <div data-role="desc" class="text-sm text-fg-2 leading-relaxed overflow-auto custom-scroll min-h-0"></div>
+      <div data-role="desc" class="flex-1 min-h-0 text-sm text-fg-2 leading-relaxed overflow-y-auto custom-scroll overscroll-contain"></div>
       <footer data-role="footer" class="flex flex-wrap items-center gap-2 pt-1 shrink-0 hidden">
         <button
           data-role="watch"

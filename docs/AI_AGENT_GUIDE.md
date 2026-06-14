@@ -24,6 +24,19 @@ Release target notes:
 - Samsung Tizen TV: static web package path via `pnpm build` then
   `pnpm tizen:prepare`; final signing/packaging uses Tizen Studio/CLI.
 
+Important playback reset:
+
+- The web release is the current stable playback baseline.
+- Do not assume the browser/WebView playback stack can make macOS, iOS,
+  Android, Android TV, and Tizen reliable.
+- Future native release work must start from
+  `docs/ai-rag/08-native-playback-rebuild-strategy.md`.
+- The recommended direction is a shared UI plus replaceable playback backends:
+  web backend for browsers, native/player-engine backend for apps, and external
+  player only as fallback.
+- Avoid adding more one-off VOD/container workarounds before defining or using
+  the shared playback contract.
+
 ## Stack
 
 - Package manager: `pnpm@10.31.0`, pinned in `package.json`.
@@ -193,14 +206,45 @@ URLs. The programme dialog receives `canReplay` and navigates to
 
 ## Playback
 
-`src/scripts/lib/player-runtime.ts` is the unified playback mount and launch
-surface.
+`src/scripts/lib/playback-session.ts` is the current playback entry point for
+pages. Movies, series, and live TV should call `mountPlaybackSession(...)`,
+which currently wraps the stable web runtime through `WebPlaybackSession`.
+
+`src/scripts/lib/player-runtime.ts` remains the lower-level web/external player
+runtime. Do not add new page-level playback conditionals there unless the same
+behavior is exposed through the shared `PlaybackSession` contract.
 
 Supported backends:
 
 - Embedded: Video.js and Artplayer.
 - Desktop external: MPV and VLC through Tauri command `launch_external_player`.
 - Android handoff: system intent or VLC package when available.
+
+Tauri desktop also exposes `native_playback_status` from
+`src-tauri/src/native_playback.rs`. Today it is diagnostic only: it reports the
+recommended native backend name such as `macos-libmpv`, but returns
+`available: false` until a real integrated native player is implemented. Android
+and iOS do not register this command; frontend code must tolerate `null`.
+
+The playback factory emits `xt:playback-session-mounted` with capability fields
+such as `nativeIntegratedPlayback`, `availableNativeBackends`, and
+`recommendedNativeBackend`.
+
+`PlaybackSession` also exposes normalized track state (`getTracks()`), track
+selection (`selectAudioTrack`, `selectSubtitleTrack`), `getState()`, and
+standard event subscription via `on(...)`. Native backends must implement those
+operations instead of creating separate player menus or page-specific state.
+
+`NativePlaybackSession` is already present but gated: it mounts only when
+`native_playback_status` returns both `available: true` and `integrated: true`.
+`src-tauri/src/native_playback.rs` can currently control MPV through JSON IPC
+when `mpv` is installed, but it still reports `integrated: false` because the
+video surface is not embedded into the Tauri window. Current builds keep using
+`WebPlaybackSession`.
+
+For macOS app VOD reliability, movie and series detail pages auto-launch MPV in
+Tauri unless `?embedded=1` is present. Do not remove this temporary path until
+the native video surface is embedded and tested.
 
 Embedded playback supports HLS (`.m3u8`), MPEG-TS (`.ts` through `mpegts.js`),
 DASH (`.mpd` through `dashjs`), and native browser media formats. URL extension

@@ -11,6 +11,7 @@ import {
   resolveEmbeddedStreamUrl,
   resolveNativeStreamProxyUrl,
   useDevStreamProxy,
+  useNativeStreamProxy,
   vodAssetPathKey,
 } from "@/scripts/lib/stream-proxy"
 import {
@@ -35,6 +36,7 @@ import { VttStreamParser } from "@/scripts/lib/vtt-stream-parser.js"
 
 const VOD_STREAMS_PATH = "/__vod_streams"
 const VOD_REMUX_PATH = "/__vod_remux"
+const VOD_HLS_PATH = "/__vod_hls"
 const SETTING_AUDIO = "xt-container-audio"
 const SETTING_SUBTITLE = "xt-container-subtitle"
 
@@ -63,6 +65,10 @@ export function wrapVodRemuxUrl(sourceUrl: string, audioIndex: number): string {
   return `${VOD_REMUX_PATH}?url=${encodeURIComponent(sourceUrl)}&audio=${audioIndex}`
 }
 
+export function wrapVodHlsUrl(sourceUrl: string, audioIndex: number): string {
+  return `${VOD_HLS_PATH}?url=${encodeURIComponent(sourceUrl)}&audio=${audioIndex}`
+}
+
 function wrapVodRemuxWaitUrl(remuxBase: string): string {
   const sep = remuxBase.includes("?") ? "&" : "?"
   return `${remuxBase}${sep}wait=1`
@@ -71,6 +77,10 @@ function wrapVodRemuxWaitUrl(remuxBase: string): string {
 function wrapVodRemuxStatusUrl(remuxBase: string): string {
   const sep = remuxBase.includes("?") ? "&" : "?"
   return `${remuxBase}${sep}status=1`
+}
+
+function withWaitParam(url: string): string {
+  return url.includes("?") ? `${url}&wait=1` : `${url}?wait=1`
 }
 
 const REMUX_WAIT_MS = 20 * 60_000
@@ -122,6 +132,72 @@ async function probeRemuxCacheReady(
   }
 }
 
+function playbackOffset(art: any): number {
+  return Number.isFinite(art?._xtPlaybackOffsetSeconds)
+    ? Number(art._xtPlaybackOffsetSeconds)
+    : 0
+}
+
+function absolutePlaybackTime(art: any, video: HTMLVideoElement): number {
+  const raw =
+    Number.isFinite(art?.currentTime) && art.currentTime > 0
+      ? art.currentTime
+      : Number.isFinite(video.currentTime)
+        ? video.currentTime
+        : 0
+  return playbackOffset(art) + raw
+}
+
+function setArtplayerTsSource(
+  art: any,
+  video: HTMLVideoElement,
+  url: string,
+  startSeconds = 0,
+): void {
+  art._xtTranscodeSrcUrl =
+    (typeof art._xtContainerSourceUrl === "string" && art._xtContainerSourceUrl) ||
+    (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
+    ""
+  art._xtPlaybackOffsetSeconds =
+    Number.isFinite(startSeconds) && startSeconds > 0 ? startSeconds : 0
+  art._xtVirtualTimelineInstalled = true
+  art.type = "ts"
+  art.url = url
+  try {
+    if (video.src !== url) video.src = url
+    video.load()
+  } catch {}
+}
+
+function isTauriTranscodeUrl(url: string): boolean {
+  return /\/__transcode(?:\?|$)/i.test(url)
+}
+
+async function resolveTauriTranscodeUrl(
+  sourceUrl: string,
+  audioIndex: number,
+  startSeconds = 0,
+): Promise<string | null> {
+  if (!useNativeStreamProxy() || !sourceUrl) return null
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    let referer = ""
+    try {
+      referer = `${new URL(sourceUrl).origin}/`
+    } catch {}
+    return await invoke<string>("transcode_proxy_url", {
+      url: sourceUrl,
+      userAgent: "VLC/3.0.20 LibVLC/3.0.20",
+      referer: referer || undefined,
+      audioIndex,
+      startSeconds: Number.isFinite(startSeconds) ? Math.max(0, startSeconds) : 0,
+    })
+  } catch (error) {
+    log.warn("[xt:container-tracks] transcode URL failed", error)
+    return null
+  }
+}
+
 async function waitForVodRemuxComplete(
   remuxBase: string,
   sourceUrl: string,
@@ -146,6 +222,35 @@ async function waitForVodRemuxComplete(
     })
     if (!response.ok && response.status !== 204) {
       throw new Error(`remux wait HTTP ${response.status}`)
+    }
+  } finally {
+    clearTimeout(timer)
+    if (signal) signal.removeEventListener("abort", onParentAbort)
+  }
+}
+
+async function waitForGeneratedVodReady(
+  generatedBase: string,
+  sourceUrl: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const timeout = new AbortController()
+  const timer = setTimeout(() => timeout.abort(), REMUX_WAIT_MS)
+  const onParentAbort = () => timeout.abort()
+  if (signal) {
+    if (signal.aborted) {
+      clearTimeout(timer)
+      throw new DOMException("Aborted", "AbortError")
+    }
+    signal.addEventListener("abort", onParentAbort, { once: true })
+  }
+  try {
+    const response = await fetch(
+      withWaitParam(generatedBase),
+      containerApiFetchInit(sourceUrl, timeout.signal),
+    )
+    if (!response.ok && response.status !== 204) {
+      throw new Error(`generated vod wait HTTP ${response.status}`)
     }
   } finally {
     clearTimeout(timer)
@@ -351,11 +456,18 @@ function renderXtSubtitleOverlay(art: any, video: HTMLVideoElement): void {
   textTrack.mode = "hidden"
 
   let cues: VTTCue[] = []
-  const active = textTrack.activeCues
+  const offset = playbackOffset(art)
+  const timelineTime =
+    art?._xtVirtualTimelineInstalled &&
+    Number.isFinite(art?._xtExpectedDurationSeconds) &&
+    Number(art._xtExpectedDurationSeconds) > 0
+      ? video.currentTime
+      : offset + video.currentTime
+  const active = offset > 0.5 || art?._xtVirtualTimelineInstalled ? null : textTrack.activeCues
   if (active && active.length > 0) {
     cues = Array.from(active) as VTTCue[]
   } else {
-    cues = findCuesAtTime(textTrack, video.currentTime)
+    cues = findCuesAtTime(textTrack, timelineTime)
   }
   if (cues.length === 0) {
     $subtitle.innerHTML = ""
@@ -445,11 +557,7 @@ function capturePlaybackState(video: HTMLVideoElement, art: any): {
   wasPlaying: boolean
 } {
   const resumeAt =
-    Number.isFinite(art?.currentTime) && art.currentTime > 0
-      ? art.currentTime
-      : Number.isFinite(video.currentTime)
-        ? video.currentTime
-        : 0
+    absolutePlaybackTime(art, video)
   return { resumeAt, wasPlaying: !video.paused }
 }
 
@@ -459,16 +567,20 @@ function restorePlaybackState(
   resumeAt: number,
   wasPlaying: boolean,
 ): void {
-  if (resumeAt > 0.5 && Math.abs(video.currentTime - resumeAt) > 0.75) {
+  const targetTime =
+    art?._xtVirtualTimelineInstalled
+      ? Math.max(0, resumeAt)
+      : Math.max(0, resumeAt - playbackOffset(art))
+  if (resumeAt > 0.5 && Math.abs(video.currentTime - targetTime) > 0.75) {
     try {
-      video.currentTime = resumeAt
+      video.currentTime = targetTime
     } catch {}
     try {
-      art.currentTime = resumeAt
+      art.currentTime = targetTime
     } catch {}
     trackSettingsDebug("container.playback.restore", {
       resumeAt,
-      after: video.currentTime,
+      after: playbackOffset(art) + video.currentTime,
     })
   }
   if (wasPlaying && video.paused) {
@@ -480,15 +592,14 @@ const SUBTITLE_EXTRACT_WAIT_MS = 90_000
 const SUBTITLE_CUES_WAIT_MS = 30_000
 const SUBTITLE_OVERLAY_RETRY_MS = 8_000
 const SUBTITLE_NOTICE_REFRESH_MS = 2_000
+const TRACK_ATTACH_RETRY_MS = [2_500, 7_500, 15_000]
 
 function wrapSubtitleWaitUrl(subtitlePath: string): string {
-  const url = absoluteAssetUrl(subtitlePath)
-  return url.includes("?") ? `${url}&wait=1` : `${url}?wait=1`
+  return subtitlePath.includes("?") ? `${subtitlePath}&wait=1` : `${subtitlePath}?wait=1`
 }
 
 function wrapSubtitleStatusUrl(subtitlePath: string): string {
-  const url = absoluteAssetUrl(subtitlePath)
-  return url.includes("?") ? `${url}&status=1` : `${url}?status=1`
+  return subtitlePath.includes("?") ? `${subtitlePath}&status=1` : `${subtitlePath}?status=1`
 }
 
 async function probeSubtitleCacheReady(
@@ -496,12 +607,11 @@ async function probeSubtitleCacheReady(
   sourceUrl: string,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  const headers = resolveMediaHeaders(sourceUrl)
   try {
-    const response = await fetch(wrapSubtitleStatusUrl(subtitlePath), {
-      headers: devProxyFetchHeaders(headers),
-      signal,
-    })
+    const response = await fetch(
+      await containerApiUrl(wrapSubtitleStatusUrl(subtitlePath), sourceUrl),
+      containerApiFetchInit(sourceUrl, signal),
+    )
     if (!response.ok) return false
     const payload = (await response.json()) as { ready?: boolean }
     return payload.ready === true
@@ -655,7 +765,6 @@ async function waitForSubtitleExtract(
   signal?: AbortSignal,
 ): Promise<void> {
   const waitUrl = wrapSubtitleWaitUrl(subtitlePath)
-  const headers = resolveMediaHeaders(sourceUrl)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), SUBTITLE_EXTRACT_WAIT_MS)
   const onParentAbort = () => controller.abort()
@@ -667,10 +776,10 @@ async function waitForSubtitleExtract(
     signal.addEventListener("abort", onParentAbort, { once: true })
   }
   try {
-    const response = await fetch(waitUrl, {
-      headers: devProxyFetchHeaders(headers),
-      signal: controller.signal,
-    })
+    const response = await fetch(
+      await containerApiUrl(waitUrl, sourceUrl),
+      containerApiFetchInit(sourceUrl, controller.signal),
+    )
     if (!response.ok && response.status !== 204) {
       throw new Error(`subtitle extract wait HTTP ${response.status}`)
     }
@@ -924,12 +1033,8 @@ async function fetchSubtitleVttBlob(
   sourceUrl: string,
   signal?: AbortSignal,
 ): Promise<{ blobUrl: string; vttText: string }> {
-  const url = absoluteAssetUrl(subtitlePath)
-  const headers = resolveMediaHeaders(sourceUrl)
-  const response = await fetch(url, {
-    headers: devProxyFetchHeaders(headers),
-    signal,
-  })
+  const url = await containerApiUrl(subtitlePath, sourceUrl)
+  const response = await fetch(url, containerApiFetchInit(sourceUrl, signal))
   if (!response.ok) {
     throw new Error(`subtitle HTTP ${response.status}`)
   }
@@ -959,24 +1064,48 @@ function absoluteAssetUrl(path: string): string {
   }
 }
 
+async function containerApiUrl(path: string, sourceUrl: string): Promise<string> {
+  if (useNativeStreamProxy()) {
+    try {
+      const proxied = await resolveNativeStreamProxyUrl(sourceUrl)
+      const origin = new URL(proxied).origin
+      return `${origin}${path.startsWith("/") ? path : `/${path}`}`
+    } catch {}
+  }
+  return absoluteAssetUrl(path)
+}
+
+function containerApiFetchInit(
+  sourceUrl: string,
+  signal?: AbortSignal,
+): RequestInit {
+  if (useNativeStreamProxy()) {
+    return signal ? { signal } : {}
+  }
+  return {
+    headers: devProxyFetchHeaders(resolveMediaHeaders(sourceUrl)),
+    signal,
+  }
+}
+
 /** Warm subtitle disk cache via `wait=1` (204 when ready — see tracce-audio doc / Megacubo lazy extract). */
 function prefetchContainerSubtitle(
   sourceUrl: string,
   track: ContainerSubtitleTrack,
 ): void {
   if (!track?.src) return
-  const headers = resolveMediaHeaders(sourceUrl)
-  void fetch(wrapSubtitleWaitUrl(track.src), {
-    headers: devProxyFetchHeaders(headers),
-  }).catch(() => {})
+  void containerApiUrl(wrapSubtitleWaitUrl(track.src), sourceUrl)
+    .then((url) => fetch(url, containerApiFetchInit(sourceUrl)))
+    .catch(() => {})
 }
 
 async function fetchContainerStreams(
   sourceUrl: string,
 ): Promise<ContainerStreamsPayload | null> {
-  if (!useDevStreamProxy() || !isContainerUrl(sourceUrl)) {
+  if ((!useDevStreamProxy() && !useNativeStreamProxy()) || !isContainerUrl(sourceUrl)) {
     log.log("[xt:container-tracks] skip probe", {
       devProxy: useDevStreamProxy(),
+      nativeProxy: useNativeStreamProxy(),
       container: isContainerUrl(sourceUrl),
     })
     return null
@@ -988,13 +1117,12 @@ async function fetchContainerStreams(
     : null
   try {
     log.log("[xt:container-tracks] probing", redactUrl(sourceUrl).slice(0, 120))
-    const headers = resolveMediaHeaders(sourceUrl)
     const response = await fetch(
-      `${VOD_STREAMS_PATH}?url=${encodeURIComponent(sourceUrl)}`,
-      {
-        headers: devProxyFetchHeaders(headers),
-        signal: controller?.signal,
-      },
+      await containerApiUrl(
+        `${VOD_STREAMS_PATH}?url=${encodeURIComponent(sourceUrl)}`,
+        sourceUrl,
+      ),
+      containerApiFetchInit(sourceUrl, controller?.signal),
     )
     if (!response.ok) {
       log.warn("[xt:container-tracks] probe HTTP", response.status)
@@ -1161,6 +1289,13 @@ async function switchContainerAudio(
     )
     art._xtContainerDirectPlayUrl = directUrl
   }
+  if (useNativeStreamProxy() && (!directUrl || !isTauriTranscodeUrl(directUrl))) {
+    const transcode = await resolveTauriTranscodeUrl(baseUrl, 0, resumeAt)
+    if (transcode) {
+      directUrl = transcode
+      art._xtContainerDirectPlayUrl = transcode
+    }
+  }
   const useDirect = audioIndex === 0 && Boolean(directUrl)
 
   markContainerPlaybackGuard(art, useDirect ? 8_000 : REMUX_WAIT_MS + 15_000)
@@ -1199,11 +1334,15 @@ async function switchContainerAudio(
       art.notice.show = ""
     } catch {}
     if (resumeAt > 0.5) {
+      const targetTime =
+        art?._xtVirtualTimelineInstalled
+          ? 0
+          : Math.max(0, resumeAt - playbackOffset(art))
       try {
-        video.currentTime = resumeAt
+        video.currentTime = targetTime
       } catch {}
       try {
-        art.currentTime = resumeAt
+        art.currentTime = targetTime
       } catch {}
     }
     void art.play?.()?.catch(() => {})
@@ -1259,13 +1398,42 @@ async function switchContainerAudio(
   try {
     if (useDirect) {
       if (isAudioSwitchStale(art, gen)) return
-      setArtplayerNativeSource(art, video, directUrl)
+      if (isTauriTranscodeUrl(directUrl)) {
+        setArtplayerTsSource(art, video, directUrl, resumeAt)
+      } else {
+        art._xtPlaybackOffsetSeconds = 0
+        setArtplayerNativeSource(art, video, directUrl)
+      }
       trackSettingsDebug("container.audio.switch.direct", {
         index: audioIndex,
         gen,
         videoSrc: redactUrl(video.src).slice(0, 100),
       })
       scheduleSubtitleTrackRebindAfterSourceChange(art, video)
+      if (video.readyState >= 3) restore()
+      return
+    }
+
+    if (useNativeStreamProxy()) {
+      const transcodeUrl = await resolveTauriTranscodeUrl(baseUrl, audioIndex, resumeAt)
+      if (!transcodeUrl) throw new Error("transcode unavailable")
+      try {
+        art.notice.show = switchingMsg
+      } catch {}
+      if (isAudioSwitchStale(art, gen)) return
+      art._xtPlaybackOffsetSeconds = 0
+      setArtplayerTsSource(art, video, transcodeUrl, resumeAt)
+      trackSettingsDebug("container.audio.switch.transcode", {
+        index: audioIndex,
+        gen,
+        videoSrc: redactUrl(video.src).slice(0, 100),
+      })
+      scheduleSubtitleTrackRebindAfterSourceChange(art, video)
+      if (resumeAt > 0.5) {
+        art.once?.("video:loadedmetadata", () => {
+          try { art.currentTime = 0 } catch {}
+        })
+      }
       if (video.readyState >= 3) restore()
       return
     }
@@ -1294,6 +1462,7 @@ async function switchContainerAudio(
     if (isAudioSwitchStale(art, gen)) return
 
     const playUrl = `${remuxBase}&_=${Date.now()}`
+    art._xtPlaybackOffsetSeconds = 0
     setArtplayerNativeSource(art, video, playUrl)
     trackSettingsDebug("container.audio.switch.remux", {
       index: audioIndex,
@@ -1644,12 +1813,36 @@ async function tryRicherContainerSibling(
   }
 
   try {
-    const resolved = await resolveNativeStreamProxyUrl(resolveEmbeddedStreamUrl(mkvUrl))
-    art.type = "xt-native"
+    const resumeAt =
+      art?.video ? absolutePlaybackTime(art, art.video) : playbackOffset(art)
+    let resolved = await resolveNativeStreamProxyUrl(resolveEmbeddedStreamUrl(mkvUrl))
+    let bridge = "native"
+    if (useNativeStreamProxy()) {
+      const hlsBase = await containerApiUrl(wrapVodHlsUrl(mkvUrl, 0), mkvUrl)
+      try {
+        art.notice.show =
+          t("player.track.audioRemuxPreparing") ||
+          "Preparing alternate audio (first time may take a few minutes)…"
+      } catch {}
+      await waitForGeneratedVodReady(hlsBase, mkvUrl)
+      resolved = `${hlsBase}&_=${Date.now()}`
+      bridge = "tauri-hls"
+    }
+    art._xtContainerSourceUrl = mkvUrl
+    art._xtContainerDirectPlayUrl = resolved
+    art._xtTranscodeSrcUrl = undefined
+    art.type = useNativeStreamProxy() ? "m3u8" : "xt-native"
+    art._xtPlaybackOffsetSeconds = 0
     art.url = resolved
+    if (art.video && resumeAt > 0.5) {
+      art.once?.("video:loadedmetadata", () => {
+        try { art.currentTime = resumeAt } catch {}
+      })
+    }
     log.log("[xt:container-tracks] using MKV for multi-track playback", {
       audio: mkvAudio,
       subtitles: mkvSub,
+      bridge,
     })
   } catch (error) {
     log.warn("[xt:container-tracks] MKV switch failed; keeping MP4", error)
@@ -1705,8 +1898,13 @@ function refreshContainerSubtitleMenuEmpty(art: any): void {
 export async function attachContainerTracksForArtplayer(
   art: any,
   sourceUrl: string,
+  attempt = 0,
 ): Promise<void> {
-  if (!art?.video || art.hls || !useDevStreamProxy() || !isContainerUrl(sourceUrl)) {
+  if (
+    !art?.video ||
+    (!useDevStreamProxy() && !useNativeStreamProxy()) ||
+    !isContainerUrl(sourceUrl)
+  ) {
     art._xtPendingContainerTracks = false
     return
   }
@@ -1718,19 +1916,28 @@ export async function attachContainerTracksForArtplayer(
     return
   }
 
-  const inflight = art._xtContainerAttachInflight as Promise<void> | undefined
+  const inflight = art._xtContainerAttachInflight as Promise<boolean> | undefined
   if (inflight) {
-    return inflight
+    await inflight
+    return
   }
 
   const task = attachContainerTracksForArtplayerInner(art, sourceUrl, probeKey)
   art._xtContainerAttachInflight = task
+  let attached = false
   try {
-    await task
+    attached = await task
   } finally {
     if (art._xtContainerAttachInflight === task) {
       art._xtContainerAttachInflight = undefined
     }
+  }
+  if (!attached && attempt < TRACK_ATTACH_RETRY_MS.length) {
+    const delay = TRACK_ATTACH_RETRY_MS[attempt] ?? 0
+    trackSettingsDebug("container.attach.retry", { attempt: attempt + 1, delay, probeKey })
+    setTimeout(() => {
+      void attachContainerTracksForArtplayer(art, sourceUrl, attempt + 1)
+    }, delay)
   }
 }
 
@@ -1738,7 +1945,7 @@ async function attachContainerTracksForArtplayerInner(
   art: any,
   sourceUrl: string,
   probeKey: string,
-): Promise<void> {
+): Promise<boolean> {
   art._xtPendingContainerTracks = true
   removeNativeTrackSettings(art)
   let probeUrl = sourceUrl
@@ -1748,20 +1955,23 @@ async function attachContainerTracksForArtplayerInner(
   payload = richer.payload
   art._xtPendingContainerTracks = false
 
-  if (!payload) return
+  if (!payload) return false
 
   const audioTracks = payload.audio || []
   const subtitleTracks = payload.subtitles || []
   if (audioTracks.length === 0 && subtitleTracks.length === 0) {
     log.warn("[xt:container-tracks] no embedded tracks found in file")
     refreshContainerSubtitleMenuEmpty(art)
-    return
+    return false
   }
 
   art._xtContainerTracks = true
   art._xtContainerProbeKey = vodAssetPathKey(probeUrl)
   art._xtContainerSourceUrl = probeUrl
-  art._xtContainerDirectPlayUrl = resolveEmbeddedStreamUrl(probeUrl)
+  art._xtContainerDirectPlayUrl =
+    (useNativeStreamProxy()
+      ? await resolveTauriTranscodeUrl(probeUrl, 0, 0)
+      : null) || resolveEmbeddedStreamUrl(probeUrl)
   removeNativeTrackSettings(art)
 
   const video = art.video as HTMLVideoElement
@@ -1813,4 +2023,5 @@ async function attachContainerTracksForArtplayerInner(
   if (art.video?.paused && art._xtPlayAfterSourceLoad) {
     void art.play?.()?.catch(() => {})
   }
+  return true
 }

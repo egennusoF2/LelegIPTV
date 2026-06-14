@@ -14,6 +14,10 @@ const hmrHost = process.env.XTREAM_HMR_HOST || tauriDevHost
 const deploySite =
   process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.CF_PAGES_URL || ""
 
+/** Baked into client bundles at build time (Tauri macOS web-proxy builds). */
+const publicStreamProxyOrigin = process.env.PUBLIC_STREAM_PROXY_ORIGIN || ""
+const publicWebStreamProxy = process.env.PUBLIC_WEB_STREAM_PROXY || ""
+
 export default defineConfig({
   site: deploySite || undefined,
   devToolbar: {
@@ -22,6 +26,8 @@ export default defineConfig({
   vite: {
     define: {
       __XT_PLAYBACK_BUILD__: JSON.stringify("2026-06-01-ios-hls"),
+      __XT_STREAM_PROXY_ORIGIN__: JSON.stringify(publicStreamProxyOrigin),
+      __XT_WEB_STREAM_PROXY__: JSON.stringify(publicWebStreamProxy),
     },
     plugins: [tailwindcss(), optimizeTablerIconsImport(), streamProxyPlugin()],
     server: {
@@ -41,6 +47,9 @@ export default defineConfig({
     },
     build: {
       chunkSizeWarningLimit: 800,
+      // When building for Tizen TV (Chromium 94), top-level await must be
+      // transformed to async-IIFE wrappers.  TIZEN=1 is set by tizen:build.
+      ...(process.env.TIZEN === "1" ? { target: "chrome88" } : {}),
     },
     optimizeDeps: {
       include: [
@@ -112,7 +121,12 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2}"],
-        navigateFallbackDenylist: [/^\/__stream/],
+        // Disable the plugin-injected NavigationRoute that returns "/" for any
+        // uncached navigate request. Astro generates a separate HTML file for
+        // each route, so the precache + NetworkFirst runtime caching below are
+        // sufficient. Without this, every navigate to /livetv, /movies, etc.
+        // that misses the precache is served the home page.
+        navigateFallback: null,
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.mode === "navigate",

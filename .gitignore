@@ -36,3 +36,5 @@ dump/
 
 cmds.md
 store-listings.md
+.oracle.env
+ssh-key-*.key

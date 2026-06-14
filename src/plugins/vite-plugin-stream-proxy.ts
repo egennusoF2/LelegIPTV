@@ -1203,12 +1203,10 @@ async function proxyHandler(
   }
 }
 
-export function streamProxyPlugin(): Plugin {
-  return {
-    name: "xtream-stream-proxy",
-    apply: "serve",
-    configureServer(server: ViteDevServer) {
-      server.middlewares.use(VOD_STREAMS_PATH, (req, res) => {
+type ConnectMiddleware = import("vite").Connect.Server
+
+function attachStreamProxyMiddleware(middlewares: ConnectMiddleware): void {
+  middlewares.use(VOD_STREAMS_PATH, (req, res) => {
         if (req.method === "OPTIONS") {
           res.statusCode = 204
           applyCorsHeaders(res)
@@ -1225,7 +1223,7 @@ export function streamProxyPlugin(): Plugin {
           sendJson(res, 502, { audio: [], subtitles: [], error: String(err?.message || err) })
         })
       })
-      server.middlewares.use(VOD_SUBTITLE_PATH, (req, res) => {
+  middlewares.use(VOD_SUBTITLE_PATH, (req, res) => {
         if (req.method === "OPTIONS") {
           res.statusCode = 204
           applyCorsHeaders(res)
@@ -1243,7 +1241,7 @@ export function streamProxyPlugin(): Plugin {
           if (!res.writableEnded) res.end(String((err as Error)?.message || err))
         })
       })
-      server.middlewares.use(VOD_REMUX_PATH, (req, res) => {
+  middlewares.use(VOD_REMUX_PATH, (req, res) => {
         if (req.method === "OPTIONS") {
           res.statusCode = 204
           applyCorsHeaders(res)
@@ -1267,7 +1265,7 @@ export function streamProxyPlugin(): Plugin {
           if (!res.writableEnded) res.end(String(err?.message || err))
         })
       })
-      server.middlewares.use(SUBTITLE_PATH, (req, res) => {
+  middlewares.use(SUBTITLE_PATH, (req, res) => {
         if (req.method === "OPTIONS") {
           res.statusCode = 204
           applyCorsHeaders(res)
@@ -1284,7 +1282,7 @@ export function streamProxyPlugin(): Plugin {
           sendJson(res, 502, { tracks: [], error: String(err?.message || err) })
         })
       })
-      server.middlewares.use(SUBTITLE_ASSET_PATH, (req, res) => {
+  middlewares.use(SUBTITLE_ASSET_PATH, (req, res) => {
         if (req.method !== "GET") {
           res.statusCode = 405
           res.end("Method not allowed")
@@ -1295,7 +1293,7 @@ export function streamProxyPlugin(): Plugin {
           res.end(String(err?.message || err))
         })
       })
-      server.middlewares.use(PROXY_PATH, (req, res) => {
+  middlewares.use(PROXY_PATH, (req, res) => {
         if (req.method === "OPTIONS") {
           res.statusCode = 204
           applyCorsHeaders(res)
@@ -1312,6 +1310,16 @@ export function streamProxyPlugin(): Plugin {
           res.end(String(err?.message || err))
         })
       })
+}
+
+export function streamProxyPlugin(): Plugin {
+  return {
+    name: "xtream-stream-proxy",
+    configureServer(server: ViteDevServer) {
+      attachStreamProxyMiddleware(server.middlewares)
+    },
+    configurePreviewServer(server) {
+      attachStreamProxyMiddleware(server.middlewares)
     },
   }
 }

@@ -363,13 +363,61 @@ Rules:
 - All-failed state is throttled briefly to avoid long repeated mirror loops.
 - Mirror pins clear on `xt:entries-updated`.
 
+## `playback-session.ts` contract
+
+Path: `src/scripts/lib/playback-session.ts`
+
+Responsibilities:
+
+- Page-level playback factory for movies, series, and live TV.
+- Wrap the current web runtime as `WebPlaybackSession`.
+- Probe desktop Tauri with `native_playback_status` when available.
+- Emit `xt:playback-session-mounted` with capability diagnostics.
+- Define the future expansion point for native engines.
+
+Important exports:
+
+- Types: `PlaybackSession`, `PlaybackSource`, `PlaybackState`,
+  `PlaybackCapabilities`, `PlaybackTrack`, `PlaybackTracksState`,
+  `NativePlaybackStatus`.
+- Factory: `mountPlaybackSession`.
+- Web wrapper: `mountWebPlaybackSession`, `WebPlaybackSession`.
+- Native wrapper: `NativePlaybackSession`.
+- Native diagnostics: `getNativePlaybackStatus`.
+- Track snapshot helper: `snapshotMediaTracksFromElement`.
+
+Capability fields:
+
+- `nativeIntegratedPlayback`
+- `availableNativeBackends`
+- `recommendedNativeBackend`
+- `selectedBackend`
+
+Rules:
+
+- New macOS, Android, iOS, and Tizen playback engines should be added behind
+  this contract.
+- Do not add new backend-specific branches directly to movies/series/live pages.
+- `native_playback_status` is desktop-only. Android/iOS return `null` through
+  the frontend helper and must continue to work.
+- Desktop native lifecycle commands are implemented in
+  `src-tauri/src/native_playback.rs` through MPV JSON IPC when `mpv` is
+  installed.
+- `NativePlaybackSession` must remain gated behind Rust status
+  `available && integrated`. Do not switch pages to native playback before the
+  Rust backend returns real media state.
+- The native wrapper intentionally provides a Video.js-shaped `handle` facade
+  because current pages still assign `session.handle` to `vjs`.
+- A native backend is not ready until it returns real state, duration, tracks,
+  seek, pause/play, error, and first-frame events through this contract.
+
 ## `player-runtime.ts` contract
 
 Path: `src/scripts/lib/player-runtime.ts`
 
 Responsibilities:
 
-- Unified embedded/external playback surface.
+- Lower-level embedded/external playback surface used by `WebPlaybackSession`.
 - MPV/VLC argv builders.
 - Tauri external player launch.
 - Android external handoff.

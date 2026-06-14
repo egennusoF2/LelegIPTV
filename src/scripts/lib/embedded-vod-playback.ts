@@ -3,17 +3,39 @@
 import { log, redactUrl } from "@/scripts/lib/log.js"
 import {
   useDevStreamProxy,
+  useNativeStreamProxy,
   wrapStreamUrlForDev,
   devProxyFetchHeaders,
   isAppleEmbedded,
   isTauriEmbedded,
+  isIosEmbedded,
   preferPlainHttpForXtreamMedia,
+  IPTV_UA_VOD,
+  IPTV_UA_HLS,
+  shouldForceTauriFetch,
+  resolveStreamFetchUrl,
+  streamUrlsEquivalent,
 } from "@/scripts/lib/stream-proxy"
 
 const PROBE_MS = 5000
+const TAURI_VOD_HLS_PROBE_BUDGET_MS = 15_000
 /** Master playlists often declare EXT-X-MEDIA after the first variants. */
 const PROBE_BYTES = 16_384
-const OFFLINE_FALLBACK_RE = /\b(TS_OFFLINE|offline|demo|placeholder)\b/i
+const OFFLINE_FALLBACK_RE =
+  /\b(TS_OFFLINE|offline|demo|placeholder|no[_-]?stream|sample|test[_-]?clip)\b/i
+
+/** Text often baked into panel standby MP4s (Spanish/Italian/etc.). */
+const VOD_PLACEHOLDER_TEXT_RE =
+  /MOMENTOS|ESTAREMOS|EN UNOS|USTEDES|standby|attesa|presto disponib|momenti|be right back/i
+
+/** Minimum full-file sizes — panels serve the same ~35s clip for every title. */
+const MIN_MOVIE_BYTES = 5 * 1024 * 1024
+const MIN_SERIES_BYTES = 3 * 1024 * 1024
+const MIN_VOD_BYTES = 2 * 1024 * 1024
+
+/** Shorter than this after `loadedmetadata` ⇒ likely a panel standby clip. */
+export const VOD_PLACEHOLDER_MAX_MOVIE_SEC = 120
+export const VOD_PLACEHOLDER_MAX_SERIES_SEC = 300
 
 interface HlsProbeResult {
   reachable: boolean
@@ -40,6 +62,26 @@ export function vodStreamPathKey(url: string): string {
 
 export function isVodHlsDenied(url: string): boolean {
   return hlsDeniedPathKeys.has(vodStreamPathKey(url))
+}
+
+const WEBVIEW_NATIVE_VOD_EXTENSIONS = new Set(["mp4", "m3u8"])
+
+/** Keep MP4/HLS after backup-host resolve would swap back to MKV (same VOD id). */
+export function shouldPreserveVodPlaySrc(
+  currentPlaySrc: string,
+  resolvedSrc: string,
+): boolean {
+  if (!currentPlaySrc || !resolvedSrc) return false
+  if (streamUrlsEquivalent(currentPlaySrc, resolvedSrc)) return true
+  if (vodStreamPathKey(currentPlaySrc) !== vodStreamPathKey(resolvedSrc)) {
+    return false
+  }
+  const currentExt = containerExtensionFromUrl(currentPlaySrc)
+  const resolvedExt = containerExtensionFromUrl(resolvedSrc)
+  return (
+    WEBVIEW_NATIVE_VOD_EXTENSIONS.has(currentExt) &&
+    !WEBVIEW_NATIVE_VOD_EXTENSIONS.has(resolvedExt)
+  )
 }
 
 function scoreHlsProbe(probe: HlsProbeResult): number {
@@ -115,8 +157,144 @@ export function looksLikeOfflineFallback(value: string): boolean {
   return OFFLINE_FALLBACK_RE.test(value)
 }
 
+export function looksLikeVodPlaceholderSnippet(value: string): boolean {
+  return VOD_PLACEHOLDER_TEXT_RE.test(value)
+}
+
+export function parseContentTotalBytes(response: Response): number | null {
+  const range = response.headers.get("content-range") || ""
+  const rangeMatch = range.match(/\/(\d+)\s*$/)
+  if (rangeMatch) {
+    const total = Number(rangeMatch[1])
+    if (Number.isFinite(total) && total > 0) return total
+  }
+  // Partial range responses expose chunk length in Content-Length, not file size.
+  if (response.status === 200) {
+    const length = response.headers.get("content-length")
+    if (length) {
+      const total = Number(length)
+      if (Number.isFinite(total) && total > 0) return total
+    }
+  }
+  return null
+}
+
+export function vodContainerTooSmall(url: string, totalBytes: number): boolean {
+  if (!Number.isFinite(totalBytes) || totalBytes <= 0) return false
+  if (/\/movie\//i.test(url)) return totalBytes < MIN_MOVIE_BYTES
+  if (/\/series\//i.test(url)) return totalBytes < MIN_SERIES_BYTES
+  return totalBytes < MIN_VOD_BYTES
+}
+
+export function vodPlaceholderMaxDurationSec(url: string): number {
+  if (/\/series\//i.test(url)) return VOD_PLACEHOLDER_MAX_SERIES_SEC
+  return VOD_PLACEHOLDER_MAX_MOVIE_SEC
+}
+
+export function isLikelyVodPlaceholderDuration(
+  url: string,
+  durationSec: number,
+): boolean {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return false
+  return durationSec < vodPlaceholderMaxDurationSec(url)
+}
+
+/** Read `mvhd` duration from an MP4 header buffer (moov is usually near the start on short clips). */
+export function parseMp4DurationSec(buffer: ArrayBuffer): number | null {
+  if (!buffer || buffer.byteLength < 32) return null
+  const view = new DataView(buffer)
+  const bytes = new Uint8Array(buffer)
+  const end = buffer.byteLength
+
+  const boxType = (at: number) =>
+    String.fromCharCode(bytes[at]!, bytes[at + 1]!, bytes[at + 2]!, bytes[at + 3]!)
+
+  const readMvhd = (payloadStart: number, payloadSize: number): number | null => {
+    if (payloadSize < 20) return null
+    const version = bytes[payloadStart]!
+    if (version === 0) {
+      const timescale = view.getUint32(payloadStart + 12)
+      const duration = view.getUint32(payloadStart + 16)
+      if (!timescale) return null
+      return duration / timescale
+    }
+    if (version === 1 && payloadSize >= 32) {
+      const timescale = view.getUint32(payloadStart + 20)
+      const duration =
+        view.getUint32(payloadStart + 24) * 2 ** 32 + view.getUint32(payloadStart + 28)
+      if (!timescale) return null
+      return duration / timescale
+    }
+    return null
+  }
+
+  const scan = (start: number, stop: number): number | null => {
+    let offset = start
+    while (offset + 8 <= stop) {
+      let size = view.getUint32(offset)
+      const type = boxType(offset + 4)
+      let header = 8
+      if (size === 1) {
+        if (offset + 16 > stop) break
+        size = Number(view.getBigUint64(offset + 8))
+        header = 16
+      }
+      if (size < header || offset + size > stop) break
+      const payloadStart = offset + header
+      const payloadSize = size - header
+      if (type === "mvhd") {
+        const dur = readMvhd(payloadStart, payloadSize)
+        if (dur != null && Number.isFinite(dur) && dur > 0) return dur
+      }
+      if (
+        type === "moov" ||
+        type === "trak" ||
+        type === "mdia" ||
+        type === "minf" ||
+        type === "stbl"
+      ) {
+        const nested = scan(payloadStart, offset + size)
+        if (nested != null) return nested
+      }
+      offset += size
+    }
+    return null
+  }
+
+  return scan(0, end)
+}
+
+/** Xtream asset id from `/movie/.../633617.mp4` or `/series/.../99123.mkv`. */
+export function vodAssetIdFromUrl(url: string): string | null {
+  try {
+    const m = new URL(url).pathname.match(/\/(\d+)\.[a-z0-9]+$/i)
+    return m?.[1] ?? null
+  } catch {
+    const m = String(url).match(/\/(\d+)\.[a-z0-9]+(?:[?#]|$)/i)
+    return m?.[1] ?? null
+  }
+}
+
+/** Reject panel redirects to a generic offline MP4 (same clip for every title). */
+export function vodProbeMatchesRequestedAsset(
+  requestUrl: string,
+  responseUrl: string,
+  snippet: string,
+): boolean {
+  if (looksLikeOfflineFallback(responseUrl) || looksLikeOfflineFallback(snippet)) {
+    return false
+  }
+  if (looksLikeVodPlaceholderSnippet(snippet)) return false
+  const assetId = vodAssetIdFromUrl(requestUrl)
+  if (!assetId) return true
+  if (responseUrl && !responseUrl.includes(assetId)) return false
+  return true
+}
+
 function hlsSiblingCandidates(originalUrl: string, normalizedUrl: string): string[] {
-  const primary = toHlsSiblingUrl(normalizedUrl) || toHlsSiblingUrl(originalUrl)
+  const originalSibling = toHlsSiblingUrl(originalUrl)
+  const normalizedSibling = toHlsSiblingUrl(normalizedUrl)
+  const primary = originalSibling || normalizedSibling
   if (!primary) return []
   const preferred = preferPlainHttpForXtreamMedia(primary)
   const altScheme =
@@ -125,7 +303,12 @@ function hlsSiblingCandidates(originalUrl: string, normalizedUrl: string): strin
       : preferred.startsWith("https:")
         ? forceScheme(preferred, "http:")
         : null
-  return uniqueUrls([preferred, primary !== preferred ? primary : null, altScheme])
+  return uniqueUrls([
+    primary,
+    normalizedSibling && normalizedSibling !== primary ? normalizedSibling : null,
+    preferred !== primary ? preferred : null,
+    altScheme,
+  ])
 }
 
 export function toHlsSiblingUrl(url: string): string | null {
@@ -167,6 +350,9 @@ async function buildProbeHeaders(upstreamUrl: string): Promise<Headers> {
       headers.set("Referer", `${new URL(upstreamUrl).origin}/`)
     } catch {}
   }
+  if (isVodHlsProbeUrl(upstreamUrl)) {
+    headers.set("Referer", upstreamUrl)
+  }
   if (useDevStreamProxy()) {
     const proxyHdrs = devProxyFetchHeaders(headers) as Record<string, string>
     for (const [key, value] of Object.entries(proxyHdrs)) {
@@ -174,6 +360,10 @@ async function buildProbeHeaders(upstreamUrl: string): Promise<Headers> {
     }
   }
   return headers
+}
+
+function isVodHlsProbeUrl(url: string): boolean {
+  return /\/(movie|series)\//i.test(url) && /\.m3u8(?:[?#]|$)/i.test(url)
 }
 
 async function probeReachable(
@@ -193,27 +383,64 @@ async function probeReachable(
     typeof AbortController !== "undefined" ? new AbortController() : null
   const timer = controller ? setTimeout(() => controller.abort(), PROBE_MS) : null
   try {
+    const isVodHls = isVodHlsProbeUrl(url)
     let target = url
     if (useDevStreamProxy()) {
-      target = wrapStreamUrlForDev(url)
+      target = await resolveStreamFetchUrl(url)
     }
-    const headers = await buildProbeHeaders(url)
-    if (alternateUserAgent) {
-      headers.set("User-Agent", alternateUserAgent)
-      if (useDevStreamProxy()) {
-        headers.set("X-XT-UA", alternateUserAgent)
+    const { providerFetch, providerFetchUpstream } = await import(
+      "@/scripts/lib/provider-fetch.js"
+    )
+    const fetchProbe = async (probeHeaders: Headers) =>
+      useNativeStreamProxy()
+        ? await providerFetchUpstream(url, {
+            method: "GET",
+            headers: probeHeaders,
+            signal: controller?.signal,
+          })
+        : await providerFetch(target, {
+            method: "GET",
+            headers: probeHeaders,
+            signal: controller?.signal,
+            forceTauri: shouldForceTauriFetch(target),
+          })
+
+    const uaAttempts = isVodHls
+      ? uniqueUrls([
+          alternateUserAgent || null,
+          IPTV_UA_VOD,
+          IPTV_UA_HLS,
+        ]).filter(Boolean)
+      : [alternateUserAgent || null]
+
+    let response: Response | null = null
+    let sawAuthFailure = false
+
+    for (const ua of uaAttempts.length ? uaAttempts : [null]) {
+      const headers = await buildProbeHeaders(url)
+      if (ua) {
+        headers.set("User-Agent", ua)
+        if (useDevStreamProxy()) headers.set("X-XT-UA", ua)
       }
+      if (!/\.m3u8(?:[?#]|$)/i.test(url)) {
+        headers.set("Range", "bytes=0-2047")
+      }
+      const attempt = await fetchProbe(headers)
+      if (attempt.status === 401 || attempt.status === 403) {
+        sawAuthFailure = true
+        try {
+          attempt.body?.cancel?.()
+        } catch {}
+        continue
+      }
+      response = attempt
+      break
     }
-    headers.set("Range", "bytes=0-2047")
-    const { providerFetch } = await import("@/scripts/lib/provider-fetch.js")
-    // When the dev proxy is active, `target` is a relative /__stream URL that
-    // the Tauri HTTP plugin (Rust) cannot resolve. Use native fetch instead.
-    const response = await providerFetch(target, {
-      method: "GET",
-      headers,
-      signal: controller?.signal,
-      forceTauri: !useDevStreamProxy(),
-    })
+
+    if (!response) {
+      return failed(sawAuthFailure)
+    }
+
     if (response.status === 401 || response.status === 403) {
       try {
         response.body?.cancel?.()
@@ -298,24 +525,32 @@ async function probeReachable(
   }
 }
 
-async function probeNativeMp4Playable(url: string): Promise<boolean> {
+export async function probeNativeMp4Playable(url: string): Promise<boolean> {
   const controller =
     typeof AbortController !== "undefined" ? new AbortController() : null
   const timer = controller ? setTimeout(() => controller.abort(), PROBE_MS) : null
   try {
     let target = url
     if (useDevStreamProxy()) {
-      target = wrapStreamUrlForDev(url)
+      target = await resolveStreamFetchUrl(url)
     }
     const headers = await buildProbeHeaders(url)
-    headers.set("Range", "bytes=0-2047")
-    const { providerFetch } = await import("@/scripts/lib/provider-fetch.js")
-    const response = await providerFetch(target, {
-      method: "GET",
-      headers,
-      signal: controller?.signal,
-      forceTauri: !useDevStreamProxy(),
-    })
+    headers.set("Range", "bytes=0-65535")
+    const { providerFetch, providerFetchUpstream } = await import(
+      "@/scripts/lib/provider-fetch.js"
+    )
+    const response = useNativeStreamProxy()
+      ? await providerFetchUpstream(url, {
+          method: "GET",
+          headers,
+          signal: controller?.signal,
+        })
+      : await providerFetch(target, {
+          method: "GET",
+          headers,
+          signal: controller?.signal,
+          forceTauri: shouldForceTauriFetch(target),
+        })
     if (response.status === 401 || response.status === 403 || response.status === 404) {
       try {
         response.body?.cancel?.()
@@ -323,22 +558,49 @@ async function probeNativeMp4Playable(url: string): Promise<boolean> {
       return false
     }
     if (response.ok || response.status === 206) {
+      let finalUrl = ""
       try {
-        const finalUrl = (response as Response).url || ""
-        if (looksLikeOfflineFallback(finalUrl)) {
-          return false
-        }
+        finalUrl = (response as Response).url || ""
       } catch {}
+      const ct = (response.headers.get("content-type") || "").toLowerCase()
       let snippet = ""
+      let probeBuffer: ArrayBuffer | null = null
       try {
-        const buf = await response.arrayBuffer()
-        snippet = new TextDecoder("latin1").decode(buf.slice(0, PROBE_BYTES))
+        probeBuffer = await response.arrayBuffer()
+        snippet = new TextDecoder("latin1").decode(probeBuffer.slice(0, PROBE_BYTES))
       } catch {}
       try {
         response.body?.cancel?.()
       } catch {}
-      if (looksLikeOfflineFallback(snippet)) return false
-      return snippet.includes("ftyp")
+      const totalBytes = parseContentTotalBytes(response)
+      if (totalBytes != null && vodContainerTooSmall(url, totalBytes)) {
+        log.warn("[xt:player] VOD MP4 probe rejected (file too small)", {
+          url: redactUrl(url).slice(0, 120),
+          totalBytes,
+        })
+        return false
+      }
+      if (probeBuffer) {
+        const headerDuration = parseMp4DurationSec(probeBuffer)
+        if (
+          headerDuration != null &&
+          isLikelyVodPlaceholderDuration(url, headerDuration)
+        ) {
+          log.warn("[xt:player] VOD MP4 probe rejected (short mvhd duration)", {
+            url: redactUrl(url).slice(0, 120),
+            durationSec: headerDuration,
+          })
+          return false
+        }
+      }
+      if (!vodProbeMatchesRequestedAsset(url, finalUrl, snippet)) {
+        log.warn("[xt:player] VOD MP4 probe rejected (placeholder/offline redirect)", {
+          url: redactUrl(url).slice(0, 120),
+        })
+        return false
+      }
+      if (snippet.includes("ftyp")) return true
+      return false
     }
     try {
       response.body?.cancel?.()
@@ -349,6 +611,104 @@ async function probeNativeMp4Playable(url: string): Promise<boolean> {
   } finally {
     if (timer) clearTimeout(timer)
   }
+}
+
+export async function probeVodContainerReachable(url: string): Promise<boolean> {
+  const controller =
+    typeof AbortController !== "undefined" ? new AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), PROBE_MS) : null
+  try {
+    let target = url
+    if (useDevStreamProxy()) {
+      target = await resolveStreamFetchUrl(url)
+    }
+    const headers = await buildProbeHeaders(url)
+    headers.set("Range", "bytes=0-2047")
+    const { providerFetch, providerFetchUpstream } = await import(
+      "@/scripts/lib/provider-fetch.js"
+    )
+    const response = useNativeStreamProxy()
+      ? await providerFetchUpstream(url, {
+          method: "GET",
+          headers,
+          signal: controller?.signal,
+        })
+      : await providerFetch(target, {
+          method: "GET",
+          headers,
+          signal: controller?.signal,
+          forceTauri: shouldForceTauriFetch(target),
+        })
+    if (
+      response.status === 401 ||
+      response.status === 403 ||
+      response.status === 404 ||
+      response.status >= 500
+    ) {
+      try {
+        response.body?.cancel?.()
+      } catch {}
+      return false
+    }
+    const reachable = response.ok || response.status === 206
+    try {
+      response.body?.cancel?.()
+    } catch {}
+    return reachable
+  } catch {
+    return false
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/**
+ * Megacubo keeps the provider's real container candidate (including MKV) and
+ * lets its proxy/FFmpeg layer handle compatibility. For external players we can
+ * do the same: if the panel's MP4 is a short standby clip, try the MKV sibling.
+ */
+export async function resolveExternalVodPlayUrl(url: string): Promise<string> {
+  const normalized = preferPlainHttpForXtreamMedia(url)
+  if (!isXtreamVodContainerUrl(normalized)) return normalized
+  const ext = containerExtensionFromUrl(normalized)
+  if (ext !== "mp4") return normalized
+  if (await probeNativeMp4Playable(normalized)) return normalized
+  const mkvSibling = toMkvSiblingUrl(normalized)
+  if (mkvSibling && (await probeVodContainerReachable(mkvSibling))) {
+    log.info("[xt:player] VOD MP4 placeholder; using MKV for external player", {
+      mp4: redactUrl(normalized).slice(0, 120),
+      mkv: redactUrl(mkvSibling).slice(0, 120),
+    })
+    return mkvSibling
+  }
+  return normalized
+}
+
+export async function resolveExternalVodAfterPlaceholder(
+  url: string,
+): Promise<string | null> {
+  const normalized = preferPlainHttpForXtreamMedia(url)
+  if (!isXtreamVodContainerUrl(normalized)) return null
+  const ext = containerExtensionFromUrl(normalized)
+  const candidates = uniqueUrls([
+    ext === "mkv" ? normalized : null,
+    toMkvSiblingUrl(normalized),
+  ])
+  for (const candidate of candidates) {
+    log.info("[xt:player] probing VOD external placeholder fallback", {
+      src: redactUrl(candidate).slice(0, 120),
+    })
+    if (await probeVodContainerReachable(candidate)) {
+      log.info("[xt:player] VOD placeholder fallback reachable", {
+        src: redactUrl(candidate).slice(0, 120),
+      })
+      return candidate
+    }
+  }
+  log.warn("[xt:player] no VOD external placeholder fallback reachable", {
+    src: redactUrl(normalized).slice(0, 120),
+  })
+  return null
 }
 
 /** Panels that only publish a container file (no parallel `.m3u8` ladder). */
@@ -367,12 +727,19 @@ export function shouldSkipVodHlsSibling(
   url: string,
   containerExtension?: string,
 ): boolean {
+  // Desktop/mobile app: always try the `.m3u8` ladder (WebView cannot play MKV directly).
+  if (isTauriEmbedded()) return false
+  // Xtream VOD panels often expose the same asset as `.mkv` plus a sibling
+  // `.m3u8` master playlist carrying audio/subtitle renditions.  Do not treat
+  // MKV as "container-only" here; probing HLS is what exposes tracks.
+  if (isXtreamVodContainerUrl(url)) return false
   const ext = (containerExtension || containerExtensionFromUrl(url)).toLowerCase()
   return CONTAINER_ONLY_EXTENSIONS.has(ext)
 }
 
 /** Series episodes are usually a single `.mp4`; sibling `.m3u8` often returns HTTP 551. */
 export function isXtreamSeriesContainerUrl(url: string): boolean {
+  if (isTauriEmbedded()) return false
   if (!url) return false
   try {
     const path = new URL(url).pathname.toLowerCase()
@@ -398,6 +765,30 @@ export interface PreferVodHlsOptions {
   containerExtension?: string
 }
 
+async function resolveTauriVodHlsUrl(url: string): Promise<string | null> {
+  if (!isTauriEmbedded() || !isXtreamVodContainerUrl(url)) return null
+  // FFmpeg is not available on iOS; skip the local HLS transcoding proxy entirely.
+  if (isIosEmbedded()) return null
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    let referer = ""
+    try {
+      referer = `${new URL(url).origin}/`
+    } catch {}
+    const proxied = await invoke<string>("vod_hls_proxy_url", {
+      url,
+      userAgent: IPTV_UA_VOD,
+      referer: referer || undefined,
+      audioIndex: 0,
+    })
+    emitVodChoice("tauri-local-hls", url, proxied)
+    return proxied
+  } catch (error) {
+    log.warn("[xt:player] VOD local HLS proxy unavailable", error)
+    return null
+  }
+}
+
 /**
  * When the panel serves both a file (.mkv/.mp4) and an HLS ladder (.m3u8),
  * prefer the ladder so hls.js can expose audio / subtitle tracks.
@@ -408,6 +799,9 @@ export async function preferVodHlsUrl(
   options: PreferVodHlsOptions = {},
 ): Promise<string> {
   const normalizedUrl = preferPlainHttpForXtreamMedia(url)
+  const localHls = await resolveTauriVodHlsUrl(normalizedUrl)
+  if (localHls) return localHls
+
   const streamKey = vodStreamPathKey(normalizedUrl)
 
   if (shouldSkipVodHlsProbe(normalizedUrl, options.containerExtension)) {
@@ -443,25 +837,36 @@ export async function preferVodHlsUrl(
     return sibling
   }
 
-  const preferWebTracks =
-    typeof window !== "undefined" &&
-    !isTauriEmbedded() &&
-    isXtreamVodContainerUrl(normalizedUrl)
+  const preferWebTracks = isXtreamVodContainerUrl(normalizedUrl)
 
   let bestHls: HlsProbeResult | null = null
   let bestScore = -1
   let firstReachable: HlsProbeResult | null = null
-  for (const candidate of hlsCandidates) {
-    const probe = await probeReachable(candidate)
-    if (probe.authDenied) {
-      hlsDeniedPathKeys.add(streamKey)
-      if (import.meta.env.DEV) {
-        log.debug(
-          "[xt:player] VOD HLS denied/unavailable; using container file",
-          redactUrl(normalizedUrl).slice(0, 120),
-        )
+  const probeBudgetMs = isTauriEmbedded()
+    ? Math.max(TAURI_VOD_HLS_PROBE_BUDGET_MS, PROBE_MS * hlsCandidates.length)
+    : PROBE_MS * hlsCandidates.length
+  const probeDeadline = Date.now() + probeBudgetMs
+
+  const probeOne = async (candidate: string): Promise<HlsProbeResult> => {
+    if (Date.now() >= probeDeadline) {
+      return {
+        reachable: false,
+        url: candidate,
+        mediaLines: 0,
+        subtitleLines: 0,
+        audioLines: 0,
+        masterPlaylist: false,
       }
-      break
+    }
+    return probeReachable(candidate)
+  }
+
+  const probes = await Promise.all(hlsCandidates.map((c) => probeOne(c)))
+  let sawAuthDenied = false
+  for (const probe of probes) {
+    if (probe.authDenied) {
+      sawAuthDenied = true
+      continue
     }
     if (!probe.reachable) continue
     if (!firstReachable) firstReachable = probe
@@ -470,7 +875,31 @@ export async function preferVodHlsUrl(
       bestHls = probe
       bestScore = score
     }
-    if (probe.subtitleLines > 0 && probe.audioLines > 0) break
+  }
+  if (sawAuthDenied && !bestHls && !firstReachable) {
+    hlsDeniedPathKeys.add(streamKey)
+    const ext = (options.containerExtension || containerExtensionFromUrl(url)).toLowerCase()
+    const containerFallback =
+      (mp4Sibling && mp4Sibling !== normalizedUrl ? mp4Sibling : null) ||
+      (ext && /\.m3u8(?:[?#]|$)/i.test(normalizedUrl)
+        ? normalizedUrl.replace(/\.m3u8(\?|#|$)/i, `.${ext}$1`)
+        : null)
+    if (containerFallback && containerFallback !== normalizedUrl) {
+      if (import.meta.env.DEV) {
+        log.debug(
+          "[xt:player] VOD HLS denied; using container file",
+          redactUrl(containerFallback).slice(0, 120),
+        )
+      }
+      emitVodChoice("hls-auth-denied-container", url, containerFallback)
+      return preferPlainHttpForXtreamMedia(containerFallback)
+    }
+    if (import.meta.env.DEV) {
+      log.debug(
+        "[xt:player] VOD HLS denied/unavailable; using container file",
+        redactUrl(normalizedUrl).slice(0, 120),
+      )
+    }
   }
 
   const chosen = preferWebTracks ? bestHls || firstReachable : bestHls
@@ -502,18 +931,20 @@ export async function preferVodHlsUrl(
     return sibling
   }
 
-  if (
+  const preferMp4Container =
     mp4Sibling &&
     mp4Sibling !== normalizedUrl &&
     isAppleEmbedded() &&
-    /\.(mkv|avi|ts)(\?|#|$)/i.test(normalizedUrl.split("?")[0] ?? "")
-  ) {
+    (!isTauriEmbedded() || isIosEmbedded()) &&
+    /\.(mkv|avi|ts|m3u8)(\?|#|$)/i.test(normalizedUrl.split("?")[0] ?? "")
+
+  if (preferMp4Container) {
     const mp4Playable = await probeNativeMp4Playable(mp4Sibling)
     if (mp4Playable) {
       if (import.meta.env.DEV) {
-        log.log("[xt:player] VOD MP4 sibling verified for Apple WebKit", redactUrl(mp4Sibling).slice(0, 120))
+        log.log("[xt:player] VOD MP4 sibling verified", redactUrl(mp4Sibling).slice(0, 120))
       }
-      emitVodChoice("apple-mp4-verified", url, mp4Sibling)
+      emitVodChoice(isTauriEmbedded() ? "tauri-mp4-verified" : "apple-mp4-verified", url, mp4Sibling)
       return mp4Sibling
     }
   }
@@ -524,4 +955,52 @@ export async function preferVodHlsUrl(
 
   emitVodChoice("original", url, normalizedUrl)
   return normalizedUrl
+}
+
+/** True when this container URL is safe to assign to `<video>` on Tauri.
+ *
+ * WKWebView (AVFoundation) does NOT support MKV, AVI, WMV or FLV — they are remuxed
+ * by the FFmpeg transcode endpoint before reaching the player.  Only MP4 with a valid
+ * non-placeholder header is allowed through directly.
+ */
+export async function canPlayVodNativeOnTauri(url: string): Promise<boolean> {
+  if (!isTauriEmbedded() || !url) return true
+  const ext = containerExtensionFromUrl(url)
+  if (CONTAINER_ONLY_EXTENSIONS.has(ext)) return false
+  if (ext === "mp4") return probeNativeMp4Playable(url)
+  return ext !== "mkv" && ext !== "avi"
+}
+
+let vodPlaceholderGuardSeq = 0
+
+/** Runtime guard: panels can serve a valid MP4 header with a ~35s standby clip. */
+export function wireVodPlaceholderGuard(
+  video: HTMLVideoElement | null | undefined,
+  upstreamUrl: string,
+  onPlaceholder?: () => void | Promise<void>,
+): () => void {
+  if (!video || !upstreamUrl) return () => {}
+  const guardId = ++vodPlaceholderGuardSeq
+  const handler = () => {
+    if (guardId !== vodPlaceholderGuardSeq) return
+    const dur = video.duration
+    if (!isLikelyVodPlaceholderDuration(upstreamUrl, dur)) return
+    log.warn("[xt:player] VOD placeholder detected (duration)", {
+      url: redactUrl(upstreamUrl).slice(0, 120),
+      durationSec: dur,
+    })
+    try {
+      video.pause()
+    } catch {}
+    video.removeAttribute("src")
+    try {
+      video.load()
+    } catch {}
+    onPlaceholder?.()
+  }
+  video.addEventListener("loadedmetadata", handler, { once: true })
+  return () => {
+    vodPlaceholderGuardSeq++
+    video.removeEventListener("loadedmetadata", handler)
+  }
 }

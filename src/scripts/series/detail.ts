@@ -2,7 +2,7 @@
 // Series detail page (route: /series/detail?id=<series_id>).
 // Cache-driven on first paint so it works offline once a series has been
 // opened at least once before.
-import { log } from "@/scripts/lib/log.js"
+import { log, redactUrl } from "@/scripts/lib/log.js"
 import {
   loadCreds,
   getActiveEntry,
@@ -48,12 +48,18 @@ import { togglePip } from "@/scripts/lib/pip-toggle.js"
 import { fmtImdbRating } from "@/scripts/lib/format.js"
 import { setRichPresence, clearRichPresence } from "@/scripts/lib/discord-rpc.js"
 import { t, initI18n } from "@/scripts/lib/i18n.js"
-import { mountPlayer, getExternalLauncher } from "@/scripts/lib/player-runtime.ts"
-import { streamUrlsEquivalent } from "@/scripts/lib/stream-proxy"
+import {
+  getNativePlaybackStatus,
+  mountPlaybackSession,
+} from "@/scripts/lib/playback-session.ts"
+import {
+  streamUrlsEquivalent,
+  isTauriEmbedded,
+  preferPlainHttpForXtreamMedia,
+} from "@/scripts/lib/stream-proxy"
 import { getPlayerBackend, getUserAgent } from "@/scripts/lib/app-settings.js"
 import { setEmbeddedMediaFetchContext } from "@/scripts/lib/embedded-media-fetch.js"
-import { toast } from "@/scripts/lib/toast.js"
-import { setupExternalPlayerButton, surfaceLaunchError } from "@/scripts/lib/external-player-button.ts"
+import { setupExternalPlayerButton } from "@/scripts/lib/external-player-button.ts"
 
 const SERIES_INFO_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -110,6 +116,35 @@ function buildEpisodeStreamUrl(ep, c = creds) {
     "." +
     ext
   )
+}
+
+function parseDurationSeconds(value) {
+  if (value == null || value === "") return 0
+  const raw = String(value).trim()
+  if (!raw) return 0
+  if (raw.includes(":")) {
+    const parts = raw.split(":").map((part) => parseInt(part, 10))
+    if (parts.some((part) => !Number.isFinite(part))) return 0
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    if (parts.length === 2) return parts[0] * 60 + parts[1]
+    return 0
+  }
+  const num = Number(raw)
+  if (!Number.isFinite(num) || num <= 0) return 0
+  return num > 300 ? Math.round(num) : Math.round(num * 60)
+}
+
+function episodeDurationSeconds(ep) {
+  const info = ep?.info || {}
+  const explicit = Number(
+    ep?.duration_secs ||
+      ep?.duration_seconds ||
+      info.duration_secs ||
+      info.duration_seconds ||
+      0
+  )
+  if (Number.isFinite(explicit) && explicit > 0) return explicit
+  return parseDurationSeconds(ep?.duration || info.duration || info.runtime || "")
 }
 
 function syncFavButton() {
@@ -565,7 +600,11 @@ function applySeriesInfo(data) {
     let targetEp = null
     let targetSeason = ""
     for (const key of seasonKeys) {
-      const ep = (byKey[key] || []).find((e) => Number(e.id) === autoplayEpisodeId)
+      const ep = (byKey[key] || []).find(
+        (e) =>
+          Number(e.id) === autoplayEpisodeId ||
+          String(e.id) === String(autoplayEpisodeId),
+      )
       if (ep) {
         targetEp = ep
         targetSeason = key
@@ -642,22 +681,30 @@ function progressExtrasFor(ep) {
   }
 }
 
-async function ensureEmbeddedPlayer(backend) {
+async function ensureEmbeddedPlayer(backend, nativeStatus = null) {
   if (vjs) return vjs
   const videoEl = document.getElementById("series-player")
   if (!videoEl) return null
   const hasNativePipBridge = !!window.AndroidPip
-  const mounted = await mountPlayer(videoEl, backend, {
+  const session = await mountPlaybackSession(videoEl, backend, {
     liveui: false,
     fluid: true,
     preload: "auto",
     autoplay: false,
     aspectRatio: "16:9",
     pictureInPictureToggle: !hasNativePipBridge,
+    nativeStatus,
   })
-  if (mounted.kind !== "embedded") return null
-  vjs = mounted.handle
-  if (mounted.backend === "videojs") {
+  if (!session) return null
+  if (playerWrap) {
+    if (session.kind === "native") {
+      playerWrap.dataset.nativePlayback = "on"
+    } else {
+      delete playerWrap.dataset.nativePlayback
+    }
+  }
+  vjs = session.handle
+  if (session.backend === "videojs") {
     attachPlayerFocusKeeper(vjs)
   }
   return vjs
@@ -701,7 +748,7 @@ function markNowPlayingEpisode(epId) {
 
 async function playEpisode(episode) {
   if (!series || !episode) return
-  let src = buildEpisodeStreamUrl(episode)
+  const src = buildEpisodeStreamUrl(episode)
   if (!src) return
   dismissUpNext()
 
@@ -731,7 +778,42 @@ async function playEpisode(episode) {
 
   const remoteSrc = src
   const localSrc = await getLocalPlayableSrc(src)
-  const playSrc = localSrc || src
+  let playSrc = localSrc || src
+  try {
+    setEmbeddedMediaFetchContext({
+      userAgent: getUserAgent() || null,
+      referer:
+        /\.m3u8(?:[?#]|$)/i.test(playSrc) || /\/(movie|series)\//i.test(playSrc)
+          ? playSrc
+          : creds.host
+            ? `${fmtBase(creds.host, creds.port)}/`
+            : null,
+    })
+  } catch {}
+  if (!localSrc && !isTauriEmbedded()) {
+    const {
+      preferVodHlsUrl,
+      isXtreamVodContainerUrl,
+      containerExtensionFromUrl,
+      toMp4SiblingUrl,
+      probeNativeMp4Playable,
+    } = await import("@/scripts/lib/embedded-vod-playback.js")
+    const normalized = preferPlainHttpForXtreamMedia(playSrc)
+    if (isXtreamVodContainerUrl(normalized)) {
+      playSrc = await preferVodHlsUrl(playSrc, {
+        containerExtension: containerExtensionFromUrl(playSrc),
+      })
+    }
+    if (/\.mkv(\?|#|$)/i.test(playSrc) && !/\.m3u8(?:[?#]|$)/i.test(playSrc)) {
+      const mp4Sibling = toMp4SiblingUrl(playSrc)
+      if (mp4Sibling && (await probeNativeMp4Playable(mp4Sibling))) {
+        playSrc = mp4Sibling
+        log.info("[xt:series-detail] MKV skipped; using MP4", {
+          src: redactUrl(playSrc),
+        })
+      }
+    }
+  }
   const saved = activePlaylistId
     ? getProgress(activePlaylistId, "episode", episode.id)
     : null
@@ -745,15 +827,7 @@ async function playEpisode(episode) {
       : 0
 
   const backend = getPlayerBackend()
-
-  if (backend === "mpv" || backend === "vlc") {
-    try {
-      await launchExternalPlayback(backend, playSrc, resumePos)
-    } catch (err) {
-      surfaceLaunchError(err, backend)
-    }
-    return
-  }
+  const nativeStatus = await getNativePlaybackStatus()
 
   if (posterEl) posterEl.classList.add("hidden")
   if (playerWrap) playerWrap.classList.remove("hidden")
@@ -761,7 +835,7 @@ async function playEpisode(episode) {
   const videoEl = document.getElementById("series-player")
   videoEl?.removeAttribute("hidden")
 
-  const player = await ensureEmbeddedPlayer(backend)
+  const player = await ensureEmbeddedPlayer(backend, nativeStatus)
   if (!player) {
     setPlayerLoading(false)
     return
@@ -771,10 +845,21 @@ async function playEpisode(episode) {
   try {
     setEmbeddedMediaFetchContext({
       userAgent: getUserAgent() || null,
-      referer: creds.host ? `${fmtBase(creds.host, creds.port)}/` : null,
+      referer:
+        /\.m3u8(?:[?#]|$)/i.test(playSrc) || /\/(movie|series)\//i.test(playSrc)
+          ? playSrc
+          : creds.host
+            ? `${fmtBase(creds.host, creds.port)}/`
+            : null,
     })
   } catch {}
   const mime = chooseMime(playSrc)
+  const remoteSourceForTracks =
+    isTauriEmbedded() && remoteSrc && !streamUrlsEquivalent(playSrc, remoteSrc)
+      ? remoteSrc
+      : localSrc
+        ? remoteSrc
+        : undefined
   player.one("error", () => {
     const e = player.error()
     log.error("[xt:series-detail] player error", {
@@ -796,22 +881,38 @@ async function playEpisode(episode) {
   const containerExtension = String(episode.container_extension || "mp4")
     .replace(/^\.+/, "")
     .toLowerCase()
+  const expectedDurationSeconds = episodeDurationSeconds(episode)
 
   player.src({
     src: playSrc,
     type: mime,
     containerExtension,
-    remoteSourceUrl: localSrc ? remoteSrc : undefined,
+    remoteSourceUrl: remoteSourceForTracks,
+    startSeconds: resumePos,
+    expectedDurationSeconds,
+    userAgent: getUserAgent() || null,
+    referer:
+      /\.m3u8(?:[?#]|$)/i.test(playSrc) || /\/(movie|series)\//i.test(playSrc)
+        ? playSrc
+        : creds.host
+          ? `${fmtBase(creds.host, creds.port)}/`
+          : null,
   })
 
   if (!episode?._directUrl) {
     void resolveStreamUrl((c) => buildEpisodeStreamUrl(episode, c))
-      .then((resolved) => {
+      .then(async (resolved) => {
         if (!resolved || !player || streamUrlsEquivalent(resolved, playSrc)) return
+        const { shouldPreserveVodPlaySrc } = await import(
+          "@/scripts/lib/embedded-vod-playback.js"
+        )
+        if (shouldPreserveVodPlaySrc(playSrc, resolved)) return
         player.src({
           src: resolved,
           type: chooseMime(resolved),
           containerExtension,
+          remoteSourceUrl: isTauriEmbedded() ? resolved : undefined,
+          expectedDurationSeconds,
         })
       })
       .catch((err) => {
@@ -870,16 +971,6 @@ async function playEpisode(episode) {
       startTimestamp: Date.now(),
     })
   }
-}
-
-async function launchExternalPlayback(backend, src, resumeSeconds) {
-  const launcher = getExternalLauncher(backend)
-  toast({
-    title: t("settings.playback.launching", { player: backend.toUpperCase() })
-      || `Launching ${backend.toUpperCase()}…`,
-    duration: 2000,
-  })
-  await launcher.launch(src, { resumeSeconds })
 }
 
 const externalBtnHandle = setupExternalPlayerButton(

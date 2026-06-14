@@ -4,8 +4,8 @@
         id="https://egennusoF2.github.io/lelegiptv"
         version="1.6.0"
         viewmodes="maximized">
-  <tizen:application id="LelegIPTV.LelegIPTV"
-                     package="LelegIPTV"
+  <tizen:application id="LelegIPTV1.LelegIPTV"
+                     package="LelegIPTV1"
                      required_version="6.0"/>
   <tizen:profile name="tv"/>
   <tizen:setting screen-orientation="landscape"

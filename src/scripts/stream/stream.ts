@@ -39,11 +39,11 @@ import { applyStreamHeaders } from "@/scripts/lib/stream-headers.ts"
 import { renderProviderError } from "@/scripts/lib/provider-error.js"
 import { toast, toastError } from "@/scripts/lib/toast.js"
 import {
-  mountPlayer,
   externalPlayersAvailable,
   androidExternalAvailable,
   getExternalLauncher,
 } from "@/scripts/lib/player-runtime.ts"
+import { mountPlaybackSession } from "@/scripts/lib/playback-session.ts"
 import {
   getPlayerBackend,
   getPlayerPath,
@@ -74,16 +74,53 @@ import {
   preferredLiveContainer,
   liveStreamExtension,
   allowAutoTsFallback,
+  mpegtsMseLikelySupported,
 } from "@/scripts/lib/live-container"
 import {
   setEmbeddedMediaFetchContext,
   clearEmbeddedMediaFetchContext,
 } from "@/scripts/lib/embedded-media-fetch"
-import { preferHttpsStreamUrl, isIosEmbedded } from "@/scripts/lib/stream-proxy"
-import { installDevStreamFetchPatch } from "@/scripts/lib/dev-stream-fetch-patch"
+import {
+  preferHttpsStreamUrl,
+  preferPlainHttpForXtreamMedia,
+  useNativeStreamProxy,
+  isIosEmbedded,
+  isTauriEmbedded,
+  isAppleEmbedded,
+  logStreamRouting,
+  resolveHlsPlaybackUrl,
+  resolveUpstreamUserAgent,
+} from "@/scripts/lib/stream-proxy"
+import {
+  installDevStreamFetchPatch,
+  installTauriStreamFetchPatch,
+} from "@/scripts/lib/dev-stream-fetch-patch"
 import { setStreamStatus } from "@/scripts/lib/stream-state-cache"
+import { bustLiveStreamUrl } from "@/scripts/lib/live-stream-cache-bust"
+import { parseReplayWindowFromSearchParams } from "@/scripts/lib/live-replay-url"
+import {
+  bustUpstreamLiveUrl,
+  isUpstreamLiveHls,
+  isUpstreamLiveTs,
+} from "@/scripts/lib/live-stream-url"
+import { unwrapStreamProxyUrl } from "@/scripts/lib/stream-proxy"
 
 installDevStreamFetchPatch()
+void installTauriStreamFetchPatch()
+
+let liveStaleReloadAt = 0
+let liveStaleSegmentHits = 0
+const LIVE_STALE_RELOAD_MS = 2500
+
+document.addEventListener("xt:hls-live-stale", () => {
+  const ctx = lastPlayContext
+  if (!ctx || !useNativeStreamProxy() || ctx.seq !== playSeq) return
+  ctx.hlsSegmentStale = true
+  if (!ctx.tsFallbackTried && canTryXtreamTsFallback(ctx)) {
+    liveStaleSegmentHits = 0
+    void retryAsXtreamTs(ctx, "hls-stale-segment")
+  }
+})
 
 const CHANNELS_TTL_MS = 24 * 60 * 60 * 1000
 
@@ -1111,6 +1148,8 @@ function ensureEpgLoaded() {
 }
 
 let autoplayConsumed = false
+let pendingAutoplayChannelId = null
+
 function paramsFromUrl(key) {
   try {
     return new URLSearchParams(window.location.search).get(key)
@@ -1119,24 +1158,41 @@ function paramsFromUrl(key) {
   }
 }
 
+function findChannelById(id) {
+  if (id == null || id === "") return null
+  const num = Number(id)
+  return (
+    all.find((c) => c.id === id) ||
+    (Number.isFinite(num) ? all.find((c) => c.id === num) : null) ||
+    all.find((c) => String(c.id) === String(id)) ||
+    null
+  )
+}
+
 function maybeAutoplayFromUrl() {
   if (autoplayConsumed) return
-  let id = null
+  let id = pendingAutoplayChannelId
   try {
     const params = new URLSearchParams(window.location.search)
     const raw = params.get("channel")
-    if (raw) id = Number(raw)
+    if (raw != null && raw !== "") {
+      id = /^\d+$/.test(raw) ? Number(raw) : raw
+    }
   } catch {}
-  if (!Number.isFinite(id) || id == null) return
+  if (id == null || id === "") return
+  const ch = findChannelById(id)
+  if (!ch) {
+    pendingAutoplayChannelId = id
+    return
+  }
+  pendingAutoplayChannelId = null
   autoplayConsumed = true
-  const ch = all.find((c) => c.id === id)
-  if (!ch) return
-  const catchupStart = Number(paramsFromUrl("catchupStart"))
-  const catchupStop = Number(paramsFromUrl("catchupStop"))
-  const replay =
-    Number.isFinite(catchupStart) && Number.isFinite(catchupStop)
-      ? { start: catchupStart, stop: catchupStop }
-      : null
+  let replay = null
+  try {
+    replay = parseReplayWindowFromSearchParams(
+      new URLSearchParams(window.location.search),
+    )
+  } catch {}
   // Strip the ?channel= so refresh doesn't re-trigger.
   try {
     const url = new URL(window.location.href)
@@ -1146,12 +1202,19 @@ function maybeAutoplayFromUrl() {
     window.history.replaceState({}, "", url.toString())
   } catch {}
 
-  if (!filtered.some((channel) => channel.id === id)) {
+  if (
+    !filtered.some(
+      (channel) =>
+        channel.id === id ||
+        channel.id === Number(id) ||
+        String(channel.id) === String(id),
+    )
+  ) {
     picker.setActiveCat("", { silent: true })
     if (searchEl && searchEl.value) searchEl.value = ""
     applyFilter()
   }
-  play(ch.id, ch.name, replay ? { replay } : undefined)
+  play(ch.id, ch.name, replay ? { replay, fromUrlAutoplay: true } : { fromUrlAutoplay: true })
   requestAnimationFrame(() => {
     const idx = filtered.findIndex((channel) => channel.id === id)
     if (idx >= 0) scrollIntoViewByIdx(idx)
@@ -1389,7 +1452,7 @@ const ensureEmbeddedPlayer = async (backend) => {
   // doesn't expose Web PiP so the button always renders disabled. Native
   // PiP goes through the in-page button + AndroidPip bridge instead.
   const hasNativePipBridge = !!window.AndroidPip
-  const mounted = await mountPlayer(videoEl, backend, {
+  const session = await mountPlaybackSession(videoEl, backend, {
     liveui: true,
     fluid: true,
     preload: "auto",
@@ -1403,10 +1466,18 @@ const ensureEmbeddedPlayer = async (backend) => {
       fullscreenToggle: true,
     },
   })
-  if (mounted.kind !== "embedded") return null
-  vjs = mounted.handle
+  if (!session) return null
+  const wrap = getPlayerWrap()
+  if (wrap) {
+    if (session.kind === "native") {
+      wrap.dataset.nativePlayback = "on"
+    } else {
+      delete wrap.dataset.nativePlayback
+    }
+  }
+  vjs = session.handle
 
-  if (mounted.backend === "videojs") {
+  if (session.backend === "videojs") {
     attachPlayerFocusKeeper(vjs)
   }
   attachAudioOnlyDetection(vjs)
@@ -1441,10 +1512,10 @@ const ensureEmbeddedPlayer = async (backend) => {
       message: err?.message,
       streamId: ctx.streamId,
     })
-    if (/\.m3u8(?:[?#]|$)/i.test(ctx.src || "")) {
+    if (isUpstreamLiveHls(ctx.src)) {
       ctx.hlsPlaybackFailed = true
     }
-    if (!ctx.retried) {
+    if (!ctx.retried && !useNativeStreamProxy()) {
       ctx.retried = true
       const seqAtRetry = ctx.seq
       setTimeout(() => {
@@ -1677,13 +1748,47 @@ function clearStartupSentinel() {
   }
 }
 
+/** URL handoff from home/continue-watching lacks a player click — keep nudging play(). */
+function ensureLivePlayback(player, tuneSeq) {
+  let attempts = 0
+  const maxAttempts = 20
+  const tick = () => {
+    if (tuneSeq !== playSeq || !player) return
+    if (attempts++ >= maxAttempts) return
+    try {
+      if (player.paused?.()) {
+        const result = player.play?.()
+        if (result && typeof result.catch === "function") {
+          result.catch(() => {})
+        }
+      }
+    } catch {}
+    setTimeout(tick, 400)
+  }
+  tick()
+  const onMpegtsReady = () => {
+    if (tuneSeq !== playSeq || !player) return
+    try {
+      const result = player.play?.()
+      if (result && typeof result.catch === "function") {
+        result.catch(() => {})
+      }
+    } catch {}
+  }
+  window.addEventListener("xt:mpegts-media-ready", onMpegtsReady, { once: true })
+  player.one?.("playing", () => {
+    window.removeEventListener("xt:mpegts-media-ready", onMpegtsReady)
+  })
+}
+
 function canTryXtreamTsFallback(ctx) {
   if (isIosEmbedded()) return false
   if (!ctx || ctx.tsFallbackTried) return false
-  if (ctx.hlsPlaybackFailed) return false
   if (hasDirectUrl(ctx.streamId)) return false
-  if (!/\.m3u8(?:[?#]|$)/i.test(ctx.src || "")) return false
+  if (!isUpstreamLiveHls(ctx.src)) return false
   if (!creds?.host || !creds?.user || !creds?.pass) return false
+  // Panel HLS segments are often empty via the native proxy; MPEG-TS at /live/…/id.ts works.
+  if (useNativeStreamProxy()) return true
   if (!allowAutoTsFallback(creds)) return false
   return true
 }
@@ -1691,10 +1796,87 @@ function canTryXtreamTsFallback(ctx) {
 function canTryXtreamHlsFallback(ctx) {
   if (!ctx || ctx.hlsFallbackTried) return false
   if (ctx.hlsPlaybackFailed) return false
+  if (useNativeStreamProxy()) return false
   if (hasDirectUrl(ctx.streamId)) return false
-  if (!/\.ts(?:[?#]|$)/i.test(ctx.src || "")) return false
+  if (!isUpstreamLiveTs(ctx.src)) return false
   if (!creds?.host || !creds?.user || !creds?.pass) return false
   return true
+}
+
+async function tryExternalLiveFallback(ctx, reason) {
+  if (!ctx || ctx.seq !== playSeq || ctx.externalFallbackTried) return false
+  if (!isTauriEmbedded()) return false
+  ctx.externalFallbackTried = true
+  const channelHeaders = streamHeadersById.get(ctx.streamId) || null
+  const src = unwrapStreamProxyUrl(ctx.src)
+  for (const backend of EXTERNAL_PLAYER_BACKENDS) {
+    try {
+      log.warn("[xt:livetv] embedded live failed; trying external player", {
+        backend,
+        reason,
+        streamId: ctx.streamId,
+        src: redactUrl(src),
+      })
+      await launchExternalLive(backend, src, channelHeaders)
+      showExternalPlayerEmptyState(backend, ctx.name)
+      hideTuningOverlay()
+      hideBufferingChip()
+      clearStartupSentinel()
+      clearStallSentinel()
+      return true
+    } catch (err) {
+      log.warn("[xt:livetv] external live fallback failed", {
+        backend,
+        reason,
+        error: String(err?.message || err),
+      })
+    }
+  }
+  return false
+}
+
+async function resolveLivePlayerSrc(url, kind) {
+  const playSrc = preferPlainHttpForXtreamMedia(unwrapStreamProxyUrl(url))
+  if (kind === "hls" || isUpstreamLiveHls(playSrc)) {
+    return resolveHlsPlaybackUrl(playSrc)
+  }
+  return playSrc
+}
+
+async function retryLiveFreshManifest(ctx, reason) {
+  if (!ctx || ctx.seq !== playSeq || !vjs || isUpstreamLiveTs(ctx.src)) {
+    return false
+  }
+  if (ctx.freshManifestTried) return false
+  if (!isUpstreamLiveHls(ctx.src)) return false
+  ctx.freshManifestTried = true
+  const bustSrc = bustUpstreamLiveUrl(ctx.src)
+  if (!bustSrc) return false
+  const playSrc = await resolveLivePlayerSrc(bustSrc, "hls")
+  if (!playSrc || ctx.seq !== playSeq) return false
+  log.warn("[xt:livetv] reloading live HLS with fresh manifest", {
+    streamId: ctx.streamId,
+    reason,
+    src: redactUrl(playSrc),
+  })
+  ctx.src = playSrc
+  setEmbeddedMediaFetchContext({
+    userAgent: getUserAgent() || null,
+    referer: bustSrc,
+  })
+  hideBufferingChip()
+  clearStallSentinel()
+  clearStartupSentinel()
+  try {
+    vjs.reset?.()
+    vjs.src({ src: playSrc, type: "application/x-mpegURL" })
+    vjs.play().catch(() => {})
+    armStartupSentinel()
+    return true
+  } catch (err) {
+    log.warn("[xt:livetv] fresh manifest reload failed:", err)
+    return false
+  }
 }
 
 async function retryAsXtreamHls(ctx, reason) {
@@ -1704,20 +1886,26 @@ async function retryAsXtreamHls(ctx, reason) {
     const fallbackSrc = await resolveStreamUrl((candidate) =>
       buildDirectLiveUrl(ctx.streamId, { ...candidate, liveContainer: "m3u8" })
     )
-    if (!fallbackSrc || fallbackSrc === ctx.src || ctx.seq !== playSeq) return false
+    const rawSrc = preferPlainHttpForXtreamMedia(fallbackSrc)
+    const playSrc = await resolveLivePlayerSrc(rawSrc, "hls")
+    if (!playSrc || playSrc === ctx.src || ctx.seq !== playSeq) return false
     log.warn("[xt:livetv] retrying live stream as HLS", {
       streamId: ctx.streamId,
       reason,
       from: redactUrl(ctx.src),
-      to: redactUrl(fallbackSrc),
+      to: redactUrl(playSrc),
     })
-    ctx.src = fallbackSrc
+    ctx.src = playSrc
+    setEmbeddedMediaFetchContext({
+      userAgent: getUserAgent() || null,
+      referer: rawSrc,
+    })
     hideBufferingChip()
     clearStallSentinel()
     clearStartupSentinel()
     try {
       vjs.reset?.()
-      vjs.src({ src: fallbackSrc, type: "application/x-mpegURL" })
+      vjs.src({ src: playSrc, type: "application/x-mpegURL" })
       vjs.play().catch(() => {})
       armStartupSentinel()
     } catch (err) {
@@ -1738,20 +1926,26 @@ async function retryAsXtreamTs(ctx, reason) {
     const fallbackSrc = await resolveStreamUrl((candidate) =>
       buildDirectLiveUrl(ctx.streamId, { ...candidate, liveContainer: "ts" })
     )
-    if (!fallbackSrc || fallbackSrc === ctx.src || ctx.seq !== playSeq) return false
+    const rawSrc = preferPlainHttpForXtreamMedia(fallbackSrc)
+    const playSrc = await resolveLivePlayerSrc(rawSrc, "ts")
+    if (!playSrc || playSrc === ctx.src || ctx.seq !== playSeq) return false
     log.warn("[xt:livetv] retrying live stream as MPEG-TS", {
       streamId: ctx.streamId,
       reason,
       from: redactUrl(ctx.src),
-      to: redactUrl(fallbackSrc),
+      to: redactUrl(playSrc),
     })
-    ctx.src = fallbackSrc
+    ctx.src = playSrc
+    setEmbeddedMediaFetchContext({
+      userAgent: getUserAgent() || null,
+      referer: rawSrc,
+    })
     hideBufferingChip()
     clearStallSentinel()
     clearStartupSentinel()
     try {
       vjs.reset?.()
-      vjs.src({ src: fallbackSrc, type: "video/mp2t" })
+      vjs.src({ src: playSrc, type: "video/mp2t" })
       vjs.play().catch(() => {})
       armStartupSentinel()
     } catch (err) {
@@ -1763,6 +1957,10 @@ async function retryAsXtreamTs(ctx, reason) {
     log.warn("[xt:livetv] MPEG-TS fallback resolution failed:", err)
     return false
   }
+}
+
+function startupStallTimeoutMs() {
+  return useNativeStreamProxy() ? 6_000 : STARTUP_STALL_MS
 }
 
 function armStartupSentinel() {
@@ -1778,16 +1976,20 @@ function armStartupSentinel() {
       networkState: media?.networkState,
     })
     if (!ctx.tsFallbackTried && canTryXtreamTsFallback(ctx)) {
-      retryAsXtreamTs(ctx, "startup-stall")
+      void retryAsXtreamTs(ctx, "startup-stall")
+      return
+    }
+    if (!useNativeStreamProxy() && !ctx.freshManifestTried && isUpstreamLiveHls(ctx.src)) {
+      void retryLiveFreshManifest(ctx, "startup-stall")
       return
     }
     if (!ctx.hlsFallbackTried && canTryXtreamHlsFallback(ctx)) {
-      retryAsXtreamHls(ctx, "startup-stall")
+      void retryAsXtreamHls(ctx, "startup-stall")
       return
     }
     showBufferingChip()
     armStallSentinel()
-  }, STARTUP_STALL_MS)
+  }, startupStallTimeoutMs())
 }
 
 function armStallSentinel() {
@@ -1796,17 +1998,24 @@ function armStallSentinel() {
     const ctx = lastPlayContext
     if (!ctx || !vjs) return
     if (!ctx.tsFallbackTried && canTryXtreamTsFallback(ctx)) {
-      retryAsXtreamTs(ctx, "stall")
+      void retryAsXtreamTs(ctx, "stall")
+      return
+    }
+    if (!useNativeStreamProxy() && !ctx.freshManifestTried && isUpstreamLiveHls(ctx.src)) {
+      void retryLiveFreshManifest(ctx, "stall")
       return
     }
     if (!ctx.hlsFallbackTried && canTryXtreamHlsFallback(ctx)) {
-      retryAsXtreamHls(ctx, "stall")
+      void retryAsXtreamHls(ctx, "stall")
       return
     }
     log.warn("[xt:livetv] stall sentinel re-tuning", { streamId: ctx.streamId })
     try {
       vjs.reset?.()
-      vjs.src({ src: ctx.src, type: "application/x-mpegURL" })
+      const liveType = isUpstreamLiveTs(ctx.src)
+        ? "video/mp2t"
+        : "application/x-mpegURL"
+      vjs.src({ src: ctx.src, type: liveType })
       vjs.play().catch(() => {})
       armStartupSentinel()
     } catch {}
@@ -1843,11 +2052,11 @@ window.addEventListener("xt:unsupported-audio-codec", () => {
   )
 })
 
-window.addEventListener("xt:mpegts-playback-error", (ev) => {
+window.addEventListener("xt:mpegts-playback-error", async (ev) => {
   const ctx = lastPlayContext
   const detail = ev?.detail
   if (!ctx || !vjs || ctx.seq !== playSeq) return
-  if (!/\.ts(?:[?#]|$)/i.test(ctx.src || "")) return
+  if (!isUpstreamLiveTs(ctx.src)) return
   if (detail?.url && ctx.src && detail.url !== ctx.src) {
     try {
       if (new URL(detail.url).pathname !== new URL(ctx.src).pathname) return
@@ -1858,14 +2067,19 @@ window.addEventListener("xt:mpegts-playback-error", (ev) => {
     ctx.tsCodecUnsupported = true
   }
   if (!ctx.hlsFallbackTried && canTryXtreamHlsFallback(ctx)) {
-    retryAsXtreamHls(ctx, "mpegts-error")
+    if (await retryAsXtreamHls(ctx, "mpegts-error")) return
+  }
+  // Only launch external player when the codec is truly unsupported (e.g. H.265 on macOS).
+  // Transient network errors resolve on their own — auto-launching VLC there is disruptive.
+  if (ctx.tsCodecUnsupported) {
+    await tryExternalLiveFallback(ctx, "mpegts-codec-unsupported")
   }
 })
 
 window.addEventListener("xt:hls-no-audio-detected", async (ev) => {
   const ctx = lastPlayContext
   if (!ctx || !vjs || ctx.seq !== playSeq) return
-  if (!/\.m3u8(?:[?#]|$)/i.test(ctx.src || "")) return
+  if (!isUpstreamLiveHls(ctx.src)) return
   log.warn("[xt:livetv] HLS audio not playable in browser", {
     streamId: ctx.streamId,
     reason: ev?.detail?.reason,
@@ -1911,16 +2125,25 @@ function pickConfiguredExternal() {
 
 async function play(streamId, name, options = {}) {
   if (!currentEl) return
+  const tuneSeq = ++playSeq
+  clearStallSentinel()
+  clearStartupSentinel()
+  liveStaleSegmentHits = 0
+  liveStaleReloadAt = 0
   const channel = all.find((c) => c.id === streamId)
-  const replay = options?.replay || null
-  const replaySrc =
+  let replay = options?.replay || null
+  let replaySrc =
     replay && channel ? buildCatchupStreamUrl(channel, replay, creds) : null
   if (replay && !replaySrc) {
+    log.warn("[xt:livetv] catchup unavailable; tuning live instead", {
+      streamId,
+    })
     toastError(
       t("stream.error.catchupUnavailable") ||
         "Replay is not available for this programme."
     )
-    return
+    replay = null
+    replaySrc = null
   }
   const src = preferHttpsStreamUrl(
     replaySrc ||
@@ -1928,6 +2151,7 @@ async function play(streamId, name, options = {}) {
         ? getDirectUrl(streamId)
         : await resolveStreamUrl((c) => buildDirectLiveUrl(streamId, c))),
   )
+  if (tuneSeq !== playSeq) return
 
   // Embedded players (Video.js + hls.js) only speak http(s). M3U sources can
   // ship rtsp/rtmp/udp/mms/... - those need MPV/VLC
@@ -2064,40 +2288,71 @@ async function play(streamId, name, options = {}) {
     clearRadioMode()
   }
   const player = await ensureEmbeddedPlayer(backend)
-  if (!player) return
+  if (!player || tuneSeq !== playSeq) return
   await applyStreamHeaders(channelHeaders)
-  setEmbeddedMediaFetchContext({
-    userAgent: channelHeaders?.userAgent || getUserAgent() || null,
-    referer: channelHeaders?.referer || defaultStreamReferer(src),
-  })
-  const seq = ++playSeq
+  if (tuneSeq !== playSeq) return
+  hideBufferingChip()
+  try {
+    player.reset?.()
+  } catch {}
+  const seq = tuneSeq
   let playSrc = src
-  if (isIosEmbedded() && /\.ts(?:[?#]|$)/i.test(playSrc || "")) {
+  if (isIosEmbedded() && isUpstreamLiveTs(playSrc)) {
     playSrc = playSrc.replace(/\.ts(?=[?#]|$)/i, ".m3u8")
   }
+  const preferTsFirst =
+    isTauriEmbedded() &&
+    useNativeStreamProxy() &&
+    !isIosEmbedded() &&
+    !replay &&
+    !hasDirectUrl(streamId) &&
+    isUpstreamLiveHls(playSrc)
+  if (preferTsFirst) {
+    playSrc = playSrc.replace(/\.m3u8(?=[?#]|$)/i, ".ts")
+  }
+  playSrc = preferPlainHttpForXtreamMedia(playSrc)
+  const rawPlaySrc = playSrc
+  if (isUpstreamLiveHls(playSrc)) {
+    playSrc = await resolveHlsPlaybackUrl(playSrc)
+  }
+  if (tuneSeq !== playSeq) return
+  setEmbeddedMediaFetchContext({
+    userAgent:
+      channelHeaders?.userAgent ||
+      resolveUpstreamUserAgent(rawPlaySrc) ||
+      getUserAgent() ||
+      null,
+    referer:
+      channelHeaders?.referer ||
+      rawPlaySrc ||
+      defaultStreamReferer(rawPlaySrc),
+  })
   lastPlayContext = {
     streamId,
     name,
     src: playSrc,
     seq,
     retried: false,
-    tsFallbackTried: false,
+    freshManifestTried: false,
+    tsFallbackTried: preferTsFirst,
     hlsFallbackTried: false,
     hlsPlaybackFailed: false,
+    hlsSegmentStale: false,
     tsPlaybackFailed: false,
     tsCodecUnsupported: false,
+    externalFallbackTried: false,
     replay: !!replay,
   }
-  hideBufferingChip()
-  clearStallSentinel()
-  try { player.reset?.() } catch {}
-  const liveType = /\.ts(?:[?#]|$)/i.test(playSrc || "")
+  const liveType = isUpstreamLiveTs(rawPlaySrc)
     ? "video/mp2t"
     : "application/x-mpegURL"
   player.src({ src: playSrc, type: liveType })
   const playResult = player.play?.()
   if (playResult && typeof playResult.catch === "function") {
     playResult.catch(() => {})
+  }
+  if (options?.fromUrlAutoplay) {
+    ensureLivePlayback(player, tuneSeq)
   }
   armStartupSentinel()
 
@@ -2203,8 +2458,12 @@ function resetEmptyState() {
 
 async function launchExternalLive(backend, src, channelHeaders) {
   const launcher = getExternalLauncher(backend)
-  const ua = channelHeaders?.userAgent || getUserAgent() || null
-  const referer = channelHeaders?.referer || null
+  const ua =
+    channelHeaders?.userAgent ||
+    resolveUpstreamUserAgent(src) ||
+    getUserAgent() ||
+    null
+  const referer = channelHeaders?.referer || defaultStreamReferer(src)
   log.log(`[xt:livetv] external launch backend=${backend} url=${redactUrl(src)}`)
   toast({
     title: t("settings.playback.launching", { player: backend.toUpperCase() })
@@ -2390,11 +2649,16 @@ epgList?.addEventListener("click", async (e) => {
     channelId: epgListChannelId,
     canReplay: canReplayProgramme(all.find((c) => c.id === epgListChannelId), entry),
     onWatch: () => {
-      if (epgListChannelId) {
-        const now = Date.now()
-        const replay = entry.stop <= now ? { start: entry.start, stop: entry.stop } : null
-        play(epgListChannelId, epgListChannelName, replay ? { replay } : undefined)
-      }
+      if (!epgListChannelId) return
+      const channel = all.find((c) => c.id === epgListChannelId)
+      const now = Date.now()
+      const replay =
+        entry.stop <= now &&
+        canReplayProgramme(channel, entry, now) &&
+        buildCatchupStreamUrl(channel, entry, creds)
+          ? { start: entry.start, stop: entry.stop }
+          : null
+      play(epgListChannelId, epgListChannelName, replay ? { replay } : undefined)
     },
   })
 })
@@ -2437,6 +2701,7 @@ if (listStatus && /no playlist selected/i.test(listStatus.textContent || "")) {
 
 ;(async () => {
   log.log("[xt:livetv] boot start")
+  logStreamRouting()
   await initI18n()
   await reconcileFirstRun()
   creds = await loadCreds()

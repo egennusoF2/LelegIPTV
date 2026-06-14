@@ -16,6 +16,13 @@ chunks without needing the whole repository in context.
 6. `05-native-tauri-android.md` for Rust/Tauri/Android ownership.
 7. `06-testing-and-change-playbooks.md` for safe change procedures.
 8. `07-events-storage-cache-index.md` for event, storage, and cache lookup.
+9. `08-native-playback-rebuild-strategy.md` for the reset plan for non-web
+   playback, including MaxVideoPlayer lessons and the native backend strategy.
+10. `09-native-reset-flutter-media-kit.md` for the current decision to keep the
+    web app stable and rebuild native apps with Flutter + `media_kit`.
+11. `10-flutter-web-parity-checklist.md` for the native Flutter vs web feature
+    parity matrix, including EPG, Settings, player, favorites, watch later, and
+    remaining porting order.
 
 ## Scope
 
@@ -44,3 +51,10 @@ Excluded from detailed behavioral summaries:
 - `docs/AI_AGENT_GUIDE.md`: higher-level architecture and AI collaboration guide.
 - `docs/SYNC_UPSTREAM.md`: fork alignment workflow.
 - `scripts/sync-upstream.sh`: local fork alignment script.
+- `docs/ai-rag/08-native-playback-rebuild-strategy.md`: current strategic
+  source of truth for rebuilding app releases that do not behave like the web
+  release.
+- `docs/ai-rag/09-native-reset-flutter-media-kit.md`: current native reset
+  decision after the failed Tauri/WebView/libmpv integration attempt.
+- `docs/ai-rag/10-flutter-web-parity-checklist.md`: current checklist for
+  matching the Flutter native app to the web app route by route.

@@ -373,9 +373,17 @@ import {
 			};
 		}
 		liveTileArt.replaceChildren();
+		const liveTileLink = document.querySelector('#hub-tiles a[href="/livetv"]');
 		if (!lastChannel) {
+			if (liveTileLink) liveTileLink.setAttribute("href", "/livetv");
 			liveTileSub.textContent = t("hub.tile.livetv.sub");
 			return;
+		}
+		if (liveTileLink) {
+			liveTileLink.setAttribute(
+				"href",
+				`/livetv?channel=${encodeURIComponent(String(lastChannel.id))}`,
+			);
 		}
 		if (lastChannel.logo) {
 			const layer = document.createElement("img");

@@ -7,6 +7,12 @@ mod external_player;
 mod media_proxy;
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod native_playback;
+
+#[cfg(target_os = "macos")]
+mod native_mpv_macos;
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod tray;
 
 #[cfg(target_os = "android")]
@@ -71,24 +77,82 @@ pub fn run() {
             discord::discord_disconnect,
             external_player::launch_external_player,
             media_proxy::media_proxy_url,
+            media_proxy::media_proxy_fetch,
+            media_proxy::transcode_proxy_url,
+            media_proxy::vod_hls_proxy_url,
+            native_playback::native_playback_attach,
+            native_playback::native_playback_load,
+            native_playback::native_playback_pause,
+            native_playback::native_playback_play,
+            native_playback::native_playback_seek,
+            native_playback::native_playback_select_audio_track,
+            native_playback::native_playback_select_subtitle_track,
+            native_playback::native_playback_set_speed,
+            native_playback::native_playback_set_subtitle_delay,
+            native_playback::native_playback_set_volume,
+            native_playback::native_playback_state,
+            native_playback::native_playback_status,
+            native_playback::native_playback_stop,
             tray::set_close_to_tray,
         ]);
 
     #[cfg(target_os = "android")]
     let builder = builder.plugin(tauri_plugin_android_fs::init());
 
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(target_os = "android")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         media_proxy::media_proxy_url,
+        media_proxy::media_proxy_fetch,
+        media_proxy::vod_hls_proxy_url,
     ]);
+
+    // iOS: vod_hls_proxy_url is omitted — FFmpeg is not available on device.
+    #[cfg(target_os = "ios")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        media_proxy::media_proxy_url,
+        media_proxy::media_proxy_fetch,
+    ]);
+
+    // Register xtproxy:// custom URI scheme on macOS so that WKWebView can
+    // load media through the Rust loopback proxy without hitting WebKit's
+    // mixed-content policy (tauri://localhost → http://127.0.0.1 is blocked).
+    #[cfg(target_os = "macos")]
+    let builder = builder.register_asynchronous_uri_scheme_protocol(
+        "xtproxy",
+        |_ctx, request, responder| {
+            std::thread::spawn(move || {
+                let response = media_proxy::handle_xtproxy_request(request);
+                responder.respond(response);
+            });
+        },
+    );
 
     builder
         .setup(|_app| {
-            #[cfg(not(target_os = "android"))]
-            if cfg!(debug_assertions) {
+            media_proxy::warmup();
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                use tauri_plugin_log::{Target, TargetKind};
                 _app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        .targets([
+                            Target::new(TargetKind::Stdout),
+                            Target::new(TargetKind::Webview),
+                            Target::new(TargetKind::LogDir {
+                                file_name: Some("LelegIPTV".into()),
+                            }),
+                        ])
+                        .build(),
+                )?;
+            }
+            #[cfg(target_os = "ios")]
+            {
+                use tauri_plugin_log::{Target, TargetKind};
+                _app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Debug)
+                        .targets([Target::new(TargetKind::Webview)])
                         .build(),
                 )?;
             }

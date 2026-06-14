@@ -29,10 +29,18 @@ import {
   resolveHlsPlaybackUrl,
   resolveNativeStreamProxyUrl,
   isContainerUrl,
+  isAppleEmbedded,
   isIosEmbedded,
+  isTauriEmbedded,
   useDevStreamProxy,
   useNativeStreamProxy,
+  unwrapStreamProxyUrl,
+  wrapStreamUrlForDev,
 } from "@/scripts/lib/stream-proxy"
+import {
+  shouldUseProviderFetchForMedia,
+} from "@/scripts/lib/embedded-media-fetch"
+import { toastError } from "@/scripts/lib/toast.js"
 import {
   probeStreamKind,
   streamKindFromUrl,
@@ -52,6 +60,10 @@ export interface VjsSrcOptions {
   containerExtension?: string
   /** Remote URL for ffprobe when `src` is a local/downloaded file path */
   remoteSourceUrl?: string
+  /** Seconds to start from when the native bridge has to recreate a non-seekable TS stream. */
+  startSeconds?: number
+  /** Real VOD duration from provider metadata; TS transcodes do not expose it reliably. */
+  expectedDurationSeconds?: number
 }
 
 export interface VjsLikeHandle {
@@ -124,6 +136,9 @@ export const androidExternalAvailable =
   typeof window !== "undefined" &&
   !!(window as any).AndroidIntent
 
+const VOD_PLACEHOLDER_EXTERNAL_COOLDOWN_MS = 12_000
+const vodPlaceholderExternalLaunchAt = new Map<string, number>()
+
 function defaultExternalPlayerPath(kind: ExternalPlayerKind): string {
   if (typeof navigator === "undefined") return ""
   const platform = navigator.platform || ""
@@ -131,7 +146,7 @@ function defaultExternalPlayerPath(kind: ExternalPlayerKind): string {
   const isMac = /^Mac/i.test(platform) || /\bMacintosh\b/i.test(ua)
   if (!isMac) return ""
   if (kind === "vlc") return "/Applications/VLC.app/Contents/MacOS/VLC"
-  if (kind === "mpv") return "/Applications/mpv.app/Contents/MacOS/mpv"
+  if (kind === "mpv") return "/opt/homebrew/bin/mpv"
   return ""
 }
 
@@ -278,6 +293,130 @@ export function getExternalLauncher(kind: ExternalPlayerKind): ExternalLauncher 
       }
     },
   }
+}
+
+async function tryExternalVodPlaceholderFallback(upstreamUrl: string): Promise<boolean> {
+  if (!externalPlayersAvailable || !upstreamUrl) return false
+  const now = Date.now()
+  const last = vodPlaceholderExternalLaunchAt.get(upstreamUrl) || 0
+  if (now - last < VOD_PLACEHOLDER_EXTERNAL_COOLDOWN_MS) return true
+  vodPlaceholderExternalLaunchAt.set(upstreamUrl, now)
+
+  const { resolveExternalVodAfterPlaceholder } = await import(
+    "@/scripts/lib/embedded-vod-playback.js"
+  )
+  const externalUrl = await resolveExternalVodAfterPlaceholder(upstreamUrl)
+  if (!externalUrl) {
+    return false
+  }
+
+  for (const kind of EXTERNAL_PLAYER_BACKENDS as ExternalPlayerKind[]) {
+    try {
+      const launcher = getExternalLauncher(kind)
+      await launcher.launch(externalUrl, {
+        userAgent: getUserAgent() || null,
+        referer: upstreamUrl,
+      })
+      log.info("[xt:player] VOD placeholder opened in external player", {
+        kind,
+        src: redactUrl(externalUrl).slice(0, 120),
+      })
+      return true
+    } catch (error) {
+      log.warn("[xt:player] VOD external placeholder fallback failed", {
+        kind,
+        error: String((error as Error)?.message || error),
+      })
+    }
+  }
+  return false
+}
+
+/**
+ * Call the Rust `transcode_proxy_url` command to get a `/__transcode?url=…` loopback URL
+ * that pipes the given upstream MKV through `ffmpeg -c copy -f mpegts`.
+ * Returns null when running outside Tauri desktop, or when ffmpeg is not found.
+ */
+async function resolveTranscodeProxyUrl(
+  mkvUrl: string,
+  referer: string,
+  audioIndex = 0,
+  startSeconds = 0,
+): Promise<string | null> {
+  const { isTauriEmbedded, isIosEmbedded, resolveUpstreamUserAgent } = await import(
+    "@/scripts/lib/stream-proxy.js"
+  )
+  if (!isTauriEmbedded() || isIosEmbedded()) return null
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    return await invoke<string>("transcode_proxy_url", {
+      url: mkvUrl,
+      userAgent: resolveUpstreamUserAgent(mkvUrl) || null,
+      referer: referer || null,
+      audioIndex,
+      startSeconds: Number.isFinite(startSeconds) ? Math.max(0, startSeconds) : null,
+    })
+  } catch (err) {
+    log.warn("[xt:player] transcode_proxy_url invoke failed", err)
+    return null
+  }
+}
+
+function formatPlaybackClock(seconds: number): string {
+  const safe = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
+  const h = Math.floor(safe / 3600)
+  const m = Math.floor((safe % 3600) / 60)
+  const s = safe % 60
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m).padStart(2, "0")
+  const ss = String(s).padStart(2, "0")
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
+/**
+ * When the embedded player detects a placeholder VOD, ask Rust to remux the MKV sibling
+ * through FFmpeg (-c copy -f mpegts) and hand the resulting MPEG-TS stream to mpegts.js —
+ * exactly the same pattern as Megacubo's StreamerFFmpeg, without opening any external app.
+ *
+ * @param upstream   The original upstream URL (MP4 placeholder).
+ * @param art        ArtPlayer instance.
+ * @param beforeLoad Called with the final TS proxy URL just before art.url is set,
+ *                   so the caller can update `pendingSrc` to match.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function retryEmbeddedVodWithMkv(
+  upstream: string,
+  art: any,
+  beforeLoad?: (tsUrl: string) => void,
+): Promise<boolean> {
+  // NOTE: macOS block removed. transcode_proxy_url is registered for all Tauri desktop
+  // platforms (macOS/Windows/Linux) and ffmpeg can be installed via Homebrew on macOS.
+  // WKWebView fires MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) immediately for MKV/AVI —
+  // FFmpeg remux to MPEG-TS is the correct fallback path on all desktop platforms.
+  const { resolveExternalVodAfterPlaceholder } = await import(
+    "@/scripts/lib/embedded-vod-playback.js"
+  )
+  const mkvUrl = await resolveExternalVodAfterPlaceholder(upstream)
+  if (!mkvUrl) return false
+
+  const transcodeUrl = await resolveTranscodeProxyUrl(mkvUrl, upstream)
+  if (!transcodeUrl) {
+    log.warn("[xt:player] FFmpeg not available; MKV transcode skipped", {
+      src: redactUrl(mkvUrl).slice(0, 120),
+    })
+    return false
+  }
+
+  log.info("[xt:player] VOD placeholder → FFmpeg remux MKV→TS in embedded player", {
+    src: redactUrl(mkvUrl).slice(0, 120),
+  })
+  // Store the original MKV URL so the `ts` customType can probe tracks from it
+  art._xtTranscodeSrcUrl = mkvUrl
+  // Update pendingSrc BEFORE setting art.url so the `ts` customType pendingSrc check passes
+  beforeLoad?.(transcodeUrl)
+  setArtplayerLoading(art, true)
+  art.type = "ts"
+  art.url = transcodeUrl
+  return true
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +745,16 @@ function setArtplayerLoading(art: { loading?: { show: boolean } }, show: boolean
   } catch {}
 }
 
+function emitPlayerDebug(message: string, data?: unknown): void {
+  try {
+    document.dispatchEvent(
+      new CustomEvent("xt:player-debug", {
+        detail: { message, data },
+      }),
+    )
+  } catch {}
+}
+
 async function resolveArtNativePlayUrl(playUrl: string): Promise<string> {
   const normalized = preferPlainHttpForXtreamMedia(playUrl)
   if (useNativeStreamProxy()) {
@@ -677,9 +826,15 @@ async function attachDash(
 async function attachMpegts(
   videoEl: HTMLVideoElement,
   url: string,
+  opts: { live?: boolean; durationSeconds?: number } = {},
 ): Promise<MpegtsHandle | null> {
+  emitPlayerDebug("mpegts import start", { url })
   const mpegtsMod = await import("mpegts.js")
   const mpegts = (mpegtsMod as any).default || mpegtsMod
+  emitPlayerDebug("mpegts import ok", {
+    supported: Boolean(mpegts?.isSupported?.()),
+    url,
+  })
   if (!mpegts?.isSupported?.()) {
     log.warn("[xt:player] mpegts.js unsupported in this WebView")
     return null
@@ -687,21 +842,42 @@ async function attachMpegts(
   const { createEmbeddedMpegtsConfig } = await import(
     "@/scripts/lib/embedded-media-fetch.js"
   )
-  const extraConfig = await createEmbeddedMpegtsConfig()
-  const player = mpegts.createPlayer(
-    {
+  const extraConfig = await createEmbeddedMpegtsConfig({ live: opts.live })
+  const dataSource: Record<string, unknown> = {
       type: "mpegts",
-      isLive: true,
+      isLive: opts.live !== false,
       url,
-    },
+    }
+  if (Number.isFinite(opts.durationSeconds) && Number(opts.durationSeconds) > 0) {
+    dataSource.duration = Math.floor(Number(opts.durationSeconds) * 1000)
+  }
+  const player = mpegts.createPlayer(
+    dataSource,
     extraConfig,
   )
   const Events = mpegts.Events
+  log.info("[xt:player] mpegts attach", {
+    live: opts.live !== false,
+    durationSeconds: opts.durationSeconds || 0,
+    url: redactUrl(url).slice(0, 160),
+  })
   if (Events?.MEDIA_INFO) {
     player.on(Events.MEDIA_INFO, (info: { audioCodec?: string }) => {
+      log.info("[xt:player] mpegts media info", info)
+      try {
+        window.dispatchEvent(new CustomEvent("xt:mpegts-media-ready"))
+      } catch {}
       import("@/scripts/lib/embedded-hls-audio.js").then(({ notifyIfMpegtsAudioCodecUnsupported }) => {
         notifyIfMpegtsAudioCodecUnsupported(info?.audioCodec || "")
       })
+    })
+  }
+  if (Events?.STATISTICS_INFO) {
+    let loggedStats = false
+    player.on(Events.STATISTICS_INFO, (info: unknown) => {
+      if (loggedStats) return
+      loggedStats = true
+      log.info("[xt:player] mpegts first stats", info)
     })
   }
   if (Events?.ERROR) {
@@ -771,6 +947,7 @@ async function mountVideoJs(
   let activeDash: DashHandle | null = null
   let activeHls: { destroy: () => void } | null = null
   let pendingSrc: string | null = null
+  let clearVodPlaceholderGuard: (() => void) | null = null
   const isLivePlayback = options.liveui ?? false
 
   function getUnderlyingVideo(): HTMLVideoElement | null {
@@ -814,7 +991,7 @@ async function mountVideoJs(
     const videoElement = getUnderlyingVideo()
     const resolved = await resolveHlsPlaybackUrl(src)
     const { shouldUseHlsJsForM3u8 } = await import("@/scripts/lib/stream-proxy.js")
-    if (!shouldUseHlsJsForM3u8()) {
+    if (!shouldUseHlsJsForM3u8({ live: isLivePlayback })) {
       player.src({ src: resolved, type: "application/x-mpegURL" })
       return
     }
@@ -834,8 +1011,12 @@ async function mountVideoJs(
       const { ensureVideoAudible } = await import(
         "@/scripts/lib/embedded-hls-audio.js"
       )
+      const { wireHlsForVideojs } = await import(
+        "@/scripts/lib/embedded-videojs-hls-tracks.js"
+      )
       const hlsConfig = await createEmbeddedHlsConfig({ live: isLivePlayback })
       const hls = new (Hls as any)(hlsConfig)
+      wireHlsForVideojs(player, hls, videoElement, { live: isLivePlayback })
       hls.loadSource(resolved)
       hls.attachMedia(videoElement)
       ensureVideoAudible(videoElement, null)
@@ -863,7 +1044,100 @@ async function mountVideoJs(
     destroyMpegts()
     destroyDash()
     destroyHls()
+    clearVodPlaceholderGuard?.()
+    clearVodPlaceholderGuard = null
     player.src({ src, type: type || "video/mp4" })
+    if (!isLivePlayback && isTauriEmbedded()) {
+      const upstream = unwrapStreamProxyUrl(src)
+      void import("@/scripts/lib/embedded-vod-playback.js").then(
+        ({ wireVodPlaceholderGuard }) => {
+          if (pendingSrc !== src) return
+          clearVodPlaceholderGuard?.()
+          clearVodPlaceholderGuard = wireVodPlaceholderGuard(
+            getUnderlyingVideo(),
+            upstream,
+            async () => {
+              try { player.reset() } catch {}
+              const { resolveExternalVodAfterPlaceholder } = await import(
+                "@/scripts/lib/embedded-vod-playback.js"
+              )
+              const mkvUrl = await resolveExternalVodAfterPlaceholder(upstream)
+              if (mkvUrl) {
+                const transcodeUrl = await resolveTranscodeProxyUrl(mkvUrl, upstream)
+                if (transcodeUrl) {
+                  log.info("[xt:player] VOD placeholder → FFmpeg remux MKV→TS (Video.js)", {
+                    src: redactUrl(mkvUrl).slice(0, 120),
+                  })
+                  destroyMpegts()
+                  const videoEl = getUnderlyingVideo()
+                  if (videoEl) {
+                    const handle = await attachMpegts(videoEl, transcodeUrl)
+                    if (handle) {
+                      activeMpegts = handle
+                      try { player.hasStarted?.(true) } catch {}
+                      videoEl.play?.().catch(() => {})
+                      return
+                    }
+                  }
+                }
+              }
+              if (!(await tryExternalVodPlaceholderFallback(upstream))) {
+                toastError(
+                  "This stream looks like a provider placeholder clip. Install ffmpeg (brew install ffmpeg) or use MPV/VLC in Settings → Playback.",
+                  { duration: 11000 },
+                )
+              }
+            },
+          )
+        },
+      )
+    }
+  }
+
+  async function loadNativeChecked(src: string, type?: string) {
+    if (!isLivePlayback && isTauriEmbedded()) {
+      const upstream = unwrapStreamProxyUrl(src)
+      const { canPlayVodNativeOnTauri } = await import(
+        "@/scripts/lib/embedded-vod-playback.js"
+      )
+      if (!(await canPlayVodNativeOnTauri(upstream))) {
+        log.warn("[xt:player] VOD native playback blocked", {
+          src: redactUrl(upstream).slice(0, 120),
+        })
+        try { player.reset() } catch {}
+        const { resolveExternalVodAfterPlaceholder } = await import(
+          "@/scripts/lib/embedded-vod-playback.js"
+        )
+        const mkvUrl = await resolveExternalVodAfterPlaceholder(upstream)
+        if (mkvUrl) {
+          const transcodeUrl = await resolveTranscodeProxyUrl(mkvUrl, upstream)
+          if (transcodeUrl) {
+            log.info("[xt:player] blocked VOD → FFmpeg remux MKV→TS (Video.js)", {
+              src: redactUrl(mkvUrl).slice(0, 120),
+            })
+            destroyMpegts()
+            const videoEl = getUnderlyingVideo()
+            if (videoEl) {
+              const handle = await attachMpegts(videoEl, transcodeUrl)
+              if (handle) {
+                activeMpegts = handle
+                try { player.hasStarted?.(true) } catch {}
+                videoEl.play?.().catch(() => {})
+                return
+              }
+            }
+          }
+        }
+        if (!(await tryExternalVodPlaceholderFallback(upstream))) {
+          toastError(
+            "This title cannot play in the embedded player. Install ffmpeg (brew install ffmpeg) or use MPV/VLC in Settings → Playback.",
+            { duration: 11000 },
+          )
+        }
+        return
+      }
+    }
+    loadNative(src, type)
   }
 
   async function loadDash(src: string) {
@@ -894,14 +1168,26 @@ async function mountVideoJs(
     destroyDash()
     try { player.pause?.() } catch {}
     try { player.reset() } catch {}
+    let playUrl = preferPlainHttpForXtreamMedia(unwrapStreamProxyUrl(src))
+    // Continuous MPEG-TS must hit the upstream URL via providerFetch (custom loader).
+    // The loopback /__stream proxy is for HLS segments and breaks mpegts.js live reads.
+    if (useDevStreamProxy()) {
+      playUrl = wrapStreamUrlForDev(playUrl)
+    } else if (useNativeStreamProxy() && !shouldUseProviderFetchForMedia()) {
+      try {
+        playUrl = await resolveNativeStreamProxyUrl(playUrl)
+      } catch (err) {
+        log.warn("[xt:player] TS proxy resolve failed; using direct URL", err)
+      }
+    }
     const videoElement = getUnderlyingVideo()
     if (!videoElement) {
-      loadHls(src)
+      loadHls(playUrl)
       return
     }
-    const handle = await attachMpegts(videoElement, src)
+    const handle = await attachMpegts(videoElement, playUrl)
     if (!handle) {
-      loadHls(src)
+      loadHls(playUrl)
       return
     }
     if (pendingSrc !== src) {
@@ -910,6 +1196,19 @@ async function mountVideoJs(
     }
     activeMpegts = handle
     try { player.hasStarted?.(true) } catch {}
+    try {
+      const videoEl = getUnderlyingVideo()
+      const playPromise = videoEl?.play?.()
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {})
+      }
+    } catch {}
+    try {
+      const playPromise = player.play?.()
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => {})
+      }
+    } catch {}
   }
 
   function loadFromResolvedUrl(playUrl: string, type?: string) {
@@ -927,7 +1226,7 @@ async function mountVideoJs(
       return
     }
     if (hint === "native") {
-      loadNative(playUrl, type)
+      void loadNativeChecked(playUrl, type)
       return
     }
     destroyMpegts()
@@ -938,7 +1237,7 @@ async function mountVideoJs(
         if (pendingSrc !== playUrl) return
         if (kind === "ts") loadTs(playUrl)
         else if (kind === "dash") loadDash(playUrl)
-        else if (kind === "native") loadNative(playUrl, type)
+        else if (kind === "native") void loadNativeChecked(playUrl, type)
         else void loadHls(playUrl)
       })
       .catch(() => {
@@ -962,18 +1261,33 @@ async function mountVideoJs(
         const isVod = !(options.liveui ?? false)
 
         if (isVod && isXtreamVodContainerUrl(normalized)) {
-          const quickUrl = await resolveArtNativePlayUrl(normalized)
-          if (pendingSrc !== src) return
-          pendingSrc = quickUrl
-          loadNative(quickUrl, type)
-          if (!shouldSkipVodHlsProbe(normalized, ext)) {
-            const playUrl = await preferVodHlsUrl(src, { containerExtension: ext })
-            if (pendingSrc !== quickUrl && pendingSrc !== src) return
-            if (playUrl !== normalized && playUrl !== src) {
-              pendingSrc = playUrl
-              loadFromResolvedUrl(playUrl, type)
+          // WKWebView on macOS cannot play MKV; probe MP4/HLS before assigning <video>.
+          if (!isTauriEmbedded()) {
+            const quickUrl = await resolveArtNativePlayUrl(normalized)
+            if (pendingSrc !== src) return
+            pendingSrc = quickUrl
+            loadNative(quickUrl, type)
+            if (!shouldSkipVodHlsProbe(normalized, ext)) {
+              const playUrl = await preferVodHlsUrl(src, { containerExtension: ext })
+              if (pendingSrc !== quickUrl && pendingSrc !== src) return
+              if (playUrl !== normalized && playUrl !== src) {
+                pendingSrc = playUrl
+                loadFromResolvedUrl(playUrl, type)
+              }
             }
+            return
           }
+          const playUrl = await preferVodHlsUrl(src, { containerExtension: ext })
+          if (pendingSrc !== src) return
+          pendingSrc = playUrl
+          if (streamKindHint(playUrl, type) === "native") {
+            const resolvedNativeUrl = await resolveArtNativePlayUrl(playUrl)
+            if (pendingSrc !== src) return
+            pendingSrc = resolvedNativeUrl
+            loadNativeChecked(resolvedNativeUrl, type)
+            return
+          }
+          loadFromResolvedUrl(playUrl, type)
           return
         }
 
@@ -986,7 +1300,7 @@ async function mountVideoJs(
           const resolvedNativeUrl = await resolveArtNativePlayUrl(playUrl)
           if (pendingSrc !== src) return
           pendingSrc = resolvedNativeUrl
-          loadNative(resolvedNativeUrl, type)
+          await loadNativeChecked(resolvedNativeUrl, type)
           return
         }
         pendingSrc = playUrl
@@ -1221,6 +1535,60 @@ async function mountArtPlayer(
           "@/scripts/lib/embedded-container-tracks.js"
         )
         bootstrapArtplayerSubtitleTrack(art, video)
+        const { wireVodPlaceholderGuard, canPlayVodNativeOnTauri } = await import(
+          "@/scripts/lib/embedded-vod-playback.js"
+        )
+        const upstream = unwrapStreamProxyUrl(url)
+
+        // Shared fallback handler used both by the placeholder guard AND the
+        // MEDIA_ERR_SRC_NOT_SUPPORTED (code 4) error handler below.
+        const triggerFfmpegFallback = async () => {
+          try { video.pause() } catch {}
+          video.removeAttribute("src")
+          setArtplayerLoading(art, true)
+          if (await retryEmbeddedVodWithMkv(upstream, art, (u) => { pendingSrc = u })) return
+          setArtplayerLoading(art, false)
+          if (!(await tryExternalVodPlaceholderFallback(upstream))) {
+            toastError(
+              "This title cannot play in the embedded player. Install ffmpeg (brew install ffmpeg) to play MKV/AVI in-app, or use MPV/VLC in Settings → Playback.",
+              { duration: 11000 },
+            )
+          }
+        }
+
+        // macOS (and other Tauri desktops) fire MEDIA_ERR_SRC_NOT_SUPPORTED (code 4)
+        // immediately when video.src is a container format AVFoundation/WebKit cannot
+        // play (MKV, AVI, WMV…). The placeholder guard only listens to loadedmetadata,
+        // so without this error listener the video would silently stay blank.
+        const onVideoError = () => {
+          if (video.error?.code === 4 /* MEDIA_ERR_SRC_NOT_SUPPORTED */) {
+            log.warn("[xt:player] xt-native MEDIA_ERR_SRC_NOT_SUPPORTED → FFmpeg fallback", {
+              src: redactUrl(upstream).slice(0, 120),
+            })
+            void triggerFfmpegFallback()
+          }
+        }
+        video.addEventListener("error", onVideoError, { once: true })
+
+        art._xtClearVodGuard?.()
+        art._xtClearVodGuard = wireVodPlaceholderGuard(video, upstream, async () => {
+          video.removeEventListener("error", onVideoError)
+          await triggerFfmpegFallback()
+        })
+
+        // For known non-playable containers on Tauri desktop (MKV, AVI…),
+        // skip video.src entirely and go straight to FFmpeg transcode.
+        if (isTauriEmbedded() && !isIosEmbedded() && !(await canPlayVodNativeOnTauri(upstream))) {
+          log.info("[xt:player] xt-native: container not playable natively → FFmpeg directly", {
+            src: redactUrl(upstream).slice(0, 120),
+          })
+          video.removeEventListener("error", onVideoError)
+          art._xtClearVodGuard?.()
+          art._xtClearVodGuard = null
+          await triggerFfmpegFallback()
+          return
+        }
+
         video.src = url
         try {
           video.load()
@@ -1246,16 +1614,50 @@ async function mountArtPlayer(
         const { unwrapStreamProxyUrl } = await import(
           "@/scripts/lib/stream-proxy.js"
         )
-        const fallbackToVodContainer = () => {
+        const fallbackToVodContainer = async () => {
           if (!vodFallbackUrl || isLive) return false
+          const upstream = unwrapStreamProxyUrl(vodFallbackUrl)
+          const { canPlayVodNativeOnTauri, wireVodPlaceholderGuard } = await import(
+            "@/scripts/lib/embedded-vod-playback.js"
+          )
+          if (!(await canPlayVodNativeOnTauri(upstream))) {
+            log.warn("[xt:player] HLS VOD fallback blocked (placeholder/unsupported)", {
+              fallback: redactUrl(upstream).slice(0, 120),
+            })
+            setArtplayerLoading(art, false)
+            if (await retryEmbeddedVodWithMkv(upstream, art, (url) => { pendingSrc = url })) return true
+            if (!(await tryExternalVodPlaceholderFallback(upstream))) {
+              toastError(
+                "This title cannot play in the embedded player. Install ffmpeg (brew install ffmpeg) or use MPV/VLC in Settings → Playback.",
+                { duration: 11000 },
+              )
+            }
+            return true
+          }
           log.debug("[xt:player] HLS VOD failed; falling back to container", {
             hls: redactUrl(url).slice(0, 120),
             fallback: redactUrl(vodFallbackUrl).slice(0, 120),
           })
           destroyActiveEmbeddedHandles()
           art.hls = null
+          art._xtClearVodGuard?.()
+          art._xtClearVodGuard = wireVodPlaceholderGuard(video, upstream, async () => {
+            try { video.pause() } catch {}
+            video.removeAttribute("src")
+            setArtplayerLoading(art, true)
+            if (await retryEmbeddedVodWithMkv(upstream, art, (url) => { pendingSrc = url })) return
+            setArtplayerLoading(art, false)
+            if (!(await tryExternalVodPlaceholderFallback(upstream))) {
+              toastError(
+                "This stream looks like a provider placeholder clip. Install ffmpeg (brew install ffmpeg) or use MPV/VLC in Settings → Playback.",
+                { duration: 11000 },
+              )
+            }
+          })
           video.src = vodFallbackUrl
-          try { video.load() } catch {}
+          try {
+            video.load()
+          } catch {}
           return true
         }
         if (
@@ -1263,8 +1665,7 @@ async function mountArtPlayer(
           vodFallbackUrl &&
           isVodHlsDenied(unwrapStreamProxyUrl(url))
         ) {
-          fallbackToVodContainer()
-          return
+          if (await fallbackToVodContainer()) return
         }
         const { shouldUseHlsJsForM3u8 } = await import(
           "@/scripts/lib/stream-proxy.js"
@@ -1275,16 +1676,22 @@ async function mountArtPlayer(
             const { resolveEmbeddedStreamUrl } = await import(
               "@/scripts/lib/embedded-media-fetch.js"
             )
-            activeShaka = await attachShaka(art, video, resolveEmbeddedStreamUrl(url), { live: isLive })
+            activeShaka = await attachShaka(art, video, url, { live: isLive })
             return
           } catch (error) {
             log.warn("[xt:player] Shaka HLS failed; falling back to hls.js", error)
-            if (fallbackToVodContainer()) return
+            if (await fallbackToVodContainer()) return
           }
         }
-        if (!shouldUseHlsJsForM3u8()) {
+        if (!shouldUseHlsJsForM3u8({ live: isLive })) {
           video.src = url
-          video.addEventListener("error", fallbackToVodContainer, { once: true })
+          video.addEventListener(
+            "error",
+            () => {
+              void fallbackToVodContainer()
+            },
+            { once: true },
+          )
           return
         }
         try {
@@ -1303,15 +1710,44 @@ async function mountArtPlayer(
             )
             wireHlsForArtplayer(art, hls, video, { live: isLive })
             const HlsEvents = (Hls as any).Events
-            if (HlsEvents?.ERROR) {
-              hls.on(HlsEvents.ERROR, (_event: string, data: { fatal?: boolean }) => {
-                if (data?.fatal) fallbackToVodContainer()
+            log.info("[xt:player] hls attach", {
+              live: isLive,
+              url: redactUrl(url).slice(0, 160),
+            })
+            if (HlsEvents?.MANIFEST_PARSED) {
+              hls.on(HlsEvents.MANIFEST_PARSED, (_event: string, data: any) => {
+                log.info("[xt:player] hls manifest parsed", {
+                  levels: data?.levels?.length ?? 0,
+                  audioTracks: data?.audioTracks?.length ?? 0,
+                  subtitleTracks: data?.subtitleTracks?.length ?? 0,
+                  url: redactUrl(url).slice(0, 120),
+                })
               })
             }
-            const { resolveEmbeddedStreamUrl } = await import(
-              "@/scripts/lib/embedded-media-fetch.js"
-            )
-            hls.loadSource(resolveEmbeddedStreamUrl(url))
+            if (HlsEvents?.FRAG_LOADED) {
+              let loggedFirstFragment = false
+              hls.on(HlsEvents.FRAG_LOADED, (_event: string, data: any) => {
+                if (loggedFirstFragment) return
+                loggedFirstFragment = true
+                log.info("[xt:player] hls first fragment loaded", {
+                  sn: data?.frag?.sn,
+                  type: data?.frag?.type,
+                  url: redactUrl(data?.frag?.url || "").slice(0, 120),
+                })
+              })
+            }
+            if (HlsEvents?.ERROR) {
+              hls.on(HlsEvents.ERROR, (_event: string, data: any) => {
+                log.warn("[xt:player] hls error", {
+                  fatal: data?.fatal,
+                  type: data?.type,
+                  details: data?.details,
+                  url: redactUrl(data?.url || data?.frag?.url || "").slice(0, 120),
+                })
+                if (data?.fatal) void fallbackToVodContainer()
+              })
+            }
+            hls.loadSource(url)
             hls.attachMedia(video)
             art.volume = 1
             art.muted = false
@@ -1322,22 +1758,66 @@ async function mountArtPlayer(
         } catch (error) {
           log.warn("[xt:player] hls.js import failed; falling back to <video src>", error)
         }
-        if (fallbackToVodContainer()) return
+        if (await fallbackToVodContainer()) return
         log.warn("[xt:player] hls.js unsupported and no native HLS; fallback to <video src>")
         video.src = url
       },
       async ts(video, url) {
+        emitPlayerDebug("customType ts entered", {
+          url,
+          pendingSrc,
+          expectedDurationSeconds: art._xtExpectedDurationSeconds,
+        })
         destroyActiveEmbeddedHandles()
-        const handle = await attachMpegts(video, url)
+        art._xtVirtualTimelineInstalled = url.includes("/__transcode")
+        let handle: MpegtsHandle | null = null
+        try {
+          handle = await attachMpegts(video, url, {
+            live: !url.includes("/__transcode"),
+            durationSeconds: art._xtExpectedDurationSeconds,
+          })
+        } catch (error) {
+          emitPlayerDebug("customType ts attach failed", {
+            error: String((error as Error)?.message || error),
+            url,
+          })
+          log.warn("[xt:player] mpegts attach failed", error)
+          setArtplayerLoading(art, false)
+        }
         if (!handle) {
+          emitPlayerDebug("customType ts fallback to video.src", { url })
           video.src = url
           return
         }
-        if (pendingSrc !== url) {
+        // Loopback transcode URLs (/__transcode) are always intentional redirects from the
+        // placeholder-fallback path; ArtPlayer may normalize the URL string slightly, so
+        // skip the pendingSrc equality check for them to avoid silently destroying the handle.
+        const isTranscodeUrl = url.includes("/__transcode")
+        if (!isTranscodeUrl && pendingSrc !== url) {
+          emitPlayerDebug("customType ts discarded stale handle", { pendingSrc, url })
           try { handle.destroy() } catch {}
           return
         }
         activeMpegts = handle
+        emitPlayerDebug("customType ts attached", { url })
+        setArtplayerLoading(art, false)
+        // Track/subtitle probing for the transcode path: probe from the original MKV URL.
+        // Release Tauri uses the native loopback proxy; dev uses the Vite proxy.
+        const containerSrc = typeof art._xtTranscodeSrcUrl === "string"
+          ? art._xtTranscodeSrcUrl as string
+          : null
+        if (containerSrc) {
+          art._xtContainerSourceUrl = containerSrc
+          void import("@/scripts/lib/stream-proxy.js").then(({ useDevStreamProxy, useNativeStreamProxy }) => {
+            if (!useDevStreamProxy() && !useNativeStreamProxy()) return
+            return import("@/scripts/lib/embedded-container-tracks.js").then(
+              ({ bootstrapArtplayerSubtitleTrack, attachContainerTracksForArtplayer }) => {
+                bootstrapArtplayerSubtitleTrack(art, video)
+                return attachContainerTracksForArtplayer(art, containerSrc)
+              },
+            )
+          })
+        }
       },
       async mpd(video, url) {
         destroyActiveEmbeddedHandles()
@@ -1363,11 +1843,171 @@ async function mountArtPlayer(
       },
     },
   })
-
   art.on("destroy", () => {
     destroyActiveEmbeddedHandles()
     art.hls = null
+    art._xtVirtualTimelineInstalled = false
   })
+  try {
+    ;(window as any).__xtLastArt = art
+  } catch {}
+
+  function virtualVodDuration(): number {
+    return Number.isFinite(art._xtExpectedDurationSeconds) &&
+      Number(art._xtExpectedDurationSeconds) > 0
+      ? Number(art._xtExpectedDurationSeconds)
+      : 0
+  }
+
+  function virtualVodCurrentTime(): number {
+    const offset =
+      Number.isFinite(art._xtPlaybackOffsetSeconds)
+        ? Math.max(0, Number(art._xtPlaybackOffsetSeconds))
+        : 0
+    const local =
+      art.video && Number.isFinite(art.video.currentTime)
+        ? Math.max(0, Number(art.video.currentTime))
+        : 0
+    const duration = virtualVodDuration()
+    return duration > 0 ? Math.min(duration, offset + local) : offset + local
+  }
+
+  function isVirtualVodTimelineActive(): boolean {
+    if (!art._xtVirtualTimelineInstalled) return false
+    if (virtualVodDuration() <= 0) return false
+    const url =
+      (art.video as HTMLVideoElement | undefined)?.currentSrc ||
+      (art.video as HTMLVideoElement | undefined)?.src ||
+      (typeof art.url === "string" ? art.url : "")
+    return /\/__transcode(?:\?|$)/i.test(url)
+  }
+
+  async function restartVirtualVodAt(seconds: number): Promise<void> {
+    const source =
+      (typeof art._xtTranscodeSrcUrl === "string" && art._xtTranscodeSrcUrl) ||
+      (typeof art._xtContainerSourceUrl === "string" && art._xtContainerSourceUrl) ||
+      (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
+      ""
+    const duration = virtualVodDuration()
+    if (!source || duration <= 0) return
+    const target = Math.min(Math.max(0, seconds), Math.max(0, duration - 1))
+    const audioIndex =
+      Number.isFinite(art._xtContainerAudioIndex)
+        ? Math.max(0, Math.floor(Number(art._xtContainerAudioIndex)))
+        : 0
+    const referer = (() => {
+      try {
+        return `${new URL(source).origin}/`
+      } catch {
+        return ""
+      }
+    })()
+    const shouldResume = !art.video || !art.video.paused
+    log.info("[xt:player] virtual VOD seek", {
+      target,
+      audioIndex,
+      source: redactUrl(source).slice(0, 120),
+    })
+    setArtplayerLoading(art, true)
+    destroyActiveEmbeddedHandles()
+    const transcodeUrl = await resolveTranscodeProxyUrl(source, referer, audioIndex, target)
+    if (!transcodeUrl) {
+      setArtplayerLoading(art, false)
+      return
+    }
+    pendingSrc = transcodeUrl
+    art._xtTranscodeSrcUrl = source
+    art._xtContainerSourceUrl = source
+    art._xtPlaybackOffsetSeconds = target
+    art._xtVirtualTimelineInstalled = true
+    art.type = "ts"
+    art.url = transcodeUrl
+    if (shouldResume) {
+      const resume = () => {
+        try {
+          const p = art.play?.()
+          if (p && typeof p.catch === "function") p.catch(() => {})
+        } catch {}
+      }
+      art.once?.("video:canplay", resume)
+      art.once?.("video:loadeddata", resume)
+    }
+    updateVirtualVodUi()
+  }
+
+  art._xtRestartTranscodeAt = restartVirtualVodAt
+
+  function updateVirtualVodUi(): void {
+    if (!isVirtualVodTimelineActive()) return
+    const duration = virtualVodDuration()
+    const current = virtualVodCurrentTime()
+    const pct = duration > 0 ? Math.min(1, Math.max(0, current / duration)) : 0
+    const $progress = art.template?.$progress as HTMLElement | undefined
+    const $played = $progress?.querySelector(".art-progress-played") as HTMLElement | null
+    const $loaded = $progress?.querySelector(".art-progress-loaded") as HTMLElement | null
+    const $indicator = $progress?.querySelector(".art-progress-indicator") as HTMLElement | null
+    if ($played) $played.style.width = `${pct * 100}%`
+    if ($loaded) $loaded.style.width = "100%"
+    if ($indicator) $indicator.style.left = `${pct * 100}%`
+    const label = `${formatPlaybackClock(current)} / ${formatPlaybackClock(duration)}`
+    const left = art.template?.$controlsLeft as HTMLElement | undefined
+    const controls = left ? Array.from(left.querySelectorAll<HTMLElement>(".art-control")) : []
+    const timeControl = controls.find((el) => /\d{1,2}:\d{2}\s*\/\s*\d{1,2}:\d{2}/.test(el.textContent || ""))
+    if (timeControl && timeControl.textContent !== label) {
+      timeControl.textContent = label
+    }
+  }
+
+  function seekVirtualVodFromEvent(event: MouseEvent | TouchEvent): void {
+    if (!isVirtualVodTimelineActive()) return
+    const $progress = art.template?.$progress as HTMLElement | undefined
+    const duration = virtualVodDuration()
+    if (!$progress || duration <= 0) return
+    const rect = $progress.getBoundingClientRect()
+    const clientX =
+      "touches" in event && event.touches.length > 0
+        ? event.touches[0]!.clientX
+        : "changedTouches" in event && event.changedTouches.length > 0
+          ? event.changedTouches[0]!.clientX
+          : (event as MouseEvent).clientX
+    const pct = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)))
+    void restartVirtualVodAt(pct * duration)
+  }
+
+  const $progress = art.template?.$progress as HTMLElement | undefined
+  if ($progress) {
+    const interceptSeek = (event: Event) => {
+      if (!isVirtualVodTimelineActive()) return
+      event.preventDefault()
+      event.stopPropagation()
+      seekVirtualVodFromEvent(event as MouseEvent | TouchEvent)
+    }
+    const blockNativeSeek = (event: Event) => {
+      if (!isVirtualVodTimelineActive()) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    const updateHover = (event: Event) => {
+      if (!isVirtualVodTimelineActive()) return
+      const duration = virtualVodDuration()
+      const rect = $progress.getBoundingClientRect()
+      const clientX =
+        "touches" in event && (event as TouchEvent).touches.length > 0
+          ? (event as TouchEvent).touches[0]!.clientX
+          : (event as MouseEvent).clientX
+      const pct = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)))
+      const tip = $progress.querySelector(".art-progress-tip") as HTMLElement | null
+      if (tip) tip.textContent = formatPlaybackClock(pct * duration)
+    }
+    $progress.addEventListener("click", interceptSeek, true)
+    $progress.addEventListener("mousedown", blockNativeSeek, true)
+    $progress.addEventListener("touchstart", interceptSeek, true)
+    $progress.addEventListener("mousemove", updateHover, true)
+  }
+  art.on("raf", updateVirtualVodUi)
+  art.on("video:timeupdate", updateVirtualVodUi)
+  art.on("video:loadedmetadata", updateVirtualVodUi)
+  art.on("video:progress", updateVirtualVodUi)
 
   const { wireNativeTracksForArtplayer } = await import(
     "@/scripts/lib/embedded-native-tracks.js"
@@ -1375,7 +2015,7 @@ async function mountArtPlayer(
   wireNativeTracksForArtplayer(art)
 
   function markContainerTracksPending(playUrl: string): void {
-    if (isLive || !useDevStreamProxy()) return
+    if (isLive || (!useDevStreamProxy() && !useNativeStreamProxy())) return
     const probeUrl =
       (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
       playUrl
@@ -1443,25 +2083,67 @@ async function mountArtPlayer(
     emitSourcePrepared(originalSrc, playUrl, resolvedUrl)
 
     if (kind === "hls") {
+      art._xtVirtualTimelineInstalled = false
       art.type = "m3u8"
       art.url = resolvedUrl
+      if (!isLive) {
+        const probeUrl =
+          (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
+          originalSrc
+        if (isContainerUrl(probeUrl)) {
+          markContainerTracksPending(probeUrl)
+          attachContainerTracksLater(probeUrl)
+        }
+      }
       resumePlayAfterSourceChange()
       return
     }
     if (kind === "ts") {
+      art._xtVirtualTimelineInstalled = resolvedUrl.includes("/__transcode")
       art.type = "ts"
+      emitPlayerDebug("assign ts playback", { resolvedUrl, originalSrc, playUrl })
       art.url = resolvedUrl
+      const probeUrl =
+        (typeof art._xtTranscodeSrcUrl === "string" && art._xtTranscodeSrcUrl) ||
+        ""
+      if (probeUrl) {
+        markContainerTracksPending(probeUrl)
+        attachContainerTracksLater(probeUrl)
+      }
       resumePlayAfterSourceChange()
       return
     }
     if (kind === "dash") {
+      art._xtVirtualTimelineInstalled = false
       art.type = "mpd"
       art.url = resolvedUrl
       resumePlayAfterSourceChange()
       return
     }
     art.type = artplayerTypeForUrl(playUrl, kind === "unknown" ? "native" : kind)
+    art._xtVirtualTimelineInstalled = false
     const isNativeContainer = kind === "native" || art.type === "xt-native"
+    if (isNativeContainer && !isLive) {
+      const { canPlayVodNativeOnTauri } = await import(
+        "@/scripts/lib/embedded-vod-playback.js"
+      )
+      const upstream = unwrapStreamProxyUrl(playUrl)
+      if (!(await canPlayVodNativeOnTauri(upstream))) {
+        log.warn("[xt:player] ArtPlayer VOD native blocked", {
+          src: redactUrl(upstream).slice(0, 120),
+        })
+        art.url = ""
+        setArtplayerLoading(art, false)
+        if (await retryEmbeddedVodWithMkv(upstream, art, (url) => { pendingSrc = url })) return
+        if (!(await tryExternalVodPlaceholderFallback(upstream))) {
+          toastError(
+            "This title cannot play in the embedded player. Install ffmpeg (brew install ffmpeg) or use MPV/VLC in Settings → Playback.",
+            { duration: 11000 },
+          )
+        }
+        return
+      }
+    }
     if (isNativeContainer) {
       const { vodStreamPathsEquivalent } = await import(
         "@/scripts/lib/stream-proxy.js"
@@ -1510,8 +2192,8 @@ async function mountArtPlayer(
     if (generation !== loadGeneration || pendingSrc !== originalSrc) return
     if (hlsUrl === containerUrl || hlsUrl === originalSrc) return
     if (streamKindHint(hlsUrl, undefined) !== "hls") return
-    const resolvedHls = resolveEmbeddedStreamUrl(hlsUrl)
-    pendingVodFallbackUrl = resolveEmbeddedStreamUrl(
+    const resolvedHls = await resolveHlsPlaybackUrl(hlsUrl)
+    pendingVodFallbackUrl = await resolveArtNativePlayUrl(
       preferPlainHttpForXtreamMedia(originalSrc),
     )
     log.debug("[xt:player] VOD upgrading to HLS after quick container start", {
@@ -1545,6 +2227,8 @@ async function mountArtPlayer(
     type?: string,
     containerExtension?: string,
     remoteSourceUrl?: string,
+    startSeconds = 0,
+    expectedDurationSeconds = 0,
   ): Promise<void> {
     const generation = ++loadGeneration
     pendingSrc = src
@@ -1552,6 +2236,11 @@ async function mountArtPlayer(
     art.hls = null
     art._xtVodSourceUrl = src
     art._xtContainerProbeUrl = remoteSourceUrl || ""
+    art._xtPlaybackOffsetSeconds = 0
+    art._xtExpectedDurationSeconds =
+      Number.isFinite(expectedDurationSeconds) && expectedDurationSeconds > 0
+        ? expectedDurationSeconds
+        : 0
     const { vodAssetPathKey } = await import("@/scripts/lib/stream-proxy.js")
     const incomingVodKey = vodAssetPathKey(remoteSourceUrl || src)
     const keepingSameVodAsset =
@@ -1573,16 +2262,107 @@ async function mountArtPlayer(
 
     const ext = containerExtension || containerExtensionFromUrl(src)
     const normalized = preferPlainHttpForXtreamMedia(src)
+    emitPlayerDebug("loadArtSrc", {
+      src,
+      type,
+      ext,
+      normalized,
+      isLive,
+      isTauri: isTauriEmbedded(),
+      isXtreamVod: isXtreamVodContainerUrl(normalized),
+      expectedDurationSeconds,
+      startSeconds,
+    })
 
     if (!isLive && isXtreamVodContainerUrl(normalized)) {
-      markContainerTracksPending(normalized)
-      const quickUrl = await resolveArtNativePlayUrl(normalized)
-      if (generation !== loadGeneration || pendingSrc !== src) return
-      pendingVodFallbackUrl = quickUrl
-      await assignArtPlayback(src, normalized, type, "native", quickUrl, generation)
-      if (!shouldSkipVodHlsProbe(normalized, ext)) {
-        void probeHlsUpgradeInBackground(src, normalized, ext, generation)
+      if (!isTauriEmbedded()) {
+        emitPlayerDebug("loadArtSrc web/native branch", { normalized })
+        markContainerTracksPending(normalized)
+        const quickUrl = await resolveArtNativePlayUrl(normalized)
+        if (generation !== loadGeneration || pendingSrc !== src) return
+        pendingVodFallbackUrl = quickUrl
+        await assignArtPlayback(src, normalized, type, "native", quickUrl, generation)
+        if (!shouldSkipVodHlsProbe(normalized, ext)) {
+          void probeHlsUpgradeInBackground(src, normalized, ext, generation)
+        }
+        return
       }
+      const hlsPlayUrl = await preferVodHlsUrl(normalized, { containerExtension: ext })
+      if (generation !== loadGeneration || pendingSrc !== src) return
+      if (/\/__vod_hls(?:\/|[?#]|$)/i.test(hlsPlayUrl) || /\.m3u8(?:[?#]|$)/i.test(hlsPlayUrl)) {
+        emitPlayerDebug("loadArtSrc tauri hls branch", { hlsPlayUrl })
+        art._xtTranscodeSrcUrl = ""
+        art._xtPlaybackOffsetSeconds = 0
+        const probeUrl =
+          (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
+          normalized
+        markContainerTracksPending(probeUrl)
+        attachContainerTracksLater(probeUrl)
+        pendingVodFallbackUrl = await resolveArtNativePlayUrl(normalized)
+        await assignArtPlayback(
+          src,
+          hlsPlayUrl,
+          type,
+          "hls",
+          await resolveHlsPlaybackUrl(hlsPlayUrl),
+          generation,
+        )
+        return
+      }
+      const referer = (() => {
+        try {
+          return `${new URL(normalized).origin}/`
+        } catch {
+          return ""
+        }
+      })()
+      const transcodeUrl = await resolveTranscodeProxyUrl(
+        normalized,
+        referer,
+        0,
+        startSeconds,
+      )
+      emitPlayerDebug("transcode resolved", {
+        ok: Boolean(transcodeUrl),
+        transcodeUrl,
+        referer,
+        startSeconds,
+      })
+      if (transcodeUrl) {
+        art._xtTranscodeSrcUrl = normalized
+        const probeUrl =
+          (typeof art._xtContainerProbeUrl === "string" && art._xtContainerProbeUrl) ||
+          normalized
+        markContainerTracksPending(probeUrl)
+        attachContainerTracksLater(probeUrl)
+        await assignArtPlayback(
+          src,
+          transcodeUrl,
+          type,
+          "ts",
+          transcodeUrl,
+          generation,
+        )
+        return
+      }
+      const playUrl = await preferVodHlsUrl(src, { containerExtension: ext })
+      if (generation !== loadGeneration || pendingSrc !== src) return
+      const hint = streamKindHint(playUrl, type)
+      pendingVodFallbackUrl =
+        hint === "hls"
+          ? await resolveArtNativePlayUrl(
+              /\.mp4(?:[?#]|$)/i.test(playUrl)
+                ? playUrl
+                : preferPlainHttpForXtreamMedia(normalized),
+            )
+          : null
+      const resolvedUrl =
+        hint === "native"
+          ? await resolveArtNativePlayUrl(playUrl)
+          : hint === "hls"
+            ? await resolveHlsPlaybackUrl(playUrl)
+            : resolveEmbeddedStreamUrl(playUrl)
+      await assignArtPlayback(src, playUrl, type, hint, resolvedUrl, generation)
       return
     }
 
@@ -1592,12 +2372,16 @@ async function mountArtPlayer(
     }
     if (generation !== loadGeneration || pendingSrc !== src) return
 
+    const hint = streamKindHint(playUrl, type)
     pendingVodFallbackUrl =
-      !isLive && playUrl !== src
-        ? resolveEmbeddedStreamUrl(preferPlainHttpForXtreamMedia(src))
+      !isLive && hint === "hls"
+        ? await resolveArtNativePlayUrl(
+            /\.mp4(?:[?#]|$)/i.test(playUrl)
+              ? playUrl
+              : preferPlainHttpForXtreamMedia(src),
+          )
         : null
 
-    const hint = streamKindHint(playUrl, type)
     const resolvedUrl =
       hint === "native"
         ? await resolveArtNativePlayUrl(playUrl)
@@ -1623,8 +2407,15 @@ async function mountArtPlayer(
   }
 
   const handle: VjsLikeHandle = {
-    src({ src, type, containerExtension, remoteSourceUrl }) {
-      pendingLoad = loadArtSrc(src, type, containerExtension, remoteSourceUrl)
+    src({ src, type, containerExtension, remoteSourceUrl, startSeconds, expectedDurationSeconds }) {
+      pendingLoad = loadArtSrc(
+        src,
+        type,
+        containerExtension,
+        remoteSourceUrl,
+        startSeconds,
+        expectedDurationSeconds,
+      )
         .catch((error) => {
           log.warn("[xt:player] ArtPlayer source preparation failed", error)
           setArtplayerLoading(art, false)
@@ -1663,8 +2454,11 @@ async function mountArtPlayer(
       return undefined
     },
     reset() {
+      loadGeneration += 1
       pendingSrc = null
+      pendingLoad = null
       destroyActiveEmbeddedHandles()
+      art.hls = null
       art.url = ""
     },
     dispose() {
@@ -1673,12 +2467,31 @@ async function mountArtPlayer(
       try { art.destroy(false) } catch {}
     },
     duration() {
+      if (
+        Number.isFinite(art._xtExpectedDurationSeconds) &&
+        Number(art._xtExpectedDurationSeconds) > 0
+      ) {
+        return Number(art._xtExpectedDurationSeconds)
+      }
       const dur = art.duration
       return Number.isFinite(dur) ? dur : 0
     },
     currentTime(value) {
-      if (value === undefined) return art.currentTime || 0
-      art.currentTime = value
+      const offset =
+        Number.isFinite(art._xtPlaybackOffsetSeconds)
+          ? Number(art._xtPlaybackOffsetSeconds)
+          : 0
+      if (value === undefined) return offset + (art.currentTime || 0)
+      if (
+        art._xtVirtualTimelineInstalled &&
+        Number.isFinite(art._xtExpectedDurationSeconds) &&
+        Number(art._xtExpectedDurationSeconds) > 0 &&
+        typeof art._xtRestartTranscodeAt === "function"
+      ) {
+        void art._xtRestartTranscodeAt(value)
+        return value
+      }
+      art.currentTime = Math.max(0, value - offset)
       return value
     },
     on(event, fn) {

@@ -1,0 +1,26 @@
+version: "3"
+services:
+  stream-proxy:
+    image: node:22-alpine
+    container_name: lelegiptv-stream-proxy
+    working_dir: /app
+    volumes:
+      - ./scripts/stream-proxy.mjs:/app/stream-proxy.mjs:ro
+    command: node stream-proxy.mjs
+    restart: unless-stopped
+    environment:
+      PROXY_PORT: 3001
+    expose:
+      - "3001"
+
+  web:
+    image: nginx:alpine
+    container_name: lelegiptv-web
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - stream-proxy
+    restart: unless-stopped

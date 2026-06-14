@@ -1,5 +1,65 @@
 export const STREAM_PROXY_PATH = "/__stream"
 
+function bakedStreamProxyOrigin(): string {
+  try {
+    return typeof __XT_STREAM_PROXY_ORIGIN__ === "string"
+      ? __XT_STREAM_PROXY_ORIGIN__
+      : ""
+  } catch {
+    return ""
+  }
+}
+
+function bakedWebStreamProxyEnabled(): boolean {
+  try {
+    return __XT_WEB_STREAM_PROXY__ === "true"
+  } catch {
+    return false
+  }
+}
+
+/** Absolute origin for `/__stream` when the Tauri app cannot host the proxy locally (e.g. Pages deploy). */
+export function streamProxyOrigin(): string {
+  const fromEnv = String(
+    import.meta.env.PUBLIC_STREAM_PROXY_ORIGIN || bakedStreamProxyOrigin() || "",
+  ).trim()
+  if (fromEnv) return fromEnv.replace(/\/+$/, "")
+  if (typeof window !== "undefined") {
+    try {
+      return window.location.origin
+    } catch {}
+  }
+  return ""
+}
+
+export function isStreamProxyFetchUrl(url: string): boolean {
+  try {
+    const parsed = new URL(String(url), streamProxyOrigin() || "http://127.0.0.1/")
+    return (
+      parsed.pathname === STREAM_PROXY_PATH ||
+      parsed.pathname.endsWith(STREAM_PROXY_PATH)
+    )
+  } catch {
+    return (
+      url.includes(`${STREAM_PROXY_PATH}?`) ||
+      url.includes(encodeURIComponent(STREAM_PROXY_PATH))
+    )
+  }
+}
+
+/** When true, `providerFetch` must use Tauri plugin-http (not WKWebView fetch). */
+export function shouldForceTauriFetch(url: string): boolean {
+  if (!isTauriEmbedded()) return false
+  // xtproxy:// is a registered WKWebView custom scheme — the native webview
+  // handles it directly via the Rust UriSchemeHandler.  Do NOT route through
+  // Tauri's http plugin (which speaks plain http/https only).
+  if (url.startsWith("xtproxy://")) return false
+  // WKWebView fetch to the Rust loopback proxy always fails with "Load failed".
+  if (isNativeMediaProxyUrl(url)) return true
+  if (!useDevStreamProxy()) return true
+  return false
+}
+
 /** VOD file playback (mkv/mp4): VLC enables Range/206 on many Xtream panels. */
 export const IPTV_UA_VOD = "VLC/3.0.20 LibVLC/3.0.20"
 
@@ -17,25 +77,26 @@ export const IPTV_UA_HLS =
  */
 export function resolveUpstreamUserAgent(url: string): string {
   if (!url) return IPTV_UA_VOD
+  const target = unwrapStreamProxyUrl(url)
   try {
-    if (/\.m3u8(?:[?#]|$)/i.test(url)) return IPTV_UA_HLS
-    const path = new URL(url).pathname
-    if (/\/live\//i.test(path)) return IPTV_UA_HLS
+    const path = new URL(target).pathname
     if (/\/(movie|series)\//i.test(path)) return IPTV_UA_VOD
+    if (/\.m3u8(?:[?#]|$)/i.test(target)) return IPTV_UA_HLS
+    if (/\/live\//i.test(path)) return IPTV_UA_HLS
   } catch {
-    if (/\/live\//i.test(url)) return IPTV_UA_HLS
-    if (/\/(movie|series)\//i.test(url)) return IPTV_UA_VOD
+    if (/\/(movie|series)\//i.test(target)) return IPTV_UA_VOD
+    if (/\/live\//i.test(target)) return IPTV_UA_HLS
+    if (/\.m3u8(?:[?#]|$)/i.test(target)) return IPTV_UA_HLS
   }
   return IPTV_UA_VOD
 }
 
-const isTauri =
-  typeof window !== "undefined" &&
-  (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
-
 /** Tauri shell (desktop / Android / iOS) — not the static web build. */
 export function isTauriEmbedded(): boolean {
-  return isTauri
+  return (
+    typeof window !== "undefined" &&
+    (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
+  )
 }
 
 export function isIosEmbedded(): boolean {
@@ -70,17 +131,41 @@ export function isAppleEmbedded(): boolean {
   )
 }
 
+/** One-line diagnostic for macOS logs (Settings → or LelegIPTV.log). */
+export function logStreamRouting(): void {
+  if (!isTauriEmbedded() || typeof window === "undefined") return
+  void import("@/scripts/lib/log.js").then(({ log }) => {
+    log.info("[xt:stream] routing", {
+      viteProxy: useDevStreamProxy(),
+      localRustProxy: useNativeStreamProxy(),
+      proxyTransport: useNativeStreamProxy() ? "rust-invoke" : "http",
+      origin: import.meta.env.DEV
+        ? streamProxyOrigin()
+        : useNativeStreamProxy()
+          ? "127.0.0.1 (/__stream)"
+          : "direct",
+    })
+  })
+}
+
 /** True when the browser should fetch IPTV media via same-origin `/__stream`. */
 export function useDevStreamProxy(): boolean {
   if (typeof window === "undefined") return false
-  // Vite dev server and `astro preview` on localhost.
+  // Vite dev / preview on localhost (same as `pnpm dev` in the browser).
   if (import.meta.env.DEV) return true
-  if (isTauri) return false
-  // Production web deploy (Cloudflare Pages Function at /__stream).
-  if (import.meta.env.PUBLIC_WEB_STREAM_PROXY === "true") return true
+  if (isTauriEmbedded()) return false
+  // Production web deploy (Cloudflare Pages / Oracle with /__stream).
+  if (
+    import.meta.env.PUBLIC_WEB_STREAM_PROXY === "true" ||
+    bakedWebStreamProxyEnabled()
+  ) {
+    return true
+  }
   try {
     const host = window.location?.hostname || ""
     if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") return true
+    // Oracle / bare-IP web deploy (no Cloudflare Pages hostname).
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true
     if (/\.pages\.dev$/i.test(host)) return true
   } catch {
     return false
@@ -244,58 +329,134 @@ export function wrapStreamUrlForDev(url: string): string {
   }
 }
 
-/** True when streams should go through the Tauri Rust media proxy (127.0.0.1/stream). */
-export function useNativeStreamProxy(): boolean {
-  if (isIosEmbedded()) {
-    // iOS: ALWAYS use the on-device Rust proxy, even in dev mode.
-    //
-    // Previous logic returned false in dev mode citing "loopback not reachable from
-    // remote-origin WKWebView". That restriction applies only to WKWebView fetch/XHR.
-    // AVFoundation (native <video src>) CAN reach 127.0.0.1 on the same device.
-    //
-    // Critical reason: CDN providers (e.g. spid-token CDNs) bind segment tokens to the
-    // session IP. When the Mac's Vite proxy fetches segments, the CDN sees the Mac's IP
-    // (not the iPhone's) and returns 502. The Rust proxy runs ON the device, so CDN
-    // requests originate from the iPhone's IP — matching the authenticated session.
-    return isTauriEmbedded()
+/** Wrap an already-probed media URL without changing http/https. */
+export function wrapExactStreamUrlForDev(url: string): string {
+  if (!useDevStreamProxy()) return url
+  if (url.startsWith(STREAM_PROXY_PATH + "?")) return url
+  try {
+    const parsedIncoming = new URL(url, "http://127.0.0.1/")
+    if (
+      parsedIncoming.pathname === STREAM_PROXY_PATH ||
+      parsedIncoming.pathname.endsWith(STREAM_PROXY_PATH)
+    ) {
+      return url.startsWith(STREAM_PROXY_PATH)
+        ? url
+        : `${STREAM_PROXY_PATH}${parsedIncoming.search}`
+    }
+  } catch {}
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return url
+    const host = parsed.hostname
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "[::1]"
+    ) {
+      return url
+    }
+    return `${STREAM_PROXY_PATH}?url=${encodeURIComponent(url)}`
+  } catch {
+    return url
   }
-  return isTauriEmbedded() && !useDevStreamProxy()
+}
+
+/** True when streams use the on-device Rust proxy (127.0.0.1/__stream), like Vite dev. */
+export function useNativeStreamProxy(): boolean {
+  if (!isTauriEmbedded()) return false
+  // `pnpm tauri dev` loads the UI from localhost:4321 — Vite already serves /__stream.
+  if (import.meta.env.DEV) return false
+  return true
 }
 
 export function isNativeMediaProxyUrl(url: string): boolean {
+  // xtproxy:// is the macOS custom scheme that bypasses WebKit mixed-content
+  // blocking.  Every xtproxy:// URL routes through the Rust UriSchemeHandler
+  // and is therefore a local proxy URL.
+  if (url.startsWith("xtproxy://")) return true
   try {
-    const parsed = new URL(url)
+    const parsed = new URL(url, "http://127.0.0.1")
     const host = parsed.hostname
+    const path = parsed.pathname
     return (
       (host === "127.0.0.1" || host === "localhost") &&
-      parsed.pathname === "/stream"
+      (
+        path === "/stream" ||
+        path === "/__stream" ||
+        path === "/__vod_hls" ||
+        path.startsWith("/__vod_hls/") ||
+        path === "/__vod_remux" ||
+        path === "/__vod_streams" ||
+        path === "/__vod_subtitle" ||
+        path === "/__transcode"
+      )
     )
   } catch {
     return false
   }
 }
 
+/** Dev `/__stream`, packaged Tauri Rust proxy, or passthrough. */
+export async function resolveStreamFetchUrl(url: string): Promise<string> {
+  if (isNativeMediaProxyUrl(url)) return url
+  const normalized = preferPlainHttpForXtreamMedia(
+    preferHttpsStreamUrl(unwrapStreamProxyUrl(url)),
+  )
+  if (useDevStreamProxy()) return wrapStreamUrlForDev(normalized)
+  if (useNativeStreamProxy()) return resolveNativeStreamProxyUrl(normalized)
+  return normalized
+}
+
 export async function resolveNativeStreamProxyUrl(url: string): Promise<string> {
   if (!useNativeStreamProxy()) return url
+  if (isNativeMediaProxyUrl(url)) return url
+  const upstream = unwrapStreamProxyUrl(
+    preferPlainHttpForXtreamMedia(preferHttpsStreamUrl(url)),
+  )
+  if (isNativeMediaProxyUrl(upstream)) return upstream
   try {
     const { invoke } = await import("@tauri-apps/api/core")
     let referer = ""
     try {
-      referer = `${new URL(url).origin}/`
+      referer = `${new URL(upstream).origin}/`
     } catch {}
     const proxied = await invoke<string>("media_proxy_url", {
-      url,
-      userAgent: resolveUpstreamUserAgent(url),
+      url: upstream,
+      userAgent: resolveUpstreamUserAgent(upstream),
       referer: referer || undefined,
     })
-    if (import.meta.env.DEV) {
-      const { log } = await import("@/scripts/lib/log.js")
-      log.log("[xt:stream] native media proxy", proxied.slice(0, 120))
-    }
+    const { log } = await import("@/scripts/lib/log.js")
+    log.log("[xt:stream] local proxy", proxied.slice(0, 120))
     return proxied
   } catch (error) {
     const { log } = await import("@/scripts/lib/log.js")
     log.error("[xt:stream] media_proxy_url failed; using direct URL", error)
+    return url
+  }
+}
+
+export async function resolveNativeStreamProxyUrlExact(url: string): Promise<string> {
+  if (!useNativeStreamProxy()) return url
+  if (isNativeMediaProxyUrl(url)) return url
+  const upstream = unwrapStreamProxyUrl(url)
+  if (isNativeMediaProxyUrl(upstream)) return upstream
+  try {
+    const { invoke } = await import("@tauri-apps/api/core")
+    let referer = ""
+    try {
+      referer = `${new URL(upstream).origin}/`
+    } catch {}
+    const proxied = await invoke<string>("media_proxy_url", {
+      url: upstream,
+      userAgent: resolveUpstreamUserAgent(upstream),
+      referer: referer || undefined,
+    })
+    const { log } = await import("@/scripts/lib/log.js")
+    log.log("[xt:stream] local proxy exact", proxied.slice(0, 120))
+    return proxied
+  } catch (error) {
+    const { log } = await import("@/scripts/lib/log.js")
+    log.error("[xt:stream] media_proxy_url exact failed; using direct URL", error)
     return url
   }
 }
@@ -328,12 +489,21 @@ export function isContainerUrl(url: string): boolean {
 }
 
 const VOD_REMUX_PATH_SEGMENT = "/__vod_remux"
+const VOD_HLS_PATH_SEGMENT = "/__vod_hls"
+const TRANSCODE_PATH_SEGMENT = "/__transcode"
 
-function unwrapVodRemuxTarget(url: string): string {
+function unwrapVodGeneratedTarget(url: string): string {
   try {
     const parsed = new URL(url, "http://127.0.0.1/")
     const path = parsed.pathname
-    if (path === VOD_REMUX_PATH_SEGMENT || path.endsWith(VOD_REMUX_PATH_SEGMENT)) {
+    if (
+      path === VOD_REMUX_PATH_SEGMENT ||
+      path.endsWith(VOD_REMUX_PATH_SEGMENT) ||
+      path === VOD_HLS_PATH_SEGMENT ||
+      path.endsWith(VOD_HLS_PATH_SEGMENT) ||
+      path === TRANSCODE_PATH_SEGMENT ||
+      path.endsWith(TRANSCODE_PATH_SEGMENT)
+    ) {
       const inner = parsed.searchParams.get("url")
       if (inner) return decodeURIComponent(inner)
     }
@@ -345,7 +515,7 @@ function unwrapVodRemuxTarget(url: string): string {
 export function vodAssetPathKey(url: string): string {
   if (!url) return ""
   let target = unwrapStreamProxyUrl(url)
-  target = unwrapVodRemuxTarget(target)
+  target = unwrapVodGeneratedTarget(target)
   try {
     return new URL(target).pathname.toLowerCase()
   } catch {
@@ -389,10 +559,11 @@ export function resolveEmbeddedStreamUrl(url: string): string {
 
 /** HLS playback URL for embedded players (dev proxy, native proxy, or direct). */
 export async function resolveHlsPlaybackUrl(url: string): Promise<string> {
-  const normalized = preferPlainHttpForXtreamMedia(preferHttpsStreamUrl(url))
+  if (isNativeMediaProxyUrl(url)) return url
+  const upstream = unwrapStreamProxyUrl(url)
   const resolved = useNativeStreamProxy()
-    ? await resolveNativeStreamProxyUrl(normalized)
-    : resolveEmbeddedStreamUrl(normalized)
+    ? await resolveNativeStreamProxyUrlExact(upstream)
+    : wrapExactStreamUrlForDev(upstream)
   if (import.meta.env.DEV && isIosEmbedded()) {
     const { log } = await import("@/scripts/lib/log.js")
     log.log("[xt:stream] ios hls playback", {
@@ -413,7 +584,7 @@ export function devProxyFetchHeaders(mediaHeaders: Headers): HeadersInit {
 }
 
 /** When false, ArtPlayer uses native <video src> for .m3u8. */
-export function shouldUseHlsJsForM3u8(): boolean {
+export function shouldUseHlsJsForM3u8(opts?: { live?: boolean }): boolean {
   if (isIosEmbedded()) {
     // WKWebView native HLS plays proxied TS segments; hls.js/MSE is unreliable on iOS.
     return false

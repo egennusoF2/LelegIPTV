@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LelegIPTV — Download e installazione</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:      #070b10;
+      --panel:   #101820;
+      --panel-2: #142231;
+      --line:    #294050;
+      --text:    #eef7fb;
+      --muted:   #a8b7c4;
+      --accent:  #45c7f0;
+      --accent-2:#8ee7ff;
+      --ok:      #49d18d;
+      --warn:    #ffd166;
+      --bad:     #ff6b6b;
+      --code:    #071018;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background:
+        radial-gradient(circle at 15%  0%, rgba(69,199,240,.16), transparent 28rem),
+        radial-gradient(circle at 85%  8%, rgba(73,209,141,.10), transparent 26rem),
+        var(--bg);
+      color: var(--text);
+    }
+
+    a { color: var(--accent-2); }
+
+    header, main, footer {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    header { padding: 42px 0 22px; }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .logo {
+      display: inline-grid;
+      place-items: center;
+      width: 40px; height: 40px;
+      border: 1px solid rgba(69,199,240,.55);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 20px 0 10px;
+      max-width: 880px;
+      font-size: clamp(34px, 5vw, 62px);
+      line-height: 1.02;
+    }
+
+    .lede {
+      max-width: 860px; margin: 0;
+      color: var(--muted); font-size: 18px;
+    }
+
+    nav {
+      margin-top: 24px;
+      display: flex; flex-wrap: wrap; gap: 10px;
+    }
+
+    nav a, .pill {
+      display: inline-flex; align-items: center;
+      min-height: 34px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(16,24,32,.75);
+      color: var(--text);
+      font-size: 13px;
+      text-decoration: none;
+    }
+    nav a:hover { border-color: var(--accent); color: var(--accent-2); }
+
+    section {
+      margin: 28px 0;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(16,24,32,.82);
+      box-shadow: 0 18px 45px rgba(0,0,0,.22);
+    }
+
+    h2 { margin: 0 0 18px; font-size: 24px; }
+    h3 { margin: 22px 0 8px; font-size: 18px; }
+    p  { margin: 8px 0; }
+
+    ul, ol { margin: 10px 0 0; padding-left: 22px; }
+    li { margin: 7px 0; }
+
+    /* ── Download grid ──────────────────────────────────── */
+    .dl-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 6px;
+    }
+
+    .dl-card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(20,34,49,.82);
+      display: flex; flex-direction: column; gap: 10px;
+    }
+
+    .dl-card-head {
+      display: flex; align-items: center; gap: 10px;
+    }
+
+    .dl-icon {
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    .dl-title { font-weight: 700; font-size: 16px; }
+    .dl-sub   { font-size: 13px; color: var(--muted); }
+    .dl-meta  { font-size: 12px; color: var(--muted); }
+
+    .btn-dl {
+      display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #040c14;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background .15s;
+      margin-top: auto;
+    }
+    .btn-dl:hover { background: var(--accent-2); }
+
+    .btn-dl-sec {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent-2);
+    }
+    .btn-dl-sec:hover { background: rgba(69,199,240,.12); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .badge-ok   { background: rgba(73,209,141,.18); color: var(--ok); }
+    .badge-warn { background: rgba(255,209,102,.18); color: var(--warn); }
+    .badge-new  { background: rgba(69,199,240,.18);  color: var(--accent-2); }
+
+    /* ── Instruction steps ──────────────────────────────── */
+    .steps { counter-reset: step; list-style: none; padding: 0; margin: 14px 0 0; }
+    .steps li {
+      position: relative;
+      padding: 12px 14px 12px 46px;
+      margin: 8px 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(20,34,49,.5);
+      counter-increment: step;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 14px; top: 50%; transform: translateY(-50%);
+      width: 22px; height: 22px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      background: rgba(69,199,240,.22);
+      color: var(--accent-2);
+      font-size: 12px; font-weight: 800;
+    }
+
+    /* ── Code blocks ────────────────────────────────────── */
+    code {
+      padding: 2px 5px; border-radius: 5px;
+      background: rgba(7,16,24,.95);
+      color: #d7f4ff;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: .92em;
+    }
+    pre {
+      margin: 12px 0 0; padding: 14px;
+      overflow-x: auto;
+      border: 1px solid rgba(69,199,240,.18);
+      border-radius: 8px;
+      background: var(--code);
+    }
+    pre code { padding: 0; background: transparent; color: #d7f4ff; }
+
+    /* ── Note boxes ─────────────────────────────────────── */
+    .note {
+      padding: 12px 14px;
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
+      background: rgba(69,199,240,.09);
+      color: var(--muted);
+      margin-top: 14px;
+    }
+    .note.warn {
+      border-left-color: var(--warn);
+      background: rgba(255,209,102,.10);
+    }
+
+    /* ── Status dots ────────────────────────────────────── */
+    .status { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 999px; background: var(--muted); }
+    .ok   .dot { background: var(--ok);   }
+    .warn .dot { background: var(--warn); }
+
+    /* ── Table ──────────────────────────────────────────── */
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    th, td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { color: var(--accent-2); background: rgba(69,199,240,.08); font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+    tr:last-child td { border-bottom: 0; }
+
+    footer { padding: 18px 0 42px; color: var(--muted); font-size: 13px; }
+
+    /* ── Responsive ─────────────────────────────────────── */
+    @media (max-width: 720px) {
+      section { padding: 18px; }
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { display: none; }
+      tr { border-bottom: 1px solid var(--line); }
+      tr:last-child { border-bottom: 0; }
+      td { border-bottom: 0; }
+      td::before { content: attr(data-label); display: block; margin-bottom: 4px; color: var(--accent-2); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="logo">∞</span>
+    <span>LelegIPTV &mdash; v1.6.0</span>
+  </div>
+  <h1>Download e installazione</h1>
+  <p class="lede">
+    Scarica l'app per il tuo dispositivo e segui le istruzioni di installazione qui sotto.
+    Tutti i link puntano a percorsi relativi: puoi pubblicare questa cartella su qualsiasi host o sottocartella.
+  </p>
+  <nav aria-label="Sezioni">
+    <a href="#download">Download</a>
+    <a href="#macos">macOS</a>
+    <a href="#android">Android / TV</a>
+    <a href="#ios">iOS / iPadOS</a>
+    <a href="#tizen">Samsung TV</a>
+    <a href="#web">Web / PWA</a>
+    <a href="#note">Note tecniche</a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ════════════════════════════════════════════════════════
+       DOWNLOAD RAPIDO
+  ════════════════════════════════════════════════════════════ -->
+  <section id="download">
+    <h2>📦 Download rapido</h2>
+    <p style="color:var(--muted);margin-bottom:18px">
+      Seleziona la versione per il tuo dispositivo. Tutti i file sono artefatti di build 1.6.0.
+    </p>
+
+    <div class="dl-grid">
+
+      <!-- macOS -->
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span class="dl-icon">🍎</span>
+          <div>
+            <div class="dl-title">macOS</div>
+            <div class="dl-sub">Apple Silicon (M1 / M2 / M3 / M4)</div>
+          </div>
+        </div>
+        <div>
+          <span class="badge badge-new">DMG &middot; 9.5 MB</span>
+        </div>
+        <a class="btn-dl" href="downloads/LelegIPTV_1.6.0_aarch64.dmg" download>
+          ⬇ Scarica .dmg
+        </a>
+      </div>
+
+      <!-- Android / Android TV -->
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span class="dl-icon">🤖</span>
+          <div>
+            <div class="dl-title">Android &amp; Android TV</div>
+            <div class="dl-sub">Telefono, tablet, Google TV, Fire TV</div>
+          </div>
+        </div>
+        <div>
+          <span class="badge badge-warn">APK &middot; 88 MB &middot; unsigned</span>
+        </div>
+        <a class="btn-dl" href="downloads/LelegIPTV_1.6.0.apk" download>
+          ⬇ Scarica .apk
+        </a>
+      </div>
+
+      <!-- iOS / iPadOS -->
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span class="dl-icon">📱</span>
+          <div>
+            <div class="dl-title">iOS &amp; iPadOS</div>
+            <div class="dl-sub">iPhone, iPad — richiede sideload o TestFlight</div>
+          </div>
+        </div>
+        <div>
+          <span class="badge badge-ok">IPA &middot; 26 MB</span>
+        </div>
+        <a class="btn-dl" href="downloads/LelegIPTV_1.6.0.ipa" download>
+          ⬇ Scarica .ipa
+        </a>
+      </div>
+
+      <!-- Samsung Tizen TV -->
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span class="dl-icon">📺</span>
+          <div>
+            <div class="dl-title">Samsung Smart TV</div>
+            <div class="dl-sub">Tizen 6.0+ — installazione via Tizen Studio o CLI</div>
+          </div>
+        </div>
+        <div>
+          <span class="badge badge-ok">WGT &middot; 1.7 MB</span>
+        </div>
+        <a class="btn-dl" href="downloads/LelegIPTV_1.6.0.wgt" download>
+          ⬇ Scarica .wgt
+        </a>
+      </div>
+
+    </div>
+
+    <p class="note" style="margin-top:20px">
+      <strong>Windows / Linux:</strong> gli installer per PC sono host-specific e devono essere compilati su Windows o Linux.
+      Contatta chi gestisce il progetto oppure compila da sorgente con <code>pnpm build:desktop</code>.
+    </p>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════
+       macOS
+  ════════════════════════════════════════════════════════════ -->
+  <section id="macos">
+    <h2>🍎 macOS (Apple Silicon)</h2>
+    <p>L'artefatto è un <code>.dmg</code> universale per chip Apple M1–M4. Non è notarizzato: segui le istruzioni qui sotto.</p>
+
+    <h3>Installazione</h3>
+    <ol class="steps">
+      <li>
+        <a href="downloads/LelegIPTV_1.6.0_aarch64.dmg" download class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV_1.6.0_aarch64.dmg</a>
+      </li>
+      <li>Apri il file <code>.dmg</code> e trascina <strong>LelegIPTV.app</strong> nella cartella <strong>/Applications</strong>.</li>
+      <li>
+        Al primo avvio macOS potrebbe bloccare l'app non notarizzata.<br>
+        Vai in <strong>Impostazioni di Sistema → Privacy e Sicurezza</strong> e clicca <strong>Apri comunque</strong>.
+      </li>
+      <li>
+        In alternativa, da Terminale:
+        <pre><code>xattr -dr com.apple.quarantine "/Applications/LelegIPTV.app"</code></pre>
+      </li>
+      <li>Avvia <strong>LelegIPTV</strong> da Launchpad o da <code>/Applications</code>.</li>
+    </ol>
+
+    <div class="note warn">
+      Questo artefatto è compilato solo per Apple Silicon (aarch64). Se usi un Mac Intel, ricompila il progetto con <code>pnpm build:mac</code> sulla macchina Intel o su CI.
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════
+       Android / Android TV
+  ════════════════════════════════════════════════════════════ -->
+  <section id="android">
+    <h2>🤖 Android, Android TV, Google TV</h2>
+    <p>
+      L'APK è universale (arm64 + x86) e contiene il launcher Leanback per TV.
+      È <strong>unsigned</strong>: per uso continuativo su più dispositivi, firmalo con un keystore stabile.
+    </p>
+
+    <h3>Installazione su telefono o tablet</h3>
+    <ol class="steps">
+      <li>
+        <a href="downloads/LelegIPTV_1.6.0.apk" download class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV_1.6.0.apk</a>
+      </li>
+      <li>Copia l'APK sul dispositivo (USB, cloud drive, qualsiasi metodo).</li>
+      <li>In <strong>Impostazioni → Applicazioni → Installa app sconosciute</strong>, abilita l'app con cui apri il file (es. File Manager).</li>
+      <li>Tocca il file APK e completa l'installazione.</li>
+    </ol>
+
+    <h3>Installazione via ADB (telefono, tablet, TV)</h3>
+    <pre><code>adb devices
+adb install -r downloads/LelegIPTV_1.6.0.apk</code></pre>
+
+    <h3>Installazione su Android TV / Google TV via rete</h3>
+    <ol class="steps">
+      <li>Sulla TV: <strong>Impostazioni → Opzioni sviluppatore → Debug USB/ADB di rete</strong> → abilita.</li>
+      <li>
+        Dal computer (stessa rete Wi-Fi):
+        <pre><code>adb connect IP_DELLA_TV:5555
+adb install -r downloads/LelegIPTV_1.6.0.apk</code></pre>
+      </li>
+      <li>L'app apparirà nella sezione <strong>App sideloaded</strong> o nel launcher TV.</li>
+    </ol>
+
+    <div class="note warn">
+      APK non firmato: se reinstalli su un dispositivo che ha già una versione firmata con chiave diversa, Android chiede la disinstallazione preventiva.
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════
+       iOS / iPadOS
+  ════════════════════════════════════════════════════════════ -->
+  <section id="ios">
+    <h2>📱 iOS e iPadOS</h2>
+    <p>
+      Il file <code>.ipa</code> può essere installato solo tramite sideload con strumenti Apple o via TestFlight/Enterprise.
+      Non è distribuibile direttamente dall'App Store senza revisione Apple.
+    </p>
+
+    <h3>Metodi di installazione</h3>
+
+    <div class="dl-grid" style="margin-top:14px">
+      <div class="dl-card">
+        <div class="dl-title">Apple Configurator 2</div>
+        <div class="dl-sub">Collega iPhone/iPad via USB al Mac, apri Apple Configurator e usa <em>Aggiungi → App</em>.</div>
+        <a class="btn-dl" href="downloads/LelegIPTV_1.6.0.ipa" download>⬇ Scarica .ipa</a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-title">Xcode Devices</div>
+        <div class="dl-sub">Xcode → Window → Devices and Simulators → seleziona il device → <em>+</em> sotto Installed Apps.</div>
+        <a class="btn-dl btn-dl-sec" href="downloads/LelegIPTV_1.6.0.ipa" download>⬇ Scarica .ipa</a>
+      </div>
+      <div class="dl-card">
+        <div class="dl-title">AltStore / Sideloadly</div>
+        <div class="dl-sub">Strumenti di terze parti per sideload senza developer account a pagamento.</div>
+        <a class="btn-dl btn-dl-sec" href="downloads/LelegIPTV_1.6.0.ipa" download>⬇ Scarica .ipa</a>
+      </div>
+    </div>
+
+    <div class="note">
+      Il team Apple nel progetto è <code>F925SY4K37</code>. Per build firmate con provisioning ad-hoc o enterprise, usa Xcode Archive con il profilo appropriato.
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════
+       Samsung Tizen TV
+  ════════════════════════════════════════════════════════════ -->
+  <section id="tizen">
+    <h2>📺 Samsung Smart TV (Tizen)</h2>
+    <p>
+      LelegIPTV per Samsung TV è una Web App pacchettizzata in <code>.wgt</code>. Richiede Tizen 6.0 o superiore.
+    </p>
+
+    <h3>Prerequisiti</h3>
+    <ul>
+      <li>Tizen Studio con <strong>TV Extension</strong> installata.</li>
+      <li>Samsung Certificate Profile valido (creato da Tizen Studio Certificate Manager).</li>
+      <li>TV Samsung in <strong>Developer Mode</strong>, sulla stessa rete del computer.</li>
+    </ul>
+
+    <h3>Installazione con CLI Tizen</h3>
+    <ol class="steps">
+      <li>
+        <a href="downloads/LelegIPTV_1.6.0.wgt" download class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV_1.6.0.wgt</a>
+      </li>
+      <li>
+        Collega la TV:
+        <pre><code>sdb connect IP_DELLA_TV
+sdb devices</code></pre>
+      </li>
+      <li>
+        Installa il pacchetto:
+        <pre><code>tizen install -n LelegIPTV_1.6.0.wgt -t NOME_DEVICE</code></pre>
+      </li>
+    </ol>
+
+    <h3>Installazione con Tizen Studio (GUI)</h3>
+    <ol class="steps">
+      <li>Apri <strong>Device Manager</strong> e connetti la TV.</li>
+      <li>Assicurati che il certificate profile sia selezionato.</li>
+      <li>Menu <strong>Tools → Package → Install Package</strong> e seleziona il <code>.wgt</code>.</li>
+    </ol>
+
+    <div class="note warn">
+      Tizen non usa i plugin Tauri nativi. Richieste al provider, storage e playback seguono il percorso web del browser TV incorporato.
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════
+       Web / PWA
+  ════════════════════════════════════════════════════════════ -->
+  <section id="web">
+    <h2>🌐 Web browser e PWA</h2>
+    <p>
+      La versione web funziona su qualsiasi browser moderno. Per la Progressive Web App (PWA) il sito deve essere servito via HTTPS o
+      <code>localhost</code>.
+    </p>
+
+    <h3>Installazione PWA su desktop</h3>
+    <ol class="steps">
+      <li>Apri l'URL del sito in Chrome o Edge.</li>
+      <li>Clicca sull'icona <strong>Installa</strong> nella barra indirizzi (o usa il menu → <em>Installa LelegIPTV</em>).</li>
+      <li>L'app apparirà come applicazione standalone nel sistema operativo.</li>
+    </ol>
+
+    <h3>Installazione PWA su mobile</h3>
+    <ol class="steps">
+      <li>Apri l'URL in Safari (iOS) o Chrome (Android).</li>
+      <li>Safari: tocca <strong>Condividi → Aggiungi a schermata Home</strong>.</li>
+      <li>Chrome: tocca i tre puntini → <strong>Aggiungi a schermata Home</strong>.</li>
+    </ol>
+
+    <div class="note">
+      Per compilare e pubblicare la versione web dal sorgente: <code>pnpm install &amp;&amp; pnpm build</code>.
+      Il contenuto di <code>dist/</code> è la build statica da pubblicare su HTTPS.
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════
+       NOTE TECNICHE
+  ════════════════════════════════════════════════════════════ -->
+  <section id="note">
+    <h2>📋 Note tecniche</h2>
+
+    <h3>Riepilogo artefatti</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Piattaforma</th>
+          <th>File</th>
+          <th>Dimensione</th>
+          <th>Stato</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td data-label="Piattaforma">macOS (Apple Silicon)</td>
+          <td data-label="File"><a href="downloads/LelegIPTV_1.6.0_aarch64.dmg" download>LelegIPTV_1.6.0_aarch64.dmg</a></td>
+          <td data-label="Dimensione">9.5 MB</td>
+          <td data-label="Stato"><span class="badge badge-new">build locale</span></td>
+        </tr>
+        <tr>
+          <td data-label="Piattaforma">Android / Android TV</td>
+          <td data-label="File"><a href="downloads/LelegIPTV_1.6.0.apk" download>LelegIPTV_1.6.0.apk</a></td>
+          <td data-label="Dimensione">88 MB</td>
+          <td data-label="Stato"><span class="badge badge-warn">unsigned</span></td>
+        </tr>
+        <tr>
+          <td data-label="Piattaforma">iOS / iPadOS</td>
+          <td data-label="File"><a href="downloads/LelegIPTV_1.6.0.ipa" download>LelegIPTV_1.6.0.ipa</a></td>
+          <td data-label="Dimensione">26 MB</td>
+          <td data-label="Stato"><span class="badge badge-ok">sideload</span></td>
+        </tr>
+        <tr>
+          <td data-label="Piattaforma">Samsung Tizen TV</td>
+          <td data-label="File"><a href="downloads/LelegIPTV_1.6.0.wgt" download>LelegIPTV_1.6.0.wgt</a></td>
+          <td data-label="Dimensione">1.7 MB</td>
+          <td data-label="Stato"><span class="badge badge-ok">pronto</span></td>
+        </tr>
+        <tr>
+          <td data-label="Piattaforma">Windows / Linux</td>
+          <td data-label="File">—</td>
+          <td data-label="Dimensione">—</td>
+          <td data-label="Stato"><span class="badge badge-warn">compila da sorgente</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>ID applicazione</h3>
+    <p>Bundle ID / Application ID: <code>com.lelegiptv.player</code> &middot; Versione: <code>1.6.0</code></p>
+
+    <h3>Checklist prima di distribuire</h3>
+    <ol>
+      <li>Rigenera sempre gli artefatti dopo modifiche al codice: non riusare pacchetti vecchi.</li>
+      <li>Per Android, firma l'APK/AAB con keystore stabile prima di consegnarlo a utenti finali.</li>
+      <li>Per Samsung, firma il <code>.wgt</code> con Samsung certificate profile e installalo su TV reale.</li>
+      <li>Testa almeno: canale live, VOD, serie, audio, resume e fullscreen per ogni famiglia di dispositivi.</li>
+    </ol>
+
+    <h3>Riferimenti</h3>
+    <ul>
+      <li><a href="https://v2.tauri.app/start/prerequisites/#android" rel="noopener">Tauri Android prerequisites</a></li>
+      <li><a href="https://developer.android.com/tools/adb" rel="noopener">Android Debug Bridge (ADB)</a></li>
+      <li><a href="https://docs.tizen.org/application/tizen-studio/common-tools/command-line-interface/" rel="noopener">Tizen Studio CLI</a></li>
+    </ul>
+  </section>
+
+</main>
+
+<footer>
+  LelegIPTV 1.6.0 &mdash; tutti i link sono relativi alla cartella <code>www/</code>.
+  Aggiorna <code>index.html</code> e sostituisci i file in <code>downloads/</code> ad ogni nuova build.
+</footer>
+
+</body>
+</html>
