@@ -14,18 +14,19 @@ local build outputs from this repository, not to official app-store listings.
 
 | Platform | Build command | Artifact path |
 |---|---|
-| Windows 10 / 11 | `pnpm tauri build` on Windows | `src-tauri/target/release/bundle/nsis/*.exe`, `src-tauri/target/release/bundle/msi/*.msi` |
-| macOS | `pnpm tauri build` on macOS | `src-tauri/target/release/bundle/dmg/*.dmg`, `src-tauri/target/release/bundle/macos/*.app` |
-| Linux | `pnpm tauri build` on Linux | `src-tauri/target/release/bundle/deb/*.deb`, `src-tauri/target/release/bundle/rpm/*.rpm`, `src-tauri/target/release/bundle/appimage/*.AppImage` |
-| Android phone / tablet / TV | `pnpm tauri:android:build` | `src-tauri/gen/android/app/build/outputs/apk/**/*.apk`, `src-tauri/gen/android/app/build/outputs/bundle/**/*.aab` |
-| Chromebook / Android XR | `pnpm tauri:android:build` or `pnpm build` | Android artifacts or `dist/` depending on deployment |
-| iOS / iPadOS | `pnpm tauri:ios:init`, then `pnpm tauri:ios:build` on macOS | `src-tauri/gen/apple/build/**/*.xcarchive`, exported `.ipa`, or the local Xcode Organizer export path |
-| Samsung Tizen TV | `pnpm build && pnpm tizen:prepare`, then Tizen Studio/CLI package | Prepared root: `build/tizen-web/`; signed package: `*.wgt` |
-| Web browser | `pnpm build` | `dist/` |
+| Windows 10 / 11 | GitHub Action `Flutter installable artifacts` on Windows | `LelegIPTV-windows-x64-release.zip` |
+| macOS | `pnpm flutter:macos:build`, then package `.app` | `www/downloads/current/LelegIPTV-macos-arm64-release.dmg` |
+| Linux | GitHub Action `Flutter installable artifacts` on Ubuntu | `LelegIPTV-linux-x64-release.tar.gz` |
+| Android phone / tablet / TV | `pnpm flutter:android:build` | `www/downloads/current/LelegIPTV-android-universal-release.apk` |
+| Chromebook / Android XR | `pnpm flutter:android:build` or `pnpm build:pages` | Android APK or `dist/` depending on deployment |
+| iOS / iPadOS | `pnpm flutter:ios:build`, then `pnpm flutter:ios:package` | `www/downloads/current/LelegIPTV-ios-unsigned.ipa` |
+| Samsung Tizen TV | `pnpm flutter:tizen:build` with Tizen Studio installed | `native/flutter/leleg_iptv/build/tizen/tpk/*.tpk` |
+| Web browser | `pnpm build:pages && pnpm download-center:prepare` | `dist/` |
 
 Desktop artifacts are host-platform specific: build Windows packages on
 Windows, macOS packages on macOS, and Linux packages on Linux unless you
-maintain a dedicated cross-compilation setup.
+maintain a dedicated cross-compilation setup. The public download page is built
+from `www/index.html` plus the files in `www/downloads/current/`.
 
 ### macOS: "LelegIPTV.app" cannot be opened
 
@@ -65,5 +66,4 @@ You only need to sign in once. The app remembers your details for next time.
 ## Next steps
 
 - [Add another playlist](./playlists/) so you can run several providers side by side.
-- [Set up an external player](./external-players/) if you'd rather watch in MPV or VLC.
 - [Learn the shortcuts](./keyboard-and-d-pad/) - <kbd>Ctrl</kbd> <kbd>K</kbd> opens search, <kbd>?</kbd> opens the full list.

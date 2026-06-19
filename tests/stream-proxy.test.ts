@@ -186,9 +186,9 @@ describe("isNativeMediaProxyUrl", () => {
     ).toBe(true)
   })
 
-  it("does not match dev vite proxy URLs", () => {
+  it("matches dev vite proxy URLs because /__stream is the shared stream proxy path", () => {
     expect(isNativeMediaProxyUrl("/__stream?url=http%3A%2F%2Fcdn.example.com")).toBe(
-      false,
+      true,
     )
   })
 })

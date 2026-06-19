@@ -33,6 +33,7 @@ docs/preview.log
 
 buildfiles/
 dump/
+tools/flutter-tizen/
 
 cmds.md
 store-listings.md

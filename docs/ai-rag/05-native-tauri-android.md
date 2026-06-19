@@ -28,10 +28,10 @@ Android-only addition:
 
 iOS/iPadOS target:
 
-- Tauri mobile target initialized with `pnpm tauri:ios:init`.
-- Development run with `pnpm tauri:ios:dev`.
-- Release build with `pnpm tauri:ios:build`.
-- Generated Xcode project is expected under `src-tauri/gen/ios` after init.
+- Legacy Tauri iOS commands are no longer the release path.
+- Current iOS/iPadOS release work uses Flutter:
+  `pnpm flutter:ios:build` followed by `pnpm flutter:ios:package`.
+- Generated Xcode project is expected under `native/flutter/leleg_iptv/ios`.
 - Requires macOS, Xcode, Apple signing, and simulator/device validation.
 
 Setup behavior:
@@ -204,20 +204,18 @@ behavior requires it and verify Tauri Android still builds.
 
 ## iOS generated files
 
-Tauri iOS generated files are not committed until the target is initialized.
-Use:
+The active iOS generated files live under the Flutter project. Use:
 
 ```bash
-pnpm tauri:ios:init
-pnpm tauri:ios:dev
-pnpm tauri:ios:build
+pnpm flutter:ios:build
+pnpm flutter:ios:package
 ```
 
-Expected generated root after init: `src-tauri/gen/ios`.
+Expected generated root: `native/flutter/leleg_iptv/ios`.
 
 Implementation rules:
 
-- Treat `src-tauri/gen/ios` as generated platform scaffolding.
+- Treat Flutter build outputs as generated platform scaffolding.
 - Keep all frontend Tauri API calls guarded for web preview and unsupported
   mobile contexts.
 - Desktop-only Rust commands remain behind cfg gates; iOS cannot launch MPV/VLC
@@ -227,45 +225,42 @@ Implementation rules:
 
 ## Samsung Tizen TV packaging
 
-Tizen TV is not a Tauri target. It is packaged as a Web application built from
-the Astro static output.
+Tizen TV is not a Tauri target. It is packaged from the Flutter native app as a
+Samsung `.tpk`; do not use the old Astro web package as the release path.
 
 Files:
 
-- `packaging/tizen/config.xml`: W3C/Tizen Web App metadata with TV profile,
-  internet privilege, start page, app name, icon, and wildcard provider access.
-- `packaging/tizen/README.md`: packaging flow and runtime notes.
-- `scripts/prepare-tizen.mjs`: copies `dist` into `build/tizen-web`, adds
-  `config.xml`, and copies `icon.png`.
+- `native/flutter/leleg_iptv/tizen/tizen-manifest.xml`: package id,
+  `api-version="6.5"`, TV/runtime metadata and internet/media privileges.
+- `native/flutter/leleg_iptv/lib/main.dart`: runtime branch that skips
+  `media_kit` on Tizen and uses `video_player_avplay`/Samsung AVPlay.
+- `tools/flutter-tizen/`: local official Flutter Tizen toolchain clone; ignored
+  by git and recreated when needed.
 
 Commands:
 
 ```bash
-pnpm build
-pnpm tizen:prepare
+pnpm flutter:tizen:build
 ```
 
-The output root is `build/tizen-web`. Sign and package that folder with Tizen
-Studio or Tizen CLI using the Samsung certificate profile for the target TV.
+The installable artifact is
+`native/flutter/leleg_iptv/build/tizen/tpk/com.lelegiptv.leleg_iptv-1.0.0.tpk`.
+Copy it to `www/downloads/current/LelegIPTV-tizen-tv-release.tpk` and install
+it on a developer-mode TV with `sdb`/Tizen Studio.
 
 Runtime constraints:
 
-- No Tauri plugins, Rust commands, desktop updater, tray, or external process
-  launcher.
-- Provider network calls use the browser fetch path.
-- Playback depends on Samsung TV Web Runtime media support plus embedded JS
-  backends; verify HLS, DASH, and MPEG-TS on real TV firmware.
-- D-pad/spatial navigation, focus rings, overscan, and TV performance mode are
+- No Tauri plugins, Rust commands, desktop updater or tray.
+- Playback must use AVPlay on Tizen. `media_kit` requires `libmpv`, which is
+  unavailable on Samsung TV and previously caused launch crashes.
+- D-pad/remote navigation, focus rings, overscan and TV performance mode are
   mandatory release checks.
 
 Known limitation:
 
-- The current Tizen package is a Web App, not a native media app.
-- Do not assume hls.js/Shaka/browser playback on Samsung firmware behaves like
-  Chrome desktop.
-- The recommended next Tizen implementation is a `webapis.avplay` backend with
-  browser playback as fallback, as described in
-  `08-native-playback-rebuild-strategy.md`.
+- AVPlay HTTP headers are limited by the plugin, so providers that require
+  non-standard headers must be verified on real TV firmware.
+- Keep Tizen playback code isolated from macOS/iOS/Android playback branches.
 
 ## Native change checklist
 
@@ -275,9 +270,9 @@ Known limitation:
 4. Add frontend guards for unavailable native APIs.
 5. Add Rust unit tests for pure/native helper logic where possible.
 6. Run frontend tests for corresponding JS wrappers.
-7. Manually verify `pnpm tauri dev`, `pnpm tauri:android`,
-   `pnpm tauri:ios:dev`, or `pnpm tizen:prepare` when the target environment is
-   available.
+7. Manually verify `pnpm flutter:analyze`, `pnpm flutter:android:build`,
+   `pnpm flutter:ios:build`, or `pnpm flutter:tizen:build` /
+   `flutter-tizen run` when the target environment is available.
 
 ## Release target matrix
 
@@ -300,12 +295,12 @@ The repository can currently target these app/device families:
   by Chromebook screenshot profile.
 - Android XR: Android large-screen target represented by screenshot profile;
   verify input/focus behavior separately before release.
-- iOS/iPhone native app: Tauri iOS command path wired through `tauri:ios:*`;
-  initialize generated Xcode project with `pnpm tauri:ios:init`.
-- iPadOS native app: same Tauri iOS target, with existing iPad screenshot
-  profiles available for responsive validation.
-- Samsung Tizen TV app: Web App package path through
-  `pnpm build && pnpm tizen:prepare`, then Tizen Studio/CLI signing into `.wgt`.
+- iOS/iPhone native app: Flutter command path wired through
+  `flutter:ios:*`; package unsigned IPA with `pnpm flutter:ios:package`.
+- iPadOS native app: same Flutter iOS target, with tablet layout selected at
+  runtime and physical iPad validation before release.
+- Samsung Tizen TV app: Flutter native package path through
+  `pnpm flutter:tizen:build`, then Tizen Studio/CLI installation of `.tpk`.
 - tvOS native app.
 - Roku, Fire TV native outside Android compatibility, Samsung Tizen, LG webOS,
   Apple Vision Pro native, Xbox, PlayStation.

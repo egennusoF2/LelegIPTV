@@ -285,6 +285,34 @@ class XtreamClient {
   }
 
   Future<List<SeriesEpisode>> seriesEpisodes(SeriesShow show) async {
+    final detail = await seriesDetail(show);
+    return detail.episodes;
+  }
+
+  Future<String> vodDescription(VodMovie movie) async {
+    final json = await _getJson(
+      'get_vod_info',
+      apiUri('get_vod_info', {'vod_id': movie.id.toString()}),
+      timeout: const Duration(seconds: 45),
+    );
+    final map = json is Map ? json : const {};
+    final info = map['info'] is Map ? map['info'] as Map : const {};
+    final movieData = map['movie_data'] is Map
+        ? map['movie_data'] as Map
+        : const {};
+    return EpgProgramme._decodeMaybeBase64(
+      (info['plot'] ??
+                  info['description'] ??
+                  info['description_raw'] ??
+                  movieData['plot'] ??
+                  movieData['description'] ??
+                  movieData['description_raw'])
+              ?.toString() ??
+          '',
+    ).trim();
+  }
+
+  Future<SeriesDetailData> seriesDetail(SeriesShow show) async {
     final json = await _getJson(
       'get_series_info',
       apiUri('get_series_info', {'series_id': show.id.toString()}),
@@ -322,7 +350,15 @@ class XtreamClient {
       if (season != 0) return season;
       return a.episode.compareTo(b.episode);
     });
-    return episodes.where((item) => item.id > 0).toList();
+    final info = map['info'] is Map ? map['info'] as Map : const {};
+    return SeriesDetailData(
+      description: EpgProgramme._decodeMaybeBase64(
+        (info['plot'] ?? info['description'] ?? info['description_raw'])
+                ?.toString() ??
+            '',
+      ).trim(),
+      episodes: episodes.where((item) => item.id > 0).toList(),
+    );
   }
 
   String liveUrl(LiveChannel channel) {
@@ -824,4 +860,11 @@ class SeriesEpisode {
           '',
     );
   }
+}
+
+class SeriesDetailData {
+  const SeriesDetailData({required this.description, required this.episodes});
+
+  final String description;
+  final List<SeriesEpisode> episodes;
 }

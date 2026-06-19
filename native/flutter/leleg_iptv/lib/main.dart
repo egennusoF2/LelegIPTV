@@ -1,19 +1,61 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart' as vp;
+import 'package:video_player_avplay/video_player.dart' as avplay;
+import 'package:video_player_avplay/video_player_platform_interface.dart'
+    as avplay_platform;
 import 'package:window_manager/window_manager.dart';
 
 import 'domain/xtream_client.dart';
 
+const MethodChannel _storageChannel = MethodChannel(
+  'com.lelegiptv.native/storage',
+);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
-  MediaKit.ensureInitialized();
+  if (Platform.isMacOS || Platform.isWindows) {
+    await windowManager.ensureInitialized();
+  }
+  if (!isTizenRuntime) {
+    MediaKit.ensureInitialized();
+  }
   runApp(const LelegIptvNativeApp());
+}
+
+bool get isTizenRuntime {
+  if (!Platform.isLinux) return false;
+  try {
+    return File('/etc/tizen-release').existsSync() ||
+        File('/etc/tizen-platform.conf').existsSync() ||
+        Directory('/opt/usr').existsSync();
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _useCompactAdaptiveLayout(Size size, {double phoneShortestSide = 700}) {
+  return size.shortestSide < phoneShortestSide;
+}
+
+bool _useCompactAdaptiveConstraints(
+  BoxConstraints constraints, {
+  double phoneShortestSide = 700,
+}) {
+  final width = constraints.maxWidth.isFinite ? constraints.maxWidth : 1280.0;
+  final height = constraints.maxHeight.isFinite ? constraints.maxHeight : 720.0;
+  return _useCompactAdaptiveLayout(
+    Size(width, height),
+    phoneShortestSide: phoneShortestSide,
+  );
 }
 
 class LelegIptvNativeApp extends StatelessWidget {
@@ -101,22 +143,44 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   static const _profileKey = 'leleg.native.profile';
   static const _profilesKey = 'leleg.native.profiles';
   static const _activeProfileIdKey = 'leleg.native.active_profile_id';
-  static const _lastUrlKey = 'leleg.native.prototype.last_url';
-  static const _sampleUrl = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
+  static const _favoriteMoviesPrefix = 'leleg.native.favorite_movies.';
+  static const _watchLaterMoviesPrefix = 'leleg.native.watch_later_movies.';
   static const _catalogCacheTtl = Duration(days: 1);
   static const _catalogCacheVersion = 3;
+  static const _remoteSections = [
+    AppSection.home,
+    AppSection.live,
+    AppSection.movies,
+    AppSection.series,
+    AppSection.favorites,
+    AppSection.watchLater,
+    AppSection.recentlyAdded,
+    AppSection.epg,
+    AppSection.downloads,
+    AppSection.settings,
+  ];
 
-  late final Player _player;
-  late final VideoController _videoController;
+  Player? _player;
+  VideoController? _videoController;
+  vp.VideoPlayerController? _appleVideoController;
   late final TextEditingController _titleController;
   late final TextEditingController _serverController;
   late final TextEditingController _userController;
   late final TextEditingController _passController;
-  late final TextEditingController _manualUrlController;
   late final TextEditingController _searchController;
+  late final FocusNode _shellFocusNode;
+  late final FocusScopeNode _contentFocusScopeNode;
+  late final FocusNode _settingsTitleFocusNode;
+  late final FocusNode _settingsServerFocusNode;
+  late final FocusNode _settingsUserFocusNode;
+  late final FocusNode _settingsPassFocusNode;
   late final List<StreamSubscription> _subscriptions;
+  avplay.VideoPlayerController? _tizenVideoController;
 
   AppSection _section = AppSection.home;
+  AppSection _remoteSection = AppSection.home;
+  bool _remoteMenuMode = true;
+  int _tvContentIndex = 0;
   XtreamProfile? _profile;
   List<XtreamProfile> _profiles = const [];
   XtreamAccountInfo? _accountInfo;
@@ -129,11 +193,14 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   final Map<int, List<EpgProgramme>> _epgByChannel = {};
   List<VodMovie> _movies = const [];
   VodMovie? _selectedMovie;
+  String _selectedMovieDescription = '';
   List<SeriesShow> _series = const [];
   SeriesShow? _selectedSeries;
+  String _selectedSeriesDescription = '';
   List<SeriesEpisode> _seriesEpisodes = const [];
   final Set<int> _favoriteMovieIds = {};
   final Set<int> _watchLaterMovieIds = {};
+  final Map<int, DownloadTask> _downloads = {};
   String _liveCategoryId = '';
   String _movieCategoryId = '';
   String _seriesCategoryId = '';
@@ -148,45 +215,202 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   bool _epgLoading = false;
   bool _playerFocusMode = false;
 
+  bool get _useAppleVideoBackend => false;
+
+  void _traceTv(String message) {
+    debugPrint('[leleg-tv] $message');
+  }
+
+  ui.FlutterView get _activeFlutterView {
+    final fromContext = View.maybeOf(context);
+    if (fromContext != null) return fromContext;
+    return WidgetsBinding.instance.platformDispatcher.views.first;
+  }
+
+  bool get _isPhoneMobileDevice {
+    if (!(Platform.isAndroid || Platform.isIOS)) return false;
+    final view = _activeFlutterView;
+    final logicalSize = view.physicalSize / view.devicePixelRatio;
+    return logicalSize.shortestSide < 700;
+  }
+
+  List<DeviceOrientation> get _defaultMobileOrientations {
+    if (_isPhoneMobileDevice) {
+      return const [DeviceOrientation.portraitUp];
+    }
+    return const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ];
+  }
+
+  Future<void> _applyMobileOrientationPolicy({bool? fullscreen}) async {
+    if (!(Platform.isAndroid || Platform.isIOS)) return;
+    final useFullscreen = fullscreen ?? _playerFocusMode;
+    if (Platform.isAndroid) {
+      await SystemChrome.setEnabledSystemUIMode(
+        useFullscreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+      );
+    }
+    await SystemChrome.setPreferredOrientations(
+      useFullscreen
+          ? const [
+              DeviceOrientation.landscapeLeft,
+              DeviceOrientation.landscapeRight,
+            ]
+          : _defaultMobileOrientations,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
-    _player = Player(
-      configuration: const PlayerConfiguration(title: 'Leleg IPTV'),
-    );
-    _videoController = VideoController(_player);
+    final mediaPlayer = isTizenRuntime || _useAppleVideoBackend
+        ? null
+        : Player(configuration: const PlayerConfiguration(title: 'Leleg IPTV'));
+    _player = mediaPlayer;
+    _videoController = mediaPlayer == null
+        ? null
+        : VideoController(mediaPlayer);
     _titleController = TextEditingController();
     _serverController = TextEditingController();
     _userController = TextEditingController();
     _passController = TextEditingController();
-    _manualUrlController = TextEditingController(text: _sampleUrl);
+    _titleController.addListener(_applyPlaylistPresetFromTitle);
     _searchController = TextEditingController();
-    _subscriptions = [
-      _player.stream.error.listen((error) {
-        if (mounted) setState(() => _status = 'Player error: $error');
-      }),
-      _player.stream.playing.listen((playing) {
-        if (mounted) {
-          setState(() => _status = playing ? 'In riproduzione' : 'In pausa');
-        }
-      }),
-    ];
+    _shellFocusNode = FocusNode(debugLabel: 'Leleg shell keyboard focus');
+    _contentFocusScopeNode = FocusScopeNode(
+      debugLabel: 'Leleg content keyboard focus',
+    );
+    _settingsTitleFocusNode = FocusNode(debugLabel: 'Settings title field');
+    _settingsServerFocusNode = FocusNode(debugLabel: 'Settings server field');
+    _settingsUserFocusNode = FocusNode(debugLabel: 'Settings user field');
+    _settingsPassFocusNode = FocusNode(debugLabel: 'Settings pass field');
+    _subscriptions = mediaPlayer == null
+        ? const []
+        : [
+            mediaPlayer.stream.error.listen((error) {
+              if (mounted) setState(() => _status = 'Player error: $error');
+            }),
+            mediaPlayer.stream.playing.listen((playing) {
+              if (mounted) {
+                setState(
+                  () => _status = playing ? 'In riproduzione' : 'In pausa',
+                );
+              }
+            }),
+          ];
+    _storageChannel.setMethodCallHandler(_handleNativeStorageCall);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (Platform.isAndroid || Platform.isIOS) {
+        unawaited(_applyMobileOrientationPolicy());
+      }
+    });
     _restoreState();
   }
 
   @override
   void dispose() {
+    _storageChannel.setMethodCallHandler(null);
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
+    _tizenVideoController?.dispose();
+    _appleVideoController?.dispose();
     _serverController.dispose();
+    _titleController.removeListener(_applyPlaylistPresetFromTitle);
     _titleController.dispose();
     _userController.dispose();
     _passController.dispose();
-    _manualUrlController.dispose();
     _searchController.dispose();
-    _player.dispose();
+    _shellFocusNode.dispose();
+    _contentFocusScopeNode.dispose();
+    _settingsTitleFocusNode.dispose();
+    _settingsServerFocusNode.dispose();
+    _settingsUserFocusNode.dispose();
+    _settingsPassFocusNode.dispose();
+    _player?.dispose();
     super.dispose();
+  }
+
+  XtreamProfile? _playlistPresetForCode(String rawCode) {
+    final code = rawCode.trim().toUpperCase();
+    const presets = <String, XtreamProfile>{
+      'ITALIA1': XtreamProfile(
+        title: 'ITALIA1',
+        serverUrl: 'http://muti14.fonsecatemp.com',
+        username: 'notv_w7cehc',
+        password: 'ffhuax4a',
+      ),
+      'ITALIA2': XtreamProfile(
+        title: 'ITALIA2',
+        serverUrl: 'http://muti14.fonsecatemp.com',
+        username: 'notv_71d762',
+        password: 'qgjjhnty',
+      ),
+      'ITALIA3': XtreamProfile(
+        title: 'ITALIA3',
+        serverUrl: 'http://muti14.fonsecatemp.com',
+        username: 'notv_93me22',
+        password: 'x7g35zhh',
+      ),
+      'MONDO1': XtreamProfile(
+        title: 'MONDO1',
+        serverUrl: 'http://watchtivo-4k.com',
+        username: 'S8eLtOiTtE',
+        password: 'ut6YxwMG6X',
+      ),
+      'MONDO2': XtreamProfile(
+        title: 'MONDO2',
+        serverUrl: 'http://watchtivo-4k.com',
+        username: 'bSFZGHX1Gr',
+        password: 'zHwiKBmB1O',
+      ),
+    };
+    return presets[code];
+  }
+
+  void _applyPlaylistPresetFromTitle() {
+    final preset = _playlistPresetForCode(_titleController.text);
+    if (preset == null) return;
+    var changed = false;
+    if (_serverController.text != preset.serverUrl) {
+      _serverController.text = preset.serverUrl;
+      changed = true;
+    }
+    if (_userController.text != preset.username) {
+      _userController.text = preset.username;
+      changed = true;
+    }
+    if (_passController.text != preset.password) {
+      _passController.text = preset.password;
+      changed = true;
+    }
+    if (changed && mounted) {
+      setState(
+        () => _status = 'Lista ${preset.title} compilata automaticamente.',
+      );
+    }
+  }
+
+  Future<void> _handleNativeStorageCall(MethodCall call) async {
+    if (call.method != 'downloadProgress') return;
+    final args = Map<Object?, Object?>.from(call.arguments as Map);
+    final movieId = (args['movieId'] as num?)?.toInt();
+    final progress = (args['progress'] as num?)?.toDouble();
+    if (movieId == null || progress == null || !mounted) return;
+    setState(() {
+      final current = _downloads[movieId];
+      if (current == null || current.status != DownloadStatus.downloading) {
+        return;
+      }
+      _downloads[movieId] = current.copyWith(progress: progress.clamp(0, 1));
+      _status = progress <= 0
+          ? 'Download in preparazione: ${current.movie.name}'
+          : 'Download ${(progress * 100).clamp(0, 100).toStringAsFixed(0)}%: ${current.movie.name}';
+    });
   }
 
   Future<void> _restoreState() async {
@@ -194,10 +418,6 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final profiles = _readProfiles(prefs);
     final activeProfileId = prefs.getString(_activeProfileIdKey) ?? '';
     final rawProfile = prefs.getString(_profileKey);
-    final lastUrl = prefs.getString(_lastUrlKey);
-    if (lastUrl != null && lastUrl.trim().isNotEmpty) {
-      _manualUrlController.text = lastUrl;
-    }
     try {
       var savedProfiles = profiles;
       if (savedProfiles.isEmpty &&
@@ -221,7 +441,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       setState(() {
         _profiles = savedProfiles;
         _profile = profile;
+        _section = AppSection.home;
+        _remoteSection = AppSection.home;
+        _remoteMenuMode = false;
+        _tvContentIndex = 0;
+        _status = 'Home';
       });
+      await _loadUserLists(profile);
       await _loadCatalog(profile: profile);
     } catch (error) {
       if (mounted) {
@@ -232,9 +458,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   XtreamProfile _readProfileFromForm() => XtreamProfile(
     title: _titleController.text.trim(),
-    serverUrl: _serverController.text.trim(),
-    username: _userController.text.trim(),
-    password: _passController.text,
+    serverUrl:
+        _playlistPresetForCode(_titleController.text)?.serverUrl ??
+        _serverController.text.trim(),
+    username:
+        _playlistPresetForCode(_titleController.text)?.username ??
+        _userController.text.trim(),
+    password:
+        _playlistPresetForCode(_titleController.text)?.password ??
+        _passController.text,
   );
 
   List<XtreamProfile> _readProfiles(SharedPreferences prefs) {
@@ -276,7 +508,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     await prefs.setString(_activeProfileIdKey, activeId);
   }
 
-  Future<void> _saveAndLoadProfile({bool forceRefresh = true}) async {
+  Future<void> _saveAndLoadProfile({bool forceRefresh = false}) async {
     var profile = _profileWithStableId(_readProfileFromForm());
     if (!profile.isComplete) {
       setState(() => _status = 'Server, username e password sono obbligatori.');
@@ -298,7 +530,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     setState(() {
       _profiles = profiles;
       _profile = profile;
+      _titleController.clear();
+      _serverController.clear();
+      _userController.clear();
+      _passController.clear();
     });
+    await _loadUserLists(profile);
     await _loadCatalog(profile: profile, forceRefresh: forceRefresh);
   }
 
@@ -315,6 +552,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _resetProfileScopedState();
       _status = 'Cambio lista: ${profile.displayName}';
     });
+    await _loadUserLists(profile);
     await _loadCatalog(profile: profile);
   }
 
@@ -344,31 +582,553 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   Future<void> _changeSection(AppSection section) async {
     if (section == _section) {
+      _enterContentMode();
       if (section == AppSection.epg) {
         unawaited(_loadEpgPage(force: true));
       }
       return;
     }
-    if (_player.state.playlist.medias.isNotEmpty) {
-      await _player.stop();
+    final mediaPlayer = _player;
+    if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
+      await mediaPlayer.stop();
+    }
+    final appleController = _appleVideoController;
+    if (appleController != null) {
+      try {
+        await appleController.pause();
+      } catch (_) {}
     }
     if (_playerFocusMode) {
-      setState(() => _playerFocusMode = false);
-      unawaited(windowManager.setFullScreen(false));
+      _setPlayerFocusMode(false);
     }
     setState(() {
       _section = section;
+      _remoteSection = section;
+      _remoteMenuMode = false;
+      _tvContentIndex = 0;
       _selectedMovie = null;
+      _selectedMovieDescription = '';
       if (section != AppSection.series) {
         _selectedSeries = null;
+        _selectedSeriesDescription = '';
         _seriesEpisodes = const [];
       }
       _playerTitle = 'Scegli qualcosa da guardare.';
-      _status = 'Navigazione: ${_sectionLabel(section)}';
     });
     if (section == AppSection.epg) {
       unawaited(_loadEpgPage());
     }
+    _focusFirstContentControl();
+  }
+
+  void _requestShellFocus() {
+    setState(() => _remoteMenuMode = true);
+    FocusManager.instance.primaryFocus?.unfocus();
+    _contentFocusScopeNode.unfocus();
+    _shellFocusNode.requestFocus();
+  }
+
+  void _enterContentMode() {
+    if (_remoteMenuMode) {
+      setState(() => _remoteMenuMode = false);
+    }
+    _focusFirstContentControl();
+  }
+
+  void _focusFirstContentControl() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _remoteMenuMode || _playerFocusMode) return;
+      _contentFocusScopeNode.requestFocus();
+      _contentFocusScopeNode.nextFocus();
+    });
+  }
+
+  bool get _isEditingText {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    return context.widget is EditableText ||
+        context.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  KeyEventResult _handleShellKey(KeyEvent event) {
+    if (event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (_isEditingText) {
+      if (key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.browserBack) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        _shellFocusNode.requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    if (!_remoteMenuMode) {
+      return _handleContentKey(key);
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _moveRemoteSelection(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _moveRemoteSelection(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      _moveRemoteSelection(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      unawaited(_changeSection(_remoteSection));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.browserBack) {
+      if (_playerFocusMode) {
+        _togglePlayerFocusMode();
+      } else if (_section != AppSection.home) {
+        unawaited(_changeSection(AppSection.home));
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space) {
+      unawaited(_changeSection(_remoteSection));
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  KeyEventResult _handleContentKey(LogicalKeyboardKey key) {
+    _traceTv(
+      'content key=${key.keyLabel} section=$_section index=$_tvContentIndex '
+      'count=$_tvContentItemCount menuMode=$_remoteMenuMode playerFocus=$_playerFocusMode',
+    );
+    if (key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.browserBack) {
+      if (_playerFocusMode) {
+        _togglePlayerFocusMode();
+      } else {
+        _requestShellFocus();
+      }
+      return KeyEventResult.handled;
+    }
+    if (_section == AppSection.home) {
+      final handled = _handleHomeContentKey(key);
+      if (handled) {
+        return KeyEventResult.handled;
+      }
+    }
+    if (_section == AppSection.settings) {
+      final settingsStart = _profiles.length;
+      final saveIndex = settingsStart + 4;
+      final reloadIndex = settingsStart + 5;
+      if (key == LogicalKeyboardKey.arrowRight &&
+          _tvContentIndex == saveIndex) {
+        _moveTvContentSelection(1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft &&
+          _tvContentIndex == reloadIndex) {
+        _moveTvContentSelection(-1);
+        return KeyEventResult.handled;
+      }
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (_tvContentIndex <= 0) {
+        _requestShellFocus();
+      } else {
+        _moveTvContentSelection(_horizontalTvStep(-1));
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      _moveTvContentSelection(_horizontalTvStep(1));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _moveTvContentSelection(-_verticalTvStep);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _moveTvContentSelection(_verticalTvStep);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space) {
+      unawaited(_activateTvContentSelection());
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  bool _handleHomeContentKey(LogicalKeyboardKey key) {
+    if (key != LogicalKeyboardKey.arrowLeft &&
+        key != LogicalKeyboardKey.arrowRight &&
+        key != LogicalKeyboardKey.arrowUp &&
+        key != LogicalKeyboardKey.arrowDown) {
+      return false;
+    }
+    final compact = _isCompactHomeLayout;
+    final current = _tvContentIndex.clamp(0, 7);
+    int? next;
+    if (compact) {
+      next = switch (key) {
+        LogicalKeyboardKey.arrowLeft =>
+          current >= 3 ? (current > 3 ? current - 1 : null) : null,
+        LogicalKeyboardKey.arrowRight =>
+          current >= 3 ? (current < 7 ? current + 1 : current) : current,
+        LogicalKeyboardKey.arrowUp => switch (current) {
+          0 => null,
+          1 => 0,
+          2 => 1,
+          3 || 4 => 2,
+          5 || 6 || 7 => 4,
+          _ => current,
+        },
+        LogicalKeyboardKey.arrowDown => switch (current) {
+          0 => 1,
+          1 => 2,
+          2 => 3,
+          3 || 4 => 5,
+          5 || 6 => 7,
+          _ => current,
+        },
+        _ => current,
+      };
+    } else {
+      next = switch (key) {
+        LogicalKeyboardKey.arrowLeft => switch (current) {
+          0 || 3 => null,
+          1 || 2 => 0,
+          _ => current - 1,
+        },
+        LogicalKeyboardKey.arrowRight => switch (current) {
+          0 => 1,
+          3 || 4 || 5 || 6 => current + 1,
+          _ => current,
+        },
+        LogicalKeyboardKey.arrowUp => switch (current) {
+          0 => current,
+          1 => current,
+          2 => 1,
+          3 || 4 || 5 => 0,
+          6 || 7 => 2,
+          _ => current,
+        },
+        LogicalKeyboardKey.arrowDown => switch (current) {
+          0 => 3,
+          1 => 2,
+          2 => 6,
+          _ => current,
+        },
+        _ => current,
+      };
+    }
+    if (next == null) {
+      _requestShellFocus();
+      return true;
+    }
+    _moveTvContentSelection(next - current);
+    return true;
+  }
+
+  int _horizontalTvStep(int direction) => direction < 0 ? -1 : 1;
+
+  int get _verticalTvStep {
+    return switch (_section) {
+      AppSection.home => _isCompactHomeLayout ? 1 : 2,
+      AppSection.live => 1,
+      AppSection.movies => _selectedMovie == null ? _catalogGridColumns : 1,
+      AppSection.series => _selectedSeries == null ? _catalogGridColumns : 1,
+      AppSection.favorites ||
+      AppSection.watchLater ||
+      AppSection.recentlyAdded ||
+      AppSection.downloads => _catalogGridColumns,
+      AppSection.epg => 1,
+      AppSection.settings => 1,
+    };
+  }
+
+  bool get _isCompactHomeLayout {
+    final mediaQuery = MediaQuery.maybeOf(context);
+    return _useCompactAdaptiveLayout(mediaQuery?.size ?? const Size(1280, 720));
+  }
+
+  double get _contentViewportWidth {
+    if (!mounted) return 1280;
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final width = mediaQuery?.size.width ?? 1280;
+    return (width - 300).clamp(320.0, 4000.0);
+  }
+
+  int get _catalogGridColumns {
+    final available = (_contentViewportWidth - 56).clamp(320.0, 4000.0);
+    const tileWidth = 210.0;
+    const spacing = 18.0;
+    return ((available + spacing) / (tileWidth + spacing)).floor().clamp(1, 8);
+  }
+
+  int get _tvContentItemCount {
+    return switch (_section) {
+      AppSection.home => 8,
+      AppSection.live => _filteredLive.length,
+      AppSection.movies => _selectedMovie == null ? _filteredMovies.length : 3,
+      AppSection.series =>
+        _selectedSeries == null
+            ? _filteredSeries.length
+            : _seriesEpisodes.length + 1,
+      AppSection.favorites => _favoriteMovies.length,
+      AppSection.watchLater => _watchLaterMovies.length,
+      AppSection.recentlyAdded => _movies.take(350).length,
+      AppSection.epg => _epgChannels.length,
+      AppSection.downloads => _watchLaterMovies.length,
+      AppSection.settings => _profiles.length + 6,
+    };
+  }
+
+  String _tvContentSelectionLabel(int index) {
+    if (index < 0) return 'Contenuto';
+    return switch (_section) {
+      AppSection.home => [
+        'Live TV',
+        'Film',
+        'Serie',
+        'Preferiti',
+        'Da vedere',
+        'Guida TV',
+        'Download',
+        'Impostazioni',
+      ][index.clamp(0, 7)],
+      AppSection.live =>
+        _filteredLive.isEmpty
+            ? 'Nessun canale'
+            : _filteredLive[index.clamp(0, _filteredLive.length - 1)].name,
+      AppSection.movies =>
+        _selectedMovie == null
+            ? (_filteredMovies.isEmpty
+                  ? 'Nessun film'
+                  : _filteredMovies[index.clamp(0, _filteredMovies.length - 1)]
+                        .name)
+            : ['Play', 'Download', 'Indietro'][index.clamp(0, 2)],
+      AppSection.series =>
+        _selectedSeries == null
+            ? (_filteredSeries.isEmpty
+                  ? 'Nessuna serie'
+                  : _filteredSeries[index.clamp(0, _filteredSeries.length - 1)]
+                        .name)
+            : index == 0
+            ? 'Indietro'
+            : (_seriesEpisodes.isEmpty
+                  ? 'Nessun episodio'
+                  : _seriesEpisodes[(index - 1).clamp(
+                          0,
+                          _seriesEpisodes.length - 1,
+                        )]
+                        .title),
+      AppSection.favorites =>
+        _favoriteMovies.isEmpty
+            ? 'Nessun preferito'
+            : _favoriteMovies[index.clamp(0, _favoriteMovies.length - 1)].name,
+      AppSection.watchLater =>
+        _watchLaterMovies.isEmpty
+            ? 'Nessun titolo'
+            : _watchLaterMovies[index.clamp(0, _watchLaterMovies.length - 1)]
+                  .name,
+      AppSection.recentlyAdded =>
+        _movies.isEmpty
+            ? 'Nessun titolo'
+            : _movies
+                  .take(350)
+                  .toList()[index.clamp(0, _movies.take(350).length - 1)]
+                  .name,
+      AppSection.epg =>
+        _epgChannels.isEmpty
+            ? 'Nessun canale'
+            : _epgChannels[index.clamp(0, _epgChannels.length - 1)].name,
+      AppSection.downloads =>
+        _watchLaterMovies.isEmpty
+            ? 'Nessun download'
+            : _watchLaterMovies[index.clamp(0, _watchLaterMovies.length - 1)]
+                  .name,
+      AppSection.settings => _settingsSelectionLabel(index),
+    };
+  }
+
+  String _settingsSelectionLabel(int index) {
+    if (index < _profiles.length) {
+      final profile = _profiles[index];
+      return profile.title.trim().isEmpty
+          ? profile.displayName
+          : profile.title.trim();
+    }
+    final offset = index - _profiles.length;
+    const labels = [
+      'Nome lista',
+      'Server URL',
+      'Username',
+      'Password',
+      'Salva e carica',
+      'Ricarica dal provider',
+    ];
+    return labels[offset.clamp(0, labels.length - 1)];
+  }
+
+  void _moveTvContentSelection(int delta) {
+    final count = _tvContentItemCount;
+    if (count <= 0) return;
+    final next = (_tvContentIndex + delta).clamp(0, count - 1).toInt();
+    if (next == _tvContentIndex) return;
+    _traceTv(
+      'move selection section=$_section from=$_tvContentIndex to=$next '
+      'delta=$delta label="${_tvContentSelectionLabel(next)}"',
+    );
+    setState(() {
+      _tvContentIndex = next;
+      _status = 'Selezionato: ${_tvContentSelectionLabel(next)}';
+    });
+  }
+
+  Future<void> _activateTvContentSelection() async {
+    final index = _tvContentIndex;
+    _traceTv(
+      'activate section=$_section index=$index label="${_tvContentSelectionLabel(index)}"',
+    );
+    switch (_section) {
+      case AppSection.home:
+        final targets = [
+          AppSection.live,
+          AppSection.movies,
+          AppSection.series,
+          AppSection.favorites,
+          AppSection.watchLater,
+          AppSection.epg,
+          AppSection.downloads,
+          AppSection.settings,
+        ];
+        await _changeSection(targets[index.clamp(0, targets.length - 1)]);
+      case AppSection.live:
+        if (_filteredLive.isNotEmpty) {
+          await _playLive(
+            _filteredLive[index.clamp(0, _filteredLive.length - 1)],
+          );
+        }
+      case AppSection.movies:
+        if (_selectedMovie == null) {
+          if (_filteredMovies.isNotEmpty) {
+            _openMovie(
+              _filteredMovies[index.clamp(0, _filteredMovies.length - 1)],
+            );
+          }
+        } else if (index == 0) {
+          await _playMovie(_selectedMovie!);
+        } else if (index == 1) {
+          await _downloadMovie(_selectedMovie!);
+        } else {
+          setState(() {
+            _selectedMovie = null;
+            _tvContentIndex = 0;
+          });
+        }
+      case AppSection.series:
+        if (_selectedSeries == null) {
+          if (_filteredSeries.isNotEmpty) {
+            await _openSeries(
+              _filteredSeries[index.clamp(0, _filteredSeries.length - 1)],
+            );
+            if (mounted) setState(() => _tvContentIndex = 0);
+          }
+        } else if (index == 0) {
+          setState(() {
+            _selectedSeries = null;
+            _seriesEpisodes = const [];
+            _tvContentIndex = 0;
+          });
+        } else if (_seriesEpisodes.isNotEmpty) {
+          await _playEpisode(
+            _seriesEpisodes[(index - 1).clamp(0, _seriesEpisodes.length - 1)],
+          );
+        }
+      case AppSection.favorites:
+        if (_favoriteMovies.isNotEmpty) {
+          _openMovie(
+            _favoriteMovies[index.clamp(0, _favoriteMovies.length - 1)],
+          );
+        }
+      case AppSection.watchLater:
+      case AppSection.downloads:
+        if (_watchLaterMovies.isNotEmpty) {
+          _openMovie(
+            _watchLaterMovies[index.clamp(0, _watchLaterMovies.length - 1)],
+          );
+        }
+      case AppSection.recentlyAdded:
+        final recent = _movies.take(350).toList();
+        if (recent.isNotEmpty) {
+          _openMovie(recent[index.clamp(0, recent.length - 1)]);
+        }
+      case AppSection.epg:
+        if (_epgChannels.isNotEmpty) {
+          final channel = _epgChannels[index.clamp(0, _epgChannels.length - 1)];
+          setState(() => _selectedLiveChannel = channel);
+          await _loadShortEpg(channel);
+          await _changeSection(AppSection.live);
+          await _playLive(channel);
+        }
+      case AppSection.settings:
+        if (index < _profiles.length) {
+          await _selectProfile(_profiles[index]);
+          if (mounted) {
+            setState(() => _tvContentIndex = index);
+          }
+          return;
+        }
+        switch (index - _profiles.length) {
+          case 0:
+            _settingsTitleFocusNode.requestFocus();
+            setState(() => _status = 'Modifica Nome lista');
+            return;
+          case 1:
+            _settingsServerFocusNode.requestFocus();
+            setState(() => _status = 'Modifica Server URL');
+            return;
+          case 2:
+            _settingsUserFocusNode.requestFocus();
+            setState(() => _status = 'Modifica Username');
+            return;
+          case 3:
+            _settingsPassFocusNode.requestFocus();
+            setState(() => _status = 'Modifica Password');
+            return;
+          case 4:
+            await _saveAndLoadProfile(forceRefresh: false);
+            return;
+          case 5:
+            await _loadCatalog(forceRefresh: true);
+            return;
+        }
+    }
+  }
+
+  void _moveRemoteSelection(int delta) {
+    final currentIndex = _remoteSections.indexOf(_remoteSection);
+    if (currentIndex < 0) return;
+    final nextIndex = (currentIndex + delta)
+        .clamp(0, _remoteSections.length - 1)
+        .toInt();
+    if (nextIndex == currentIndex) return;
+    _traceTv(
+      'move menu from=$_remoteSection to=${_remoteSections[nextIndex]} delta=$delta',
+    );
+    setState(() => _remoteSection = _remoteSections[nextIndex]);
   }
 
   Future<void> _loadCatalog({
@@ -377,7 +1137,16 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }) async {
     final activeProfile = profile ?? _profile;
     if (activeProfile == null || !activeProfile.isComplete) return;
+    setState(() {
+      _section = AppSection.home;
+      _remoteSection = AppSection.home;
+      _remoteMenuMode = false;
+      _tvContentIndex = 0;
+      _loading = true;
+      _status = 'Caricamento lista: ${activeProfile.displayName}...';
+    });
     if (!forceRefresh && await _restoreCatalogCache(activeProfile)) {
+      if (mounted) setState(() => _loading = false);
       if (_section == AppSection.epg) {
         unawaited(_loadEpgPage(force: true));
       }
@@ -387,6 +1156,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _loading = true;
       _status = 'Caricamento account...';
       _resetProfileScopedState();
+      _section = AppSection.home;
+      _remoteSection = AppSection.home;
+      _remoteMenuMode = false;
+      _tvContentIndex = 0;
     });
     try {
       final client = XtreamClient(activeProfile);
@@ -455,6 +1228,67 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
+  String _favoriteMoviesKey(XtreamProfile profile) =>
+      '$_favoriteMoviesPrefix${profile.id}';
+
+  String _watchLaterMoviesKey(XtreamProfile profile) =>
+      '$_watchLaterMoviesPrefix${profile.id}';
+
+  Future<void> _loadUserLists(XtreamProfile profile) async {
+    final prefs = await SharedPreferences.getInstance();
+    final favorites = prefs
+        .getStringList(_favoriteMoviesKey(profile))
+        ?.map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    final watchLater = prefs
+        .getStringList(_watchLaterMoviesKey(profile))
+        ?.map(int.tryParse)
+        .whereType<int>()
+        .toSet();
+    if (!mounted) return;
+    setState(() {
+      _favoriteMovieIds
+        ..clear()
+        ..addAll(favorites ?? const {});
+      _watchLaterMovieIds
+        ..clear()
+        ..addAll(watchLater ?? const {});
+    });
+  }
+
+  Future<void> _persistUserLists() async {
+    final profile = _profile;
+    if (profile == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _favoriteMoviesKey(profile),
+      _favoriteMovieIds.map((id) => id.toString()).toList()..sort(),
+    );
+    await prefs.setStringList(
+      _watchLaterMoviesKey(profile),
+      _watchLaterMovieIds.map((id) => id.toString()).toList()..sort(),
+    );
+  }
+
+  void _toggleFavoriteMovie(VodMovie movie) {
+    setState(() {
+      _favoriteMovieIds.contains(movie.id)
+          ? _favoriteMovieIds.remove(movie.id)
+          : _favoriteMovieIds.add(movie.id);
+    });
+    unawaited(_persistUserLists());
+  }
+
+  void _toggleWatchLaterMovie(VodMovie movie) {
+    setState(() {
+      _watchLaterMovieIds.contains(movie.id)
+          ? _watchLaterMovieIds.remove(movie.id)
+          : _watchLaterMovieIds.add(movie.id);
+    });
+    unawaited(_persistUserLists());
+  }
+
   String _catalogCacheKey(XtreamProfile profile) {
     return 'leleg.native.catalog.${profile.id}';
   }
@@ -516,8 +1350,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     _epgByChannel.clear();
     _movies = const [];
     _selectedMovie = null;
+    _selectedMovieDescription = '';
     _series = const [];
     _selectedSeries = null;
+    _selectedSeriesDescription = '';
     _seriesEpisodes = const [];
     _liveCategoryId = '';
     _movieCategoryId = '';
@@ -581,19 +1417,59 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
-  Future<void> _openManualUrl() async {
-    final url = _manualUrlController.text.trim();
-    if (url.isEmpty) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_lastUrlKey, url);
-    await _openMedia(url, 'Stream manuale');
-  }
-
   Future<void> _playLive(LiveChannel channel) async {
     final profile = _profile;
     if (profile == null) return;
+    _traceTv('play live channel=${channel.name} id=${channel.id}');
     setState(() => _selectedLiveChannel = channel);
-    await _openMedia(XtreamClient(profile).liveUrl(channel), channel.name);
+    final candidates = <XtreamProfile>[];
+    void addCandidate(XtreamProfile candidate) {
+      if (candidates.any(
+        (item) => item.liveContainer == candidate.liveContainer,
+      )) {
+        return;
+      }
+      candidates.add(candidate);
+    }
+
+    if (Platform.isAndroid && !isTizenRuntime) {
+      addCandidate(profile.copyWith(liveContainer: 'ts'));
+      addCandidate(profile.copyWith(liveContainer: 'm3u8'));
+    } else {
+      addCandidate(profile);
+      addCandidate(
+        profile.copyWith(
+          liveContainer: profile.liveContainer == 'ts' ? 'm3u8' : 'ts',
+        ),
+      );
+    }
+
+    var opened = false;
+    for (final candidate in candidates) {
+      _traceTv(
+        'try live container=${candidate.liveContainer} channel=${channel.name}',
+      );
+      opened = await _openMedia(
+        XtreamClient(candidate).liveUrl(channel),
+        channel.name,
+        preferApple: Platform.isIOS,
+      );
+      if (opened) {
+        _enterFullscreenOnPhonePlayback(force: Platform.isIOS);
+        if (mounted) {
+          setState(() {
+            _status =
+                'In riproduzione: ${channel.name} (${candidate.liveContainer.toUpperCase()})';
+          });
+        }
+        break;
+      }
+    }
+    if (!opened && mounted) {
+      setState(
+        () => _status = 'Riproduzione live non riuscita: ${channel.name}',
+      );
+    }
     unawaited(_loadShortEpg(channel));
   }
 
@@ -621,7 +1497,14 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       return;
     }
     setState(() => _selectedLiveChannel = channel);
-    await _openMedia(catchupUrl, '${channel.name} - ${programme.title}');
+    final opened = await _openMedia(
+      catchupUrl,
+      '${channel.name} - ${programme.title}',
+      preferApple: Platform.isIOS,
+    );
+    if (opened) {
+      _enterFullscreenOnPhonePlayback(force: Platform.isIOS);
+    }
   }
 
   Future<void> _openLiveProgrammeFromGuide(
@@ -639,15 +1522,373 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   Future<void> _playMovie(VodMovie movie) async {
     final profile = _profile;
     if (profile == null) return;
-    await _openMedia(XtreamClient(profile).vodUrl(movie), movie.name);
+    final opened = await _openMedia(
+      XtreamClient(profile).vodUrl(movie),
+      movie.name,
+    );
+    if (opened) {
+      _enterFullscreenOnPhonePlayback(force: Platform.isIOS);
+    }
+    if (!opened && mounted) {
+      setState(() => _status = 'Riproduzione film non riuscita: ${movie.name}');
+    }
+  }
+
+  Future<void> _downloadMovie(VodMovie movie) async {
+    final profile = _profile;
+    if (profile == null) return;
+    _traceTv('download tap movieId=${movie.id} title="${movie.name}"');
+    if (_downloads[movie.id]?.status == DownloadStatus.downloading) {
+      _traceTv('download skipped already-running movieId=${movie.id}');
+      setState(() {
+        _section = AppSection.downloads;
+        _remoteSection = AppSection.downloads;
+        _remoteMenuMode = false;
+        _status = 'Download gia in corso: ${movie.name}';
+      });
+      _closeCompactDrawerIfNeeded();
+      return;
+    }
+    final url = XtreamClient(profile).vodUrl(movie);
+    final extension = movie.containerExtension.trim().isEmpty
+        ? 'mp4'
+        : movie.containerExtension.trim().replaceAll('.', '');
+    final directory = await _downloadBaseDirectory();
+    final filename = '${_safeFileName(movie.name)}.$extension';
+    final file = File('${directory.path}/$filename');
+    _traceTv(
+      'download prepared movieId=${movie.id} url="$url" file="${file.path}"',
+    );
+    setState(() {
+      _downloads[movie.id] = DownloadTask(
+        movie: movie,
+        status: DownloadStatus.downloading,
+        progress: 0,
+        filePath: file.path,
+      );
+      _section = AppSection.downloads;
+      _remoteSection = AppSection.downloads;
+      _remoteMenuMode = false;
+      _selectedMovie = null;
+      _selectedMovieDescription = '';
+      _status = 'Download avviato: ${movie.name}';
+    });
+    _closeCompactDrawerIfNeeded();
+    try {
+      if (Platform.isAndroid) {
+        final enqueued = await _enqueueNativeAndroidDownload(
+          url: url,
+          filename: filename,
+          referer: '${profile.baseUrl}/',
+        );
+        if (!mounted) return;
+        setState(() {
+          final current = _downloads[movie.id];
+          if (current != null) {
+            _downloads[movie.id] = current.copyWith(
+              status: DownloadStatus.downloading,
+              filePath: enqueued ?? file.path,
+            );
+          }
+          _status = 'Download affidato al sistema: ${movie.name}';
+        });
+        _traceTv(
+          'download delegated android movieId=${movie.id} file="${enqueued ?? file.path}"',
+        );
+        return;
+      }
+      if (Platform.isIOS) {
+        Object? lastError;
+        for (final candidate in _downloadUrlCandidates(url)) {
+          try {
+            _traceTv(
+              'download native ios candidate movieId=${movie.id} url="$candidate"',
+            );
+            final savedPath = await _downloadNativeIosFile(
+              url: candidate,
+              filename: filename,
+              referer: '${profile.baseUrl}/',
+              movieId: movie.id,
+            );
+            if (!mounted) return;
+            setState(() {
+              final current = _downloads[movie.id];
+              if (current != null) {
+                _downloads[movie.id] = current.copyWith(
+                  status: DownloadStatus.completed,
+                  progress: 1,
+                  filePath: savedPath ?? file.path,
+                );
+              }
+              _status = 'Download completato: ${movie.name}';
+            });
+            _traceTv(
+              'download native ios completed movieId=${movie.id} file="${savedPath ?? file.path}"',
+            );
+            return;
+          } catch (error) {
+            lastError = error;
+            _traceTv(
+              'download native ios candidate failed movieId=${movie.id} url="$candidate" error="$error"',
+            );
+          }
+        }
+        throw lastError ?? Exception('Download iOS non riuscito');
+      }
+      await directory.create(recursive: true);
+      _traceTv('download directory ready path="${directory.path}"');
+      Object? lastError;
+      for (final candidate in _downloadUrlCandidates(url)) {
+        try {
+          _traceTv('download candidate movieId=${movie.id} url="$candidate"');
+          await _downloadUrlToFile(
+            url: candidate,
+            file: file,
+            profile: profile,
+            movie: movie,
+          );
+          _traceTv(
+            'download candidate ok movieId=${movie.id} url="$candidate"',
+          );
+          lastError = null;
+          break;
+        } catch (error) {
+          _traceTv(
+            'download candidate failed movieId=${movie.id} url="$candidate" error="$error"',
+          );
+          lastError = error;
+          if (await file.exists()) {
+            await file.delete();
+          }
+        }
+      }
+      if (lastError != null) {
+        _traceTv(
+          'download failed all candidates movieId=${movie.id} error="$lastError"',
+        );
+        throw lastError;
+      }
+      await _notifyDownloadedFile(file.path);
+      _traceTv('download completed movieId=${movie.id} file="${file.path}"');
+      if (!mounted) return;
+      setState(() {
+        final current = _downloads[movie.id];
+        if (current != null) {
+          _downloads[movie.id] = current.copyWith(
+            status: DownloadStatus.completed,
+            progress: 1,
+          );
+        }
+        _status = 'Download completato: ${movie.name}';
+      });
+    } catch (error) {
+      _traceTv('download final failure movieId=${movie.id} error="$error"');
+      if (!mounted) return;
+      setState(() {
+        final current = _downloads[movie.id];
+        _downloads[movie
+            .id] = (current ?? DownloadTask(movie: movie, filePath: file.path))
+            .copyWith(status: DownloadStatus.failed, error: error.toString());
+        _status = 'Download non riuscito: ${movie.name}';
+      });
+    }
+  }
+
+  Future<String?> _downloadNativeIosFile({
+    required String url,
+    required String filename,
+    required String referer,
+    required int movieId,
+  }) async {
+    try {
+      return await _storageChannel.invokeMethod<String>('downloadFile', {
+        'url': url,
+        'filename': filename,
+        'referer': referer,
+        'userAgent': 'VLC/3.0.20 LibVLC/3.0.20',
+        'movieId': movieId,
+      });
+    } catch (error) {
+      _traceTv('download native ios failed error="$error"');
+      rethrow;
+    }
+  }
+
+  Future<String?> _enqueueNativeAndroidDownload({
+    required String url,
+    required String filename,
+    required String referer,
+  }) async {
+    try {
+      return await _storageChannel.invokeMethod<String>('enqueueDownload', {
+        'url': url,
+        'filename': filename,
+        'referer': referer,
+        'userAgent': 'VLC/3.0.20 LibVLC/3.0.20',
+      });
+    } catch (error) {
+      _traceTv('download enqueue android failed error="$error"');
+      rethrow;
+    }
+  }
+
+  Future<void> _downloadUrlToFile({
+    required String url,
+    required File file,
+    required XtreamProfile profile,
+    required VodMovie movie,
+  }) async {
+    final client = HttpClient();
+    client.badCertificateCallback = (_, _, _) => true;
+    client.connectionTimeout = const Duration(seconds: 20);
+    IOSink? sink;
+    try {
+      _traceTv('download http start url="$url"');
+      final request = await client.getUrl(Uri.parse(url));
+      request.headers.set(
+        HttpHeaders.userAgentHeader,
+        'VLC/3.0.20 LibVLC/3.0.20',
+      );
+      request.headers.set(HttpHeaders.refererHeader, '${profile.baseUrl}/');
+      request.headers.set(HttpHeaders.acceptHeader, '*/*');
+      final response = await request.close();
+      _traceTv(
+        'download http response url="$url" status=${response.statusCode} length=${response.contentLength}',
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw HttpException('HTTP ${response.statusCode}', uri: Uri.parse(url));
+      }
+      sink = file.openWrite();
+      var received = 0;
+      final total = response.contentLength;
+      await for (final chunk in response) {
+        received += chunk.length;
+        sink.add(chunk);
+        if (!mounted) continue;
+        final progress = total <= 0 ? -1.0 : received / total;
+        setState(() {
+          final current = _downloads[movie.id];
+          if (current != null) {
+            _downloads[movie.id] = current.copyWith(progress: progress);
+          }
+        });
+      }
+      _traceTv('download stream complete url="$url" received=$received');
+    } finally {
+      await sink?.close();
+      client.close(force: true);
+    }
+  }
+
+  List<String> _downloadUrlCandidates(String url) {
+    final candidates = <String>[url];
+    final uri = Uri.tryParse(url);
+    if (uri != null && uri.hasScheme) {
+      if (uri.scheme == 'https') {
+        candidates.add(uri.replace(scheme: 'http').toString());
+      } else if (uri.scheme == 'http') {
+        candidates.add(uri.replace(scheme: 'https').toString());
+      }
+    }
+    return candidates.toSet().toList(growable: false);
+  }
+
+  Future<void> _openDownloadedFile(DownloadTask task) async {
+    final path = task.filePath;
+    if (path == null || path.isEmpty) return;
+    _traceTv('open download requested path="$path"');
+    if (Platform.isMacOS) {
+      await Process.run('/usr/bin/open', [path]);
+      return;
+    }
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        final opened = await _storageChannel.invokeMethod<bool>('openFile', {
+          'path': path,
+        });
+        if (opened == true) {
+          _traceTv('open download native ok path="$path"');
+          if (!mounted) return;
+          setState(() => _status = 'Aperto file locale');
+          return;
+        }
+      } catch (_) {}
+    }
+    _traceTv('open download fallback path="$path"');
+    if (mounted) {
+      setState(() => _status = 'File salvato in: $path');
+    }
+  }
+
+  Future<Directory> _downloadBaseDirectory() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        final path = await _storageChannel.invokeMethod<String>(
+          'downloadsDirectory',
+        );
+        if (path != null && path.trim().isNotEmpty) {
+          return Directory(path);
+        }
+      } catch (_) {}
+    }
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      final home = Platform.environment['HOME'] ?? Directory.current.path;
+      return Directory('$home/Downloads/LelegIPTV');
+    }
+    return Directory('${Directory.systemTemp.path}/LelegIPTV-downloads');
+  }
+
+  Future<void> _notifyDownloadedFile(String path) async {
+    if (!(Platform.isAndroid || Platform.isIOS)) return;
+    try {
+      await _storageChannel.invokeMethod('notifyFileSaved', {'path': path});
+    } catch (_) {}
+  }
+
+  void _clearSearchAndReturnHome() {
+    _searchController.clear();
+    setState(() {
+      _query = '';
+      _section = AppSection.home;
+      _remoteSection = AppSection.home;
+      _remoteMenuMode = false;
+      _tvContentIndex = 0;
+      _status = 'Home';
+    });
+    _closeCompactDrawerIfNeeded();
+  }
+
+  void _closeCompactDrawerIfNeeded() {
+    final width = MediaQuery.maybeOf(context)?.size.width ?? 1200;
+    if (width >= 900) return;
+    Navigator.of(context).maybePop();
+  }
+
+  String _safeFileName(String value) {
+    final cleaned = value
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    return cleaned.isEmpty ? 'video' : cleaned;
   }
 
   Future<void> _openMovie(VodMovie movie) async {
+    final profile = _profile;
     setState(() {
       _section = AppSection.movies;
       _selectedMovie = movie;
+      _selectedMovieDescription = '';
+      _playerTitle = movie.name;
+      _status = 'Dettaglio film: ${movie.name}';
     });
-    await _playMovie(movie);
+    if (profile == null) return;
+    try {
+      final description = await XtreamClient(profile).vodDescription(movie);
+      if (!mounted || _selectedMovie?.id != movie.id) return;
+      setState(() => _selectedMovieDescription = description);
+    } catch (_) {
+      // Keep detail page usable even when provider omits VOD metadata.
+    }
   }
 
   Future<void> _openSeries(SeriesShow show) async {
@@ -655,16 +1896,18 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (profile == null) return;
     setState(() {
       _selectedSeries = show;
+      _selectedSeriesDescription = '';
       _seriesEpisodes = const [];
       _seriesDetailLoading = true;
       _status = 'Caricamento episodi: ${show.name}';
     });
     try {
-      final episodes = await XtreamClient(profile).seriesEpisodes(show);
+      final detail = await XtreamClient(profile).seriesDetail(show);
       if (!mounted) return;
       setState(() {
-        _seriesEpisodes = episodes;
-        _status = 'Episodi caricati: ${show.name} (${episodes.length})';
+        _selectedSeriesDescription = detail.description;
+        _seriesEpisodes = detail.episodes;
+        _status = 'Episodi caricati: ${show.name} (${detail.episodes.length})';
       });
     } catch (error) {
       if (mounted) setState(() => _status = 'Episodi non caricati: $error');
@@ -677,18 +1920,82 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final profile = _profile;
     final show = _selectedSeries;
     if (profile == null) return;
-    await _openMedia(
+    final opened = await _openMedia(
       XtreamClient(profile).episodeUrl(episode),
       show == null ? episode.title : '${show.name} - ${episode.title}',
     );
+    if (opened) {
+      _enterFullscreenOnPhonePlayback();
+    }
+    if (!opened && mounted) {
+      setState(
+        () => _status = 'Riproduzione episodio non riuscita: ${episode.title}',
+      );
+    }
   }
 
-  Future<void> _openMedia(String url, String title) async {
+  bool get _shouldUsePhoneFullscreenPlayback {
+    if (!mounted || !(Platform.isAndroid || Platform.isIOS)) {
+      return false;
+    }
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final shortestSide = mediaQuery?.size.shortestSide ?? 9999;
+    return shortestSide < 700;
+  }
+
+  void _enterFullscreenOnPhonePlayback({bool force = false}) {
+    if ((!force && !_shouldUsePhoneFullscreenPlayback) || _playerFocusMode) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _playerFocusMode ||
+          (!force && !_shouldUsePhoneFullscreenPlayback)) {
+        return;
+      }
+      _togglePlayerFocusMode();
+    });
+  }
+
+  Future<bool> _openMedia(
+    String url,
+    String title, {
+    bool preferApple = false,
+  }) async {
     setState(() {
       _playerTitle = title;
       _status = 'Apertura: $title';
     });
-    await _player.open(
+    if (preferApple || _useAppleVideoBackend) {
+      final opened = await _openAppleMedia(url, title);
+      if (opened) return true;
+      if (preferApple && !_useAppleVideoBackend) {
+        return _openMediaKitMedia(url);
+      }
+      return false;
+    }
+    if (isTizenRuntime) {
+      for (final candidate in _tizenMediaCandidates(url)) {
+        final opened = await _openTizenMedia(candidate, title);
+        if (opened) return true;
+      }
+      return false;
+    }
+    return _openMediaKitMedia(url);
+  }
+
+  Future<bool> _openMediaKitMedia(String url) async {
+    final appleController = _appleVideoController;
+    _appleVideoController = null;
+    if (mounted && appleController != null) setState(() {});
+    try {
+      await appleController?.pause();
+    } catch (_) {}
+    await appleController?.dispose();
+
+    final mediaPlayer = _player;
+    if (mediaPlayer == null) return false;
+    await mediaPlayer.open(
       Media(
         url,
         httpHeaders: _profile == null
@@ -700,6 +2007,145 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       ),
       play: true,
     );
+    return true;
+  }
+
+  Future<bool> _openAppleMedia(String url, String title) async {
+    final mediaPlayer = _player;
+    if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
+      try {
+        await mediaPlayer.stop();
+      } catch (_) {}
+    }
+    final previous = _appleVideoController;
+    _appleVideoController = null;
+    if (mounted) setState(() {});
+    try {
+      await previous?.pause();
+    } catch (_) {}
+    await previous?.dispose();
+
+    final controller = vp.VideoPlayerController.networkUrl(
+      Uri.parse(url),
+      httpHeaders: _profile == null
+          ? const <String, String>{}
+          : {
+              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+              'Referer': '${_profile!.baseUrl}/',
+            },
+      videoPlayerOptions: vp.VideoPlayerOptions(allowBackgroundPlayback: false),
+    );
+    controller.addListener(() {
+      final value = controller.value;
+      if (!mounted) return;
+      if (value.hasError) {
+        setState(() => _status = 'Player iPhone: ${value.errorDescription}');
+      } else if (value.isPlaying) {
+        setState(() => _status = 'In riproduzione');
+      }
+    });
+    _appleVideoController = controller;
+    setState(() => _status = 'Preparazione player iPhone: $title');
+    try {
+      await controller.initialize();
+      var size = controller.value.size;
+      for (var attempt = 0; attempt < 12; attempt += 1) {
+        if (size.width > 0 && size.height > 0) break;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        size = controller.value.size;
+      }
+      if (size.width <= 0 || size.height <= 0) {
+        throw StateError('Player Apple inizializzato senza traccia video');
+      }
+      await controller.play();
+      if (mounted) setState(() => _status = 'In riproduzione');
+      return true;
+    } catch (error) {
+      try {
+        await controller.pause();
+      } catch (_) {}
+      await controller.dispose();
+      if (_appleVideoController == controller) {
+        _appleVideoController = null;
+      }
+      if (mounted) {
+        setState(() => _status = 'Errore player iPhone: $error');
+      }
+      return false;
+    }
+  }
+
+  Future<bool> _openTizenMedia(String url, String title) async {
+    _traceTv('open tizen media title="$title" url="$url"');
+    final previous = _tizenVideoController;
+    _tizenVideoController = null;
+    if (mounted) setState(() {});
+    await previous?.pause();
+    await previous?.dispose();
+
+    final headers = _profile == null
+        ? const <String, String>{}
+        : {'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'};
+    final controller = avplay.VideoPlayerController.network(
+      url,
+      httpHeaders: headers,
+      formatHint: _tizenFormatHint(url),
+    );
+    controller.addListener(() {
+      final value = controller.value;
+      if (!mounted) return;
+      if (value.isInitialized) {
+        _traceTv(
+          'tizen value init=true playing=${value.isPlaying} buffering=${value.isBuffering} '
+          'pos=${value.position.inSeconds}s dur=${value.duration.end.inSeconds}s '
+          'err=${value.errorDescription}',
+        );
+      }
+      if (value.hasError) {
+        setState(() => _status = 'Player Tizen: ${value.errorDescription}');
+      } else if (value.isPlaying) {
+        setState(() => _status = 'In riproduzione');
+      }
+    });
+    _tizenVideoController = controller;
+    setState(() => _status = 'Preparazione AVPlay: $title');
+    try {
+      await controller.initialize();
+      await controller.play();
+      if (mounted) setState(() => _status = 'In riproduzione');
+      return true;
+    } catch (error) {
+      if (mounted) setState(() => _status = 'Errore AVPlay: $error');
+      return false;
+    }
+  }
+
+  List<String> _tizenMediaCandidates(String url) {
+    final candidates = <String>[url];
+    final uri = Uri.tryParse(url);
+    if (uri != null && uri.hasScheme) {
+      if (uri.scheme == 'https') {
+        candidates.add(uri.replace(scheme: 'http').toString());
+      } else if (uri.scheme == 'http') {
+        candidates.add(uri.replace(scheme: 'https').toString());
+      }
+    }
+    return candidates.toSet().toList(growable: false);
+  }
+
+  avplay_platform.VideoFormat? _tizenFormatHint(String url) {
+    final path = Uri.tryParse(url)?.path.toLowerCase() ?? url.toLowerCase();
+    if (path.endsWith('.m3u8')) return avplay_platform.VideoFormat.hls;
+    if (path.endsWith('.mpd')) return avplay_platform.VideoFormat.dash;
+    if (path.endsWith('.mp4') ||
+        path.endsWith('.mkv') ||
+        path.endsWith('.ts') ||
+        path.endsWith('.avi') ||
+        path.endsWith('.mov') ||
+        path.endsWith('.m4v')) {
+      return avplay_platform.VideoFormat.other;
+    }
+    return null;
   }
 
   Future<void> _loadShortEpg(LiveChannel channel) async {
@@ -796,28 +2242,47 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
     final missingChannels = channels
         .where((channel) => (_epgByChannel[channel.id] ?? const []).isEmpty)
-        .take(8)
+        .take(12)
         .toList();
-    if (missingChannels.isNotEmpty && xmlTvProgrammesCount == 0) {
+    if (missingChannels.isNotEmpty) {
       var loaded = channels.length - missingChannels.length;
+      var fallbackLoaded = 0;
+      var fallback429Count = 0;
       for (final channel in missingChannels) {
         if (!mounted) return;
         try {
           final programmes = await client.shortEpg(channel, limit: 12);
           if (!mounted) return;
           setState(() {
-            _epgByChannel[channel.id] = programmes;
+            if (programmes.isNotEmpty) {
+              final existing =
+                  _epgByChannel[channel.id] ?? const <EpgProgramme>[];
+              _epgByChannel[channel.id] = _mergeProgrammes(
+                existing,
+                programmes,
+              );
+              fallbackLoaded += 1;
+            } else {
+              _epgByChannel[channel.id] = const [];
+            }
             loaded += 1;
-            _status = 'Guida TV fallback: $loaded/${channels.length} canali';
+            _status =
+                'Guida TV fallback: $loaded/${channels.length} canali '
+                '($fallbackLoaded da get_short_epg)';
           });
         } catch (error) {
           if (!mounted) return;
+          if (error.toString().contains('HTTP 429')) {
+            fallback429Count += 1;
+          }
           setState(() {
             _epgByChannel[channel.id] = const [];
-            _status = 'Guida TV fallback limitato: $error';
+            _status =
+                'Guida TV fallback limitato'
+                '${fallback429Count > 0 ? ' ($fallback429Count rate limit)' : ''}: $error';
           });
-          break;
         }
+        await Future<void>.delayed(const Duration(milliseconds: 120));
       }
     }
     if (mounted) {
@@ -865,17 +2330,24 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 
   Future<void> _selectAudioTrack(AudioTrack track) async {
-    await _player.setAudioTrack(track);
+    await _player?.setAudioTrack(track);
     if (mounted) setState(() => _status = 'Audio: ${_trackLabel(track)}');
   }
 
   Future<void> _selectSubtitleTrack(SubtitleTrack track) async {
-    await _player.setSubtitleTrack(track);
+    await _player?.setSubtitleTrack(track);
     if (mounted) setState(() => _status = 'Sottotitoli: ${_trackLabel(track)}');
   }
 
   Future<void> _setRate(double value) async {
-    await _player.setRate(value);
+    final mediaPlayer = _player;
+    if (!isTizenRuntime && mediaPlayer != null) {
+      await mediaPlayer.setRate(value);
+    }
+    final appleController = _appleVideoController;
+    if (appleController != null) {
+      await appleController.setPlaybackSpeed(value);
+    }
     if (!mounted) return;
     setState(() {
       _rate = value;
@@ -884,21 +2356,62 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 
   void _togglePlayerFocusMode() {
-    final next = !_playerFocusMode;
+    _setPlayerFocusMode(!_playerFocusMode);
+  }
+
+  void _setPlayerFocusMode(bool next) {
+    if (_playerFocusMode == next) return;
     setState(() => _playerFocusMode = next);
-    unawaited(
-      windowManager.setFullScreen(next).catchError((error) {
-        if (mounted) {
-          setState(() => _status = 'Fullscreen non disponibile: $error');
-        }
-      }),
-    );
+    if (Platform.isAndroid || Platform.isIOS) {
+      unawaited(
+        _applyMobileOrientationPolicy(fullscreen: next).catchError((error) {
+          if (mounted) {
+            setState(() => _status = 'Fullscreen non disponibile: $error');
+          }
+        }),
+      );
+      return;
+    }
+    if (Platform.isMacOS || Platform.isWindows) {
+      unawaited(
+        windowManager.setFullScreen(next).catchError((error) {
+          if (mounted) {
+            setState(() => _status = 'Fullscreen non disponibile: $error');
+          }
+        }),
+      );
+    }
+  }
+
+  Future<void> _closePlayer() async {
+    final mediaPlayer = _player;
+    if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
+      await mediaPlayer.stop();
+    }
+    final appleController = _appleVideoController;
+    if (appleController != null) {
+      try {
+        await appleController.pause();
+      } catch (_) {}
+    }
+    final tizenController = _tizenVideoController;
+    if (tizenController != null) {
+      try {
+        await tizenController.pause();
+      } catch (_) {}
+    }
+    _setPlayerFocusMode(false);
+    if (!mounted) return;
+    setState(() {
+      _playerTitle = 'Scegli qualcosa da guardare.';
+      _status = 'Riproduzione chiusa';
+    });
   }
 
   void _showPictureInPictureUnavailable() {
     setState(
       () => _status =
-          'Picture-in-Picture nativo non disponibile in questa build Flutter/macOS.',
+          'Picture-in-Picture nativo non disponibile in questa build.',
     );
   }
 
@@ -959,6 +2472,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return _sortMovies(source, _movieSort).take(350).toList();
   }
 
+  List<VodMovie> get _favoriteMovies =>
+      _movies.where((movie) => _favoriteMovieIds.contains(movie.id)).toList();
+
+  List<VodMovie> get _watchLaterMovies =>
+      _movies.where((movie) => _watchLaterMovieIds.contains(movie.id)).toList();
+
   List<SeriesShow> get _filteredSeries {
     final q = _query.trim().toLowerCase();
     final byCategory = _seriesCategoryId.isEmpty
@@ -998,67 +2517,153 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return 'Categoria $id';
   }
 
-  String _sectionLabel(AppSection section) {
-    return switch (section) {
-      AppSection.home => 'Home',
-      AppSection.live => 'Live TV',
-      AppSection.movies => 'Film',
-      AppSection.series => 'Serie',
-      AppSection.favorites => 'Preferiti',
-      AppSection.watchLater => 'Da vedere',
-      AppSection.recentlyAdded => 'Aggiunti di recente',
-      AppSection.epg => 'Guida TV',
-      AppSection.downloads => 'Download',
-      AppSection.settings => 'Impostazioni',
-    };
-  }
-
   @override
   Widget build(BuildContext context) {
+    final compactLayout = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     if (_playerFocusMode) {
-      return Scaffold(
-        backgroundColor: Colors.black,
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: PlayerCard(
-              title: _playerTitle,
-              controller: _videoController,
-              player: _player,
-              rate: _rate,
-              labelFor: _trackLabel,
-              onAudioChanged: _selectAudioTrack,
-              onSubtitleChanged: _selectSubtitleTrack,
-              onRateChanged: _setRate,
-              focusMode: true,
-              onToggleFocusMode: _togglePlayerFocusMode,
-              onPictureInPicture: _showPictureInPictureUnavailable,
+      return Focus(
+        focusNode: _shellFocusNode,
+        autofocus: true,
+        onKeyEvent: (_, event) => _handleShellKey(event),
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: SafeArea(
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: PlayerCard(
+                    title: _playerTitle,
+                    controller: _videoController,
+                    player: _player,
+                    appleController: _appleVideoController,
+                    tizenController: _tizenVideoController,
+                    rate: _rate,
+                    labelFor: _trackLabel,
+                    onAudioChanged: _selectAudioTrack,
+                    onSubtitleChanged: _selectSubtitleTrack,
+                    onRateChanged: _setRate,
+                    focusMode: true,
+                    onToggleFocusMode: _togglePlayerFocusMode,
+                    onPictureInPicture: _showPictureInPictureUnavailable,
+                  ),
+                ),
+                Positioned(
+                  top: 20,
+                  right: 20,
+                  child: Material(
+                    color: Colors.black.withValues(alpha: 0.72),
+                    shape: const CircleBorder(),
+                    child: IconButton(
+                      tooltip: 'Chiudi player',
+                      onPressed: () => unawaited(_closePlayer()),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
       );
     }
-    return Scaffold(
-      body: Row(
-        children: [
-          LelegSidebar(
-            section: _section,
-            queryController: _searchController,
-            accountInfo: _accountInfo,
-            profile: _profile,
-            onQueryChanged: (value) => setState(() => _query = value),
-            onSectionChanged: (section) => unawaited(_changeSection(section)),
-          ),
-          Expanded(
-            child: Column(
-              children: [
-                _TopStatusBar(status: _status, loading: _loading),
-                Expanded(child: _buildSection()),
-              ],
+    return Focus(
+      focusNode: _shellFocusNode,
+      autofocus: true,
+      onKeyEvent: (_, event) => _handleShellKey(event),
+      child: compactLayout
+          ? Scaffold(
+              drawer: Drawer(
+                backgroundColor: LelegColors.sidebar,
+                child: SafeArea(
+                  child: LelegSidebar(
+                    compact: true,
+                    section: _section,
+                    remoteSection: _remoteMenuMode ? _remoteSection : null,
+                    queryController: _searchController,
+                    accountInfo: _accountInfo,
+                    profile: _profile,
+                    status: _status,
+                    loading: _loading || _epgLoading || _seriesDetailLoading,
+                    onQueryChanged: (value) => setState(() => _query = value),
+                    onResetSearch: _clearSearchAndReturnHome,
+                    onSectionChanged: (section) {
+                      Navigator.of(context).maybePop();
+                      unawaited(_changeSection(section));
+                    },
+                  ),
+                ),
+              ),
+              body: SafeArea(
+                child: Column(
+                  children: [
+                    Builder(
+                      builder: (context) => Container(
+                        height: 52,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: const BoxDecoration(
+                          color: LelegColors.sidebar,
+                          border: Border(
+                            bottom: BorderSide(color: LelegColors.line),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              onPressed: () =>
+                                  Scaffold.of(context).openDrawer(),
+                              icon: const Icon(Icons.menu),
+                              tooltip: 'Menu',
+                            ),
+                            const SizedBox(width: 6),
+                            const Expanded(child: _Brand(compact: true)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: FocusTraversalGroup(
+                        policy: ReadingOrderTraversalPolicy(),
+                        child: FocusScope(
+                          node: _contentFocusScopeNode,
+                          descendantsAreFocusable: !_remoteMenuMode,
+                          child: _buildSection(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : Scaffold(
+              body: Row(
+                children: [
+                  LelegSidebar(
+                    section: _section,
+                    remoteSection: _remoteMenuMode ? _remoteSection : null,
+                    queryController: _searchController,
+                    accountInfo: _accountInfo,
+                    profile: _profile,
+                    status: _status,
+                    loading: _loading || _epgLoading || _seriesDetailLoading,
+                    onQueryChanged: (value) => setState(() => _query = value),
+                    onResetSearch: _clearSearchAndReturnHome,
+                    onSectionChanged: (section) =>
+                        unawaited(_changeSection(section)),
+                  ),
+                  Expanded(
+                    child: FocusTraversalGroup(
+                      policy: ReadingOrderTraversalPolicy(),
+                      child: FocusScope(
+                        node: _contentFocusScopeNode,
+                        descendantsAreFocusable: !_remoteMenuMode,
+                        child: _buildSection(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1070,11 +2675,16 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         movies: _filteredMovies,
         series: _filteredSeries,
         onOpenLive: (channel) async {
+          _closeCompactDrawerIfNeeded();
           await _changeSection(AppSection.live);
           await _playLive(channel);
         },
-        onOpenMovie: _openMovie,
+        onOpenMovie: (movie) async {
+          _closeCompactDrawerIfNeeded();
+          await _openMovie(movie);
+        },
         onOpenSeries: (show) async {
+          _closeCompactDrawerIfNeeded();
           await _changeSection(AppSection.series);
           await _openSeries(show);
         },
@@ -1082,19 +2692,30 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
     return switch (_section) {
       AppSection.home => HomeScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         liveCount: _liveChannels.length,
         movieCount: _movies.length,
         seriesCount: _series.length,
         loading: _loading,
         status: _status,
         recentMovies: _movies.take(12).toList(),
+        favoriteMovies: _favoriteMovies.take(12).toList(),
+        watchLaterMovies: _watchLaterMovies.take(12).toList(),
+        favoriteCount: _favoriteMovieIds.length,
+        watchLaterCount: _watchLaterMovieIds.length,
         onOpenLive: () => unawaited(_changeSection(AppSection.live)),
         onOpenMovies: () => unawaited(_changeSection(AppSection.movies)),
         onOpenSeries: () => unawaited(_changeSection(AppSection.series)),
+        onOpenFavorites: () => unawaited(_changeSection(AppSection.favorites)),
+        onOpenWatchLater: () =>
+            unawaited(_changeSection(AppSection.watchLater)),
+        onOpenEpg: () => unawaited(_changeSection(AppSection.epg)),
+        onOpenDownloads: () => unawaited(_changeSection(AppSection.downloads)),
         onOpenSettings: () => unawaited(_changeSection(AppSection.settings)),
         onPlayMovie: _openMovie,
       ),
       AppSection.live => LiveScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         channels: _filteredLive,
         allCount: _liveChannels.length,
         categories: _liveCategories,
@@ -1103,6 +2724,8 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         playerTitle: _playerTitle,
         controller: _videoController,
         player: _player,
+        appleController: _appleVideoController,
+        tizenController: _tizenVideoController,
         rate: _rate,
         labelFor: _trackLabel,
         onPlay: _playLive,
@@ -1115,11 +2738,20 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         epg: _selectedLiveEpg,
         epgLoading: _epgLoading,
         selectedChannel: _selectedLiveChannel,
+        onSelectChannel: (channel) {
+          setState(() {
+            _selectedLiveChannel = channel;
+            _playerTitle = channel.name;
+            _status = 'Canale selezionato: ${channel.name}';
+          });
+          unawaited(_loadShortEpg(channel));
+        },
         onWatchProgramme: _playProgramme,
       ),
       AppSection.movies =>
         _selectedMovie == null
             ? MoviesScreen(
+                tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
                 movies: _filteredMovies,
                 allCount: _movies.length,
                 categories: _movieCategories,
@@ -1130,32 +2762,29 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                     setState(() => _movieCategoryId = id),
                 onSortChanged: (sort) => setState(() => _movieSort = sort),
                 onPlay: _openMovie,
-                onFavorite: (movie) => setState(() {
-                  _favoriteMovieIds.contains(movie.id)
-                      ? _favoriteMovieIds.remove(movie.id)
-                      : _favoriteMovieIds.add(movie.id);
-                }),
-                onWatchLater: (movie) => setState(() {
-                  _watchLaterMovieIds.contains(movie.id)
-                      ? _watchLaterMovieIds.remove(movie.id)
-                      : _watchLaterMovieIds.add(movie.id);
-                }),
+                onFavorite: _toggleFavoriteMovie,
+                onWatchLater: _toggleWatchLaterMovie,
+                onDownload: _downloadMovie,
                 favorites: _favoriteMovieIds,
                 watchLater: _watchLaterMovieIds,
               )
             : MovieDetailScreen(
                 movie: _selectedMovie!,
+                description: _selectedMovieDescription,
                 category: _categoryName(
                   _movieCategories,
                   _selectedMovie!.categoryId,
                 ),
                 controller: _videoController,
                 player: _player,
+                appleController: _appleVideoController,
+                tizenController: _tizenVideoController,
                 playerTitle: _playerTitle,
                 rate: _rate,
                 labelFor: _trackLabel,
                 onBack: () => setState(() => _selectedMovie = null),
                 onPlay: () => _playMovie(_selectedMovie!),
+                onDownload: () => _downloadMovie(_selectedMovie!),
                 onAudioChanged: _selectAudioTrack,
                 onSubtitleChanged: _selectSubtitleTrack,
                 onRateChanged: _setRate,
@@ -1163,57 +2792,64 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 onPictureInPicture: _showPictureInPictureUnavailable,
               ),
       AppSection.favorites => MoviesScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         title: 'Preferiti',
-        movies: _movies
-            .where((movie) => _favoriteMovieIds.contains(movie.id))
-            .toList(),
+        movies: _favoriteMovies,
         onPlay: _openMovie,
-        onFavorite: (movie) =>
-            setState(() => _favoriteMovieIds.remove(movie.id)),
-        onWatchLater: (movie) =>
-            setState(() => _watchLaterMovieIds.add(movie.id)),
+        onFavorite: _toggleFavoriteMovie,
+        onWatchLater: _toggleWatchLaterMovie,
+        onDownload: _downloadMovie,
         favorites: _favoriteMovieIds,
         watchLater: _watchLaterMovieIds,
       ),
       AppSection.watchLater => MoviesScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         title: 'Da vedere',
-        movies: _movies
-            .where((movie) => _watchLaterMovieIds.contains(movie.id))
-            .toList(),
+        movies: _watchLaterMovies,
         onPlay: _openMovie,
-        onFavorite: (movie) => setState(() => _favoriteMovieIds.add(movie.id)),
-        onWatchLater: (movie) =>
-            setState(() => _watchLaterMovieIds.remove(movie.id)),
+        onFavorite: _toggleFavoriteMovie,
+        onWatchLater: _toggleWatchLaterMovie,
+        onDownload: _downloadMovie,
         favorites: _favoriteMovieIds,
         watchLater: _watchLaterMovieIds,
       ),
       AppSection.recentlyAdded => MoviesScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         title: 'Aggiunti di recente',
         movies: _movies.take(350).toList(),
         onPlay: _openMovie,
-        onFavorite: (movie) => setState(() => _favoriteMovieIds.add(movie.id)),
-        onWatchLater: (movie) =>
-            setState(() => _watchLaterMovieIds.add(movie.id)),
+        onFavorite: _toggleFavoriteMovie,
+        onWatchLater: _toggleWatchLaterMovie,
+        onDownload: _downloadMovie,
         favorites: _favoriteMovieIds,
         watchLater: _watchLaterMovieIds,
       ),
       AppSection.settings => SettingsScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         profiles: _profiles,
         activeProfile: _profile,
         titleController: _titleController,
         serverController: _serverController,
         userController: _userController,
         passController: _passController,
-        manualUrlController: _manualUrlController,
-        onSave: () => _saveAndLoadProfile(),
+        titleFocusNode: _settingsTitleFocusNode,
+        serverFocusNode: _settingsServerFocusNode,
+        userFocusNode: _settingsUserFocusNode,
+        passFocusNode: _settingsPassFocusNode,
+        liveCount: _liveChannels.length,
+        movieCount: _movies.length,
+        seriesCount: _series.length,
+        favoriteCount: _favoriteMovieIds.length,
+        watchLaterCount: _watchLaterMovieIds.length,
+        onSave: () => _saveAndLoadProfile(forceRefresh: false),
         onReload: () => _loadCatalog(forceRefresh: true),
         onSelectProfile: _selectProfile,
         onDeleteProfile: _deleteProfile,
-        onOpenManualUrl: _openManualUrl,
       ),
       AppSection.series =>
         _selectedSeries == null
             ? SeriesScreen(
+                tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
                 shows: _filteredSeries,
                 allCount: _series.length,
                 categories: _seriesCategories,
@@ -1227,10 +2863,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
               )
             : SeriesDetailScreen(
                 show: _selectedSeries!,
+                description: _selectedSeriesDescription,
                 episodes: _seriesEpisodes,
                 loading: _seriesDetailLoading,
                 controller: _videoController,
                 player: _player,
+                appleController: _appleVideoController,
+                tizenController: _tizenVideoController,
                 playerTitle: _playerTitle,
                 rate: _rate,
                 labelFor: _trackLabel,
@@ -1246,6 +2885,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 onPictureInPicture: _showPictureInPictureUnavailable,
               ),
       AppSection.epg => EpgScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         channels: _epgChannels,
         categories: _liveCategories,
         selectedCategoryId: _liveCategoryId,
@@ -1264,10 +2904,17 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         },
         onWatchProgramme: _openLiveProgrammeFromGuide,
       ),
-      AppSection.downloads => const PlaceholderScreen(
-        title: 'Download',
-        message: 'Download offline da portare dopo resume/progressi.',
-        icon: Icons.download,
+      AppSection.downloads => DownloadsScreen(
+        tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
+        movies: _watchLaterMovies,
+        onPlay: _openMovie,
+        onFavorite: _toggleFavoriteMovie,
+        onWatchLater: _toggleWatchLaterMovie,
+        onDownload: _downloadMovie,
+        onOpenDownloadedFile: _openDownloadedFile,
+        favorites: _favoriteMovieIds,
+        watchLater: _watchLaterMovieIds,
+        downloads: _downloads,
       ),
     };
   }
@@ -1276,52 +2923,90 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 class LelegSidebar extends StatelessWidget {
   const LelegSidebar({
     required this.section,
+    required this.remoteSection,
     required this.queryController,
     required this.accountInfo,
     required this.profile,
+    required this.status,
+    required this.loading,
     required this.onQueryChanged,
+    required this.onResetSearch,
     required this.onSectionChanged,
+    this.compact = false,
     super.key,
   });
 
   final AppSection section;
+  final AppSection? remoteSection;
   final TextEditingController queryController;
   final XtreamAccountInfo? accountInfo;
   final XtreamProfile? profile;
+  final String status;
+  final bool loading;
+  final bool compact;
   final ValueChanged<String> onQueryChanged;
+  final VoidCallback onResetSearch;
   final ValueChanged<AppSection> onSectionChanged;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 300,
+      width: compact ? double.infinity : 300,
       decoration: const BoxDecoration(
         color: LelegColors.sidebar,
         border: Border(right: BorderSide(color: LelegColors.line)),
       ),
-      padding: const EdgeInsets.fromLTRB(18, 22, 18, 18),
+      padding: EdgeInsets.fromLTRB(18, compact ? 12 : 22, 18, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _Brand(),
-          const SizedBox(height: 28),
-          TextField(
-            controller: queryController,
-            decoration: const InputDecoration(
-              labelText: 'Cerca',
-              prefixIcon: Icon(Icons.search),
-              suffixIcon: Padding(
-                padding: EdgeInsets.only(right: 10),
-                child: Center(
-                  widthFactor: 1,
-                  child: Text(
-                    'Ctrl K',
-                    style: TextStyle(fontSize: 11, color: LelegColors.muted),
-                  ),
-                ),
+          _Brand(compact: compact),
+          SizedBox(height: compact ? 18 : 28),
+          if (queryController.text.trim().isNotEmpty) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onResetSearch,
+                icon: const Icon(Icons.home_outlined),
+                label: const Text('Reset ricerca'),
               ),
             ),
+            const SizedBox(height: 8),
+          ],
+          TextField(
+            controller: queryController,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              labelText: 'Cerca',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: queryController.text.trim().isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.only(right: 10),
+                      child: Center(
+                        widthFactor: 1,
+                        child: Text(
+                          'Ctrl K',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: LelegColors.muted,
+                          ),
+                        ),
+                      ),
+                    )
+                  : IconButton(
+                      tooltip: 'Pulisci ricerca',
+                      onPressed: onResetSearch,
+                      icon: const Icon(Icons.close),
+                    ),
+            ),
             onChanged: onQueryChanged,
+            onSubmitted: (_) {
+              onQueryChanged(queryController.text);
+              FocusScope.of(context).unfocus();
+              if (compact) {
+                Navigator.of(context).maybePop();
+              }
+            },
           ),
           const SizedBox(height: 18),
           Expanded(
@@ -1332,6 +3017,7 @@ class LelegSidebar extends StatelessWidget {
                   'Home',
                   AppSection.home,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1339,6 +3025,7 @@ class LelegSidebar extends StatelessWidget {
                   'Live TV',
                   AppSection.live,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1346,6 +3033,7 @@ class LelegSidebar extends StatelessWidget {
                   'Film',
                   AppSection.movies,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1353,6 +3041,7 @@ class LelegSidebar extends StatelessWidget {
                   'Serie',
                   AppSection.series,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1360,6 +3049,7 @@ class LelegSidebar extends StatelessWidget {
                   'Preferiti',
                   AppSection.favorites,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1367,6 +3057,7 @@ class LelegSidebar extends StatelessWidget {
                   'Da vedere',
                   AppSection.watchLater,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1374,6 +3065,7 @@ class LelegSidebar extends StatelessWidget {
                   'Aggiunti di recente',
                   AppSection.recentlyAdded,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1381,6 +3073,7 @@ class LelegSidebar extends StatelessWidget {
                   'Guida TV',
                   AppSection.epg,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
                 _NavItem(
@@ -1388,6 +3081,7 @@ class LelegSidebar extends StatelessWidget {
                   'Download',
                   AppSection.downloads,
                   section,
+                  remoteSection,
                   onSectionChanged,
                 ),
               ],
@@ -1402,18 +3096,36 @@ class LelegSidebar extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-          OutlinedButton.icon(
-            onPressed: () => onSectionChanged(AppSection.settings),
-            icon: const Icon(Icons.settings_outlined),
-            label: Text(
-              profile?.baseUrl.replaceFirst(RegExp(r'^https?://'), '') ??
-                  'Impostazioni',
-            ),
-            style: OutlinedButton.styleFrom(
-              alignment: Alignment.centerLeft,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+          _SidebarStatus(status: status, loading: loading),
+          const SizedBox(height: 10),
+          _RemoteActivate(
+            onActivate: () => onSectionChanged(AppSection.settings),
+            child: OutlinedButton.icon(
+              onPressed: () => onSectionChanged(AppSection.settings),
+              icon: const Icon(Icons.settings_outlined),
+              label: Text(
+                profile == null
+                    ? 'Impostazioni'
+                    : (profile!.title.trim().isEmpty
+                          ? 'Lista attiva'
+                          : profile!.title.trim()),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              style: OutlinedButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 14,
+                ),
+                side: BorderSide(
+                  color: remoteSection == AppSection.settings
+                      ? LelegColors.accent
+                      : LelegColors.line,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
             ),
           ),
@@ -1424,22 +3136,26 @@ class LelegSidebar extends StatelessWidget {
 }
 
 class _Brand extends StatelessWidget {
-  const _Brand();
+  const _Brand({this.compact = false});
+
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    final fontSize = compact ? 16.0 : 18.0;
+    final iconSize = compact ? 34.0 : 42.0;
+    return Row(
       children: [
-        Icon(Icons.all_inclusive, color: LelegColors.accent, size: 42),
-        SizedBox(width: 12),
+        Icon(Icons.all_inclusive, color: LelegColors.accent, size: iconSize),
+        SizedBox(width: compact ? 10 : 12),
         Text(
           'Leleg',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w800),
         ),
         Text(
           ' IPTV',
           style: TextStyle(
-            fontSize: 18,
+            fontSize: fontSize,
             fontWeight: FontWeight.w900,
             color: LelegColors.accent,
           ),
@@ -1449,52 +3165,131 @@ class _Brand extends StatelessWidget {
   }
 }
 
+class _RemoteActivate extends StatelessWidget {
+  const _RemoteActivate({required this.onActivate, required this.child});
+
+  final VoidCallback onActivate;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return FocusableActionDetector(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.numpadEnter): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+      },
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            onActivate();
+            return null;
+          },
+        ),
+      },
+      child: child,
+    );
+  }
+}
+
+class _EnsureVisibleWhenSelected extends StatelessWidget {
+  const _EnsureVisibleWhenSelected({
+    required this.selected,
+    required this.child,
+  });
+
+  final bool selected;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (selected) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        final renderObject = context.findRenderObject();
+        if (renderObject is! RenderBox || !renderObject.attached) return;
+        if (!renderObject.hasSize) return;
+        try {
+          Scrollable.ensureVisible(
+            context,
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          );
+        } catch (_) {
+          // Ignore transient layout timing issues on TV focus transitions.
+        }
+      });
+    }
+    return child;
+  }
+}
+
 class _NavItem extends StatelessWidget {
-  const _NavItem(this.icon, this.label, this.value, this.current, this.onTap);
+  const _NavItem(
+    this.icon,
+    this.label,
+    this.value,
+    this.current,
+    this.remote,
+    this.onTap,
+  );
 
   final IconData icon;
   final String label;
   final AppSection value;
   final AppSection current;
+  final AppSection? remote;
   final ValueChanged<AppSection> onTap;
 
   @override
   Widget build(BuildContext context) {
     final active = value == current;
+    final selected = value == remote;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Material(
-        color: active ? LelegColors.surface3 : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+      child: _RemoteActivate(
+        onActivate: () => onTap(value),
+        child: Material(
+          color: active || selected ? LelegColors.surface3 : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
-          onTap: () => onTap(value),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-            decoration: active
-                ? BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: LelegColors.accent.withValues(alpha: 0.45),
-                    ),
-                  )
-                : null,
-            child: Row(
-              children: [
-                Icon(
-                  icon,
-                  color: active ? LelegColors.accent : LelegColors.muted,
-                  size: 22,
-                ),
-                const SizedBox(width: 14),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: active ? LelegColors.fg : LelegColors.muted,
-                    fontWeight: FontWeight.w600,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => onTap(value),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+              decoration: active || selected
+                  ? BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: selected
+                            ? LelegColors.accent
+                            : LelegColors.accent.withValues(alpha: 0.45),
+                      ),
+                    )
+                  : null,
+              child: Row(
+                children: [
+                  Icon(
+                    icon,
+                    color: active || selected
+                        ? LelegColors.accent
+                        : LelegColors.muted,
+                    size: 22,
                   ),
-                ),
-              ],
+                  const SizedBox(width: 14),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: active ? LelegColors.fg : LelegColors.muted,
+                      fontWeight: active || selected
+                          ? FontWeight.w800
+                          : FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1503,8 +3298,8 @@ class _NavItem extends StatelessWidget {
   }
 }
 
-class _TopStatusBar extends StatelessWidget {
-  const _TopStatusBar({required this.status, required this.loading});
+class _SidebarStatus extends StatelessWidget {
+  const _SidebarStatus({required this.status, required this.loading});
 
   final String status;
   final bool loading;
@@ -1512,28 +3307,29 @@ class _TopStatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 56,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(
-        color: LelegColors.bg,
-        border: Border(bottom: BorderSide(color: LelegColors.line)),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: LelegColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: LelegColors.line),
       ),
       child: Row(
         children: [
           if (loading)
             const SizedBox(
-              width: 18,
-              height: 18,
+              width: 15,
+              height: 15,
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
-          if (loading) const SizedBox(width: 12),
+          if (loading) const SizedBox(width: 10),
           Expanded(
             child: Text(
               status,
-              textAlign: TextAlign.right,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: LelegColors.muted,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1546,103 +3342,553 @@ class _TopStatusBar extends StatelessWidget {
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
+    required this.tvSelectedIndex,
     required this.liveCount,
     required this.movieCount,
     required this.seriesCount,
     required this.loading,
     required this.status,
     required this.recentMovies,
+    required this.favoriteMovies,
+    required this.watchLaterMovies,
+    required this.favoriteCount,
+    required this.watchLaterCount,
     required this.onOpenLive,
     required this.onOpenMovies,
     required this.onOpenSeries,
+    required this.onOpenFavorites,
+    required this.onOpenWatchLater,
+    required this.onOpenEpg,
+    required this.onOpenDownloads,
     required this.onOpenSettings,
     required this.onPlayMovie,
     super.key,
   });
 
+  final int? tvSelectedIndex;
   final int liveCount;
   final int movieCount;
   final int seriesCount;
   final bool loading;
   final String status;
   final List<VodMovie> recentMovies;
+  final List<VodMovie> favoriteMovies;
+  final List<VodMovie> watchLaterMovies;
+  final int favoriteCount;
+  final int watchLaterCount;
   final VoidCallback onOpenLive;
   final VoidCallback onOpenMovies;
   final VoidCallback onOpenSeries;
+  final VoidCallback onOpenFavorites;
+  final VoidCallback onOpenWatchLater;
+  final VoidCallback onOpenEpg;
+  final VoidCallback onOpenDownloads;
   final VoidCallback onOpenSettings;
   final ValueChanged<VodMovie> onPlayMovie;
 
   @override
   Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
-      eyebrow: 'BUONANOTTE',
+      eyebrow: _greeting(),
       title: 'Leleg IPTV',
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(28, 16, 28, 28),
+        padding: EdgeInsets.fromLTRB(
+          mobile ? 16 : 28,
+          mobile ? 8 : 16,
+          mobile ? 16 : 28,
+          mobile ? 20 : 28,
+        ),
         children: [
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            children: [
-              _HeroCard(
-                title: 'TV in diretta',
-                subtitle: '$liveCount canali',
-                icon: Icons.live_tv,
-                onTap: onOpenLive,
-              ),
-              _HeroCard(
-                title: 'Film',
-                subtitle: '$movieCount titoli',
-                icon: Icons.movie,
-                onTap: onOpenMovies,
-              ),
-              _HeroCard(
-                title: 'Serie',
-                subtitle: '$seriesCount serie',
-                icon: Icons.layers,
-                onTap: onOpenSeries,
-              ),
-              _HeroCard(
-                title: 'Impostazioni',
-                subtitle: 'Provider e player',
-                icon: Icons.settings,
-                onTap: onOpenSettings,
-              ),
-            ],
+          _HomeHeroGrid(
+            selectedIndex: tvSelectedIndex,
+            liveCount: liveCount,
+            movieCount: movieCount,
+            seriesCount: seriesCount,
+            onOpenLive: onOpenLive,
+            onOpenMovies: onOpenMovies,
+            onOpenSeries: onOpenSeries,
           ),
           if (loading) ...[
             const SizedBox(height: 18),
             _LoadingBand(status: status),
           ],
-          const SizedBox(height: 28),
-          const Text(
-            'Aggiunti di recente',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+          const SizedBox(height: 18),
+          _HomeQuickActions(
+            selectedIndex: tvSelectedIndex == null
+                ? null
+                : tvSelectedIndex! - 3,
+            favoriteCount: favoriteCount,
+            watchLaterCount: watchLaterCount,
+            onOpenFavorites: onOpenFavorites,
+            onOpenWatchLater: onOpenWatchLater,
+            onOpenEpg: onOpenEpg,
+            onOpenDownloads: onOpenDownloads,
+            onOpenSettings: onOpenSettings,
           ),
-          const SizedBox(height: 14),
-          if (recentMovies.isEmpty)
-            const _EmptyState(message: 'Carica una playlist in Impostazioni.')
-          else
-            SizedBox(
-              height: 290,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: recentMovies.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 14),
-                itemBuilder: (_, index) => _MoviePosterCard(
-                  movie: recentMovies[index],
-                  onPlay: onPlayMovie,
+          const SizedBox(height: 28),
+          _HomeMovieStrip(
+            title: 'Preferiti',
+            empty: 'Nessun preferito salvato.',
+            movies: favoriteMovies,
+            onPlayMovie: onPlayMovie,
+          ),
+          const SizedBox(height: 28),
+          _HomeMovieStrip(
+            title: 'Da vedere',
+            empty: 'Nessun titolo in Da vedere.',
+            movies: watchLaterMovies,
+            onPlayMovie: onPlayMovie,
+          ),
+          const SizedBox(height: 28),
+          _HomeMovieStrip(
+            title: 'Aggiunti di recente',
+            empty: 'Carica una playlist in Impostazioni.',
+            movies: recentMovies,
+            onPlayMovie: onPlayMovie,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _greeting() {
+    return 'IN EVIDENZA';
+  }
+}
+
+class _HomeHeroGrid extends StatelessWidget {
+  const _HomeHeroGrid({
+    required this.selectedIndex,
+    required this.liveCount,
+    required this.movieCount,
+    required this.seriesCount,
+    required this.onOpenLive,
+    required this.onOpenMovies,
+    required this.onOpenSeries,
+  });
+
+  final int? selectedIndex;
+  final int liveCount;
+  final int movieCount;
+  final int seriesCount;
+  final VoidCallback onOpenLive;
+  final VoidCallback onOpenMovies;
+  final VoidCallback onOpenSeries;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = _useCompactAdaptiveConstraints(constraints);
+        if (compact) {
+          return Column(
+            children: [
+              _HubTile(
+                title: 'Live TV',
+                subtitle: '$liveCount canali e cosa va in onda adesso.',
+                icon: Icons.live_tv,
+                onTap: onOpenLive,
+                prominent: true,
+                selected: selectedIndex == 0,
+              ),
+              const SizedBox(height: 14),
+              _HubTile(
+                title: 'Film',
+                subtitle: '$movieCount titoli nel catalogo.',
+                icon: Icons.movie,
+                onTap: onOpenMovies,
+                selected: selectedIndex == 1,
+              ),
+              const SizedBox(height: 14),
+              _HubTile(
+                title: 'Serie',
+                subtitle: '$seriesCount serie e stagioni complete.',
+                icon: Icons.layers,
+                onTap: onOpenSeries,
+                selected: selectedIndex == 2,
+              ),
+            ],
+          );
+        }
+        return SizedBox(
+          height: 360,
+          child: Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: _HubTile(
+                  title: 'Live TV',
+                  subtitle: '$liveCount canali e cosa va in onda adesso.',
+                  icon: Icons.live_tv,
+                  onTap: onOpenLive,
+                  prominent: true,
+                  selected: selectedIndex == 0,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: _HubTile(
+                        title: 'Film',
+                        subtitle: '$movieCount titoli nel catalogo.',
+                        icon: Icons.movie,
+                        onTap: onOpenMovies,
+                        selected: selectedIndex == 1,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: _HubTile(
+                        title: 'Serie',
+                        subtitle: '$seriesCount serie e stagioni complete.',
+                        icon: Icons.layers,
+                        onTap: onOpenSeries,
+                        selected: selectedIndex == 2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _HubTile extends StatelessWidget {
+  const _HubTile({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+    this.prominent = false,
+    this.selected = false,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool prominent;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final gradientColors = prominent
+        ? const [Color(0xFF0E3540), Color(0xFF122026), LelegColors.surface]
+        : const [Color(0xFF0D2D36), Color(0xFF142229), LelegColors.surface];
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final mobile = constraints.maxWidth < 520;
+          return Material(
+            color: LelegColors.surface,
+            borderRadius: BorderRadius.circular(18),
+            child: _RemoteActivate(
+              onActivate: onTap,
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(18),
+                child: Container(
+                  width: double.infinity,
+                  constraints: BoxConstraints(
+                    minHeight: prominent
+                        ? (mobile ? 180 : 220)
+                        : (mobile ? 128 : 150),
+                  ),
+                  padding: EdgeInsets.all(
+                    prominent ? (mobile ? 22 : 32) : (mobile ? 18 : 22),
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: selected ? LelegColors.accent : LelegColors.line,
+                      width: selected ? 2 : 1,
+                    ),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: gradientColors,
+                      stops: const [0, 0.48, 1],
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Icon(
+                            icon,
+                            color: LelegColors.accent,
+                            size: prominent
+                                ? (mobile ? 54 : 74)
+                                : (mobile ? 34 : 42),
+                          ),
+                          const Icon(
+                            Icons.chevron_right,
+                            color: LelegColors.muted,
+                          ),
+                        ],
+                      ),
+                      SizedBox(
+                        height: prominent
+                            ? (mobile ? 46 : 64)
+                            : (mobile ? 18 : 24),
+                      ),
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: prominent
+                              ? (mobile ? 42 : 72)
+                              : (mobile ? 24 : 30),
+                          height: 0.92,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: prominent ? (mobile ? 8 : 12) : 7),
+                      Text(
+                        subtitle,
+                        maxLines: prominent ? (mobile ? 3 : 2) : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: LelegColors.muted),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-        ],
+          );
+        },
       ),
+    );
+  }
+}
+
+class _HomeQuickActions extends StatelessWidget {
+  const _HomeQuickActions({
+    required this.selectedIndex,
+    required this.favoriteCount,
+    required this.watchLaterCount,
+    required this.onOpenFavorites,
+    required this.onOpenWatchLater,
+    required this.onOpenEpg,
+    required this.onOpenDownloads,
+    required this.onOpenSettings,
+  });
+
+  final int? selectedIndex;
+  final int favoriteCount;
+  final int watchLaterCount;
+  final VoidCallback onOpenFavorites;
+  final VoidCallback onOpenWatchLater;
+  final VoidCallback onOpenEpg;
+  final VoidCallback onOpenDownloads;
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final actions = [
+      _QuickActionData(
+        Icons.star,
+        'Preferiti',
+        '$favoriteCount salvati',
+        onOpenFavorites,
+      ),
+      _QuickActionData(
+        Icons.bookmark,
+        'Da vedere',
+        '$watchLaterCount titoli',
+        onOpenWatchLater,
+      ),
+      _QuickActionData(
+        Icons.calendar_month,
+        'Guida TV',
+        'Timeline e archivio',
+        onOpenEpg,
+      ),
+      _QuickActionData(
+        Icons.download,
+        'Download',
+        'Offline e coda',
+        onOpenDownloads,
+      ),
+      _QuickActionData(
+        Icons.settings,
+        'Impostazioni',
+        'Provider e catalogo',
+        onOpenSettings,
+      ),
+    ];
+    return SizedBox(
+      height: mobile ? 72 : 82,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: actions.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
+        itemBuilder: (_, index) {
+          final action = actions[index];
+          return _QuickActionChip(
+            action: action,
+            selected: selectedIndex == index,
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _QuickActionData {
+  const _QuickActionData(this.icon, this.title, this.subtitle, this.onTap);
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+}
+
+class _QuickActionChip extends StatelessWidget {
+  const _QuickActionChip({required this.action, required this.selected});
+
+  final _QuickActionData action;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: SizedBox(
+        width: 240,
+        child: Material(
+          color: LelegColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          child: InkWell(
+            onTap: action.onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: selected ? LelegColors.accent : LelegColors.line,
+                  width: selected ? 2 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(action.icon, color: LelegColors.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          action.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        Text(
+                          action.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: LelegColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeMovieStrip extends StatelessWidget {
+  const _HomeMovieStrip({
+    required this.title,
+    required this.empty,
+    required this.movies,
+    required this.onPlayMovie,
+  });
+
+  final String title;
+  final String empty;
+  final List<VodMovie> movies;
+  final ValueChanged<VodMovie> onPlayMovie;
+
+  @override
+  Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: mobile ? 18 : 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (movies.isEmpty)
+          _InlineEmptyStrip(message: empty)
+        else
+          SizedBox(
+            height: mobile ? 240 : 290,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: movies.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              itemBuilder: (_, index) =>
+                  _MoviePosterCard(movie: movies[index], onPlay: onPlayMovie),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _InlineEmptyStrip extends StatelessWidget {
+  const _InlineEmptyStrip({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 96,
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      decoration: BoxDecoration(
+        color: LelegColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: LelegColors.line),
+      ),
+      child: Text(message, style: const TextStyle(color: LelegColors.muted)),
     );
   }
 }
 
 class LiveScreen extends StatelessWidget {
   const LiveScreen({
+    required this.tvSelectedIndex,
     required this.channels,
     required this.allCount,
     required this.categories,
@@ -1651,6 +3897,8 @@ class LiveScreen extends StatelessWidget {
     required this.playerTitle,
     required this.controller,
     required this.player,
+    this.appleController,
+    this.tizenController,
     required this.rate,
     required this.labelFor,
     required this.onPlay,
@@ -1663,18 +3911,22 @@ class LiveScreen extends StatelessWidget {
     required this.epg,
     required this.epgLoading,
     required this.selectedChannel,
+    required this.onSelectChannel,
     required this.onWatchProgramme,
     super.key,
   });
 
+  final int? tvSelectedIndex;
   final List<LiveChannel> channels;
   final int allCount;
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
   final String Function(String id) categoryName;
   final String playerTitle;
-  final VideoController controller;
-  final Player player;
+  final VideoController? controller;
+  final Player? player;
+  final vp.VideoPlayerController? appleController;
+  final avplay.VideoPlayerController? tizenController;
   final double rate;
   final String Function(dynamic value) labelFor;
   final ValueChanged<LiveChannel> onPlay;
@@ -1687,6 +3939,7 @@ class LiveScreen extends StatelessWidget {
   final List<EpgProgramme> epg;
   final bool epgLoading;
   final LiveChannel? selectedChannel;
+  final ValueChanged<LiveChannel> onSelectChannel;
   final void Function(LiveChannel channel, EpgProgramme programme)
   onWatchProgramme;
 
@@ -1695,11 +3948,170 @@ class LiveScreen extends StatelessWidget {
     return _PageScaffold(
       title: 'Live TV',
       eyebrow: '${channels.length} di $allCount canali',
-      child: Row(
-        children: [
-          SizedBox(
-            width: 390,
-            child: Column(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final mobile = _useCompactAdaptiveConstraints(constraints);
+          final channelList = channels.isEmpty
+              ? const _EmptyState(message: 'Nessun canale caricato.')
+              : ListView.separated(
+                  padding: EdgeInsets.fromLTRB(
+                    mobile ? 16 : 20,
+                    0,
+                    mobile ? 16 : 20,
+                    mobile ? 16 : 20,
+                  ),
+                  itemCount: channels.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (_, index) {
+                    final channel = channels[index];
+                    return _ChannelTile(
+                      channel: channel,
+                      onOpen: mobile ? onSelectChannel : onPlay,
+                      onPlay: onPlay,
+                      category: categoryName(channel.categoryId),
+                      selected: tvSelectedIndex == index,
+                    );
+                  },
+                );
+          final playerPane = Padding(
+            padding: EdgeInsets.all(mobile ? 16 : 24),
+            child: mobile
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        height: 240,
+                        child: PlayerCard(
+                          title: playerTitle,
+                          controller: controller,
+                          player: player,
+                          appleController: appleController,
+                          tizenController: tizenController,
+                          rate: rate,
+                          labelFor: labelFor,
+                          onAudioChanged: onAudioChanged,
+                          onSubtitleChanged: onSubtitleChanged,
+                          onRateChanged: onRateChanged,
+                          onToggleFocusMode: onToggleFocusMode,
+                          onPictureInPicture: onPictureInPicture,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        height: 280,
+                        child: _EpgProgrammeList(
+                          programmes: epg,
+                          loading: epgLoading,
+                          emptyMessage:
+                              'Seleziona un canale per vedere la guida.',
+                          channel: selectedChannel,
+                          onWatch: onWatchProgramme,
+                        ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      Expanded(
+                        flex: 5,
+                        child: PlayerCard(
+                          title: playerTitle,
+                          controller: controller,
+                          player: player,
+                          appleController: appleController,
+                          tizenController: tizenController,
+                          rate: rate,
+                          labelFor: labelFor,
+                          onAudioChanged: onAudioChanged,
+                          onSubtitleChanged: onSubtitleChanged,
+                          onRateChanged: onRateChanged,
+                          onToggleFocusMode: onToggleFocusMode,
+                          onPictureInPicture: onPictureInPicture,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Expanded(
+                        flex: 3,
+                        child: _EpgProgrammeList(
+                          programmes: epg,
+                          loading: epgLoading,
+                          emptyMessage:
+                              'Seleziona un canale per vedere la guida.',
+                          channel: selectedChannel,
+                          onWatch: onWatchProgramme,
+                        ),
+                      ),
+                    ],
+                  ),
+          );
+          if (mobile) {
+            final selectedInfo = selectedChannel == null
+                ? const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    child: _InlineNotice(
+                      text:
+                          'Tocca un canale per aprire il player in orizzontale e vedere qui la guida estesa.',
+                    ),
+                  )
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: LelegColors.surface2,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: LelegColors.line),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            selectedChannel!.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            categoryName(selectedChannel!.categoryId),
+                            style: const TextStyle(
+                              color: LelegColors.muted,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed: () => onPlay(selectedChannel!),
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size.fromHeight(48),
+                              ),
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text(
+                                'Apri player',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            height: 112,
+                            child: _CompactEpgRail(
+                              programmes: epg,
+                              loading: epgLoading,
+                              channel: selectedChannel,
+                              onWatch: onWatchProgramme,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+            return Column(
               children: [
                 _CatalogToolbar(
                   categories: categories,
@@ -1707,63 +4119,53 @@ class LiveScreen extends StatelessWidget {
                   categoryName: categoryName,
                   onCategoryChanged: onCategoryChanged,
                 ),
+                _QuickCategoryStrip(
+                  categories: categories,
+                  selectedCategoryId: selectedCategoryId,
+                  onCategoryChanged: onCategoryChanged,
+                ),
+                selectedInfo,
+                const SizedBox(height: 8),
                 Expanded(
-                  child: channels.isEmpty
-                      ? const _EmptyState(message: 'Nessun canale caricato.')
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                          itemCount: channels.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (_, index) {
-                            final channel = channels[index];
-                            return _ChannelTile(
-                              channel: channel,
-                              onPlay: onPlay,
-                              category: categoryName(channel.categoryId),
-                            );
-                          },
-                        ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: LelegColors.surface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: LelegColors.line),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: channelList,
+                      ),
+                    ),
+                  ),
                 ),
               ],
-            ),
-          ),
-          const VerticalDivider(width: 1, color: LelegColors.line),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  Flexible(
-                    flex: 5,
-                    child: PlayerCard(
-                      title: playerTitle,
-                      controller: controller,
-                      player: player,
-                      rate: rate,
-                      labelFor: labelFor,
-                      onAudioChanged: onAudioChanged,
-                      onSubtitleChanged: onSubtitleChanged,
-                      onRateChanged: onRateChanged,
-                      onToggleFocusMode: onToggleFocusMode,
-                      onPictureInPicture: onPictureInPicture,
+            );
+          }
+          return Row(
+            children: [
+              SizedBox(
+                width: 390,
+                child: Column(
+                  children: [
+                    _CatalogToolbar(
+                      categories: categories,
+                      selectedCategoryId: selectedCategoryId,
+                      categoryName: categoryName,
+                      onCategoryChanged: onCategoryChanged,
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  Flexible(
-                    flex: 2,
-                    child: _EpgProgrammeList(
-                      programmes: epg,
-                      loading: epgLoading,
-                      emptyMessage: 'Seleziona un canale per vedere la guida.',
-                      channel: selectedChannel,
-                      onWatch: onWatchProgramme,
-                    ),
-                  ),
-                ],
+                    Expanded(child: channelList),
+                  ],
+                ),
               ),
-            ),
-          ),
-        ],
+              const VerticalDivider(width: 1, color: LelegColors.line),
+              Expanded(child: playerPane),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1802,8 +4204,11 @@ class SearchResultsScreen extends StatelessWidget {
             title: 'Live TV',
             items: liveChannels.take(18).toList(),
             empty: 'Nessun canale trovato.',
-            itemBuilder: (channel) =>
-                _ChannelTile(channel: channel, onPlay: onOpenLive),
+            itemBuilder: (channel) => _ChannelTile(
+              channel: channel,
+              onOpen: onOpenLive,
+              onPlay: onOpenLive,
+            ),
           ),
           const SizedBox(height: 26),
           _SearchSection<VodMovie>(
@@ -1884,19 +4289,22 @@ class _SearchMediaTile extends StatelessWidget {
     return Material(
       color: LelegColors.surface2,
       borderRadius: BorderRadius.circular(14),
-      child: ListTile(
-        leading: _Logo(url: image, fallback: Icons.movie),
-        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: subtitle.isEmpty
-            ? null
-            : Text(
-                subtitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: LelegColors.muted),
-              ),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
+      child: _RemoteActivate(
+        onActivate: onTap,
+        child: ListTile(
+          leading: _Logo(url: image, fallback: Icons.movie),
+          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: subtitle.isEmpty
+              ? null
+              : Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: LelegColors.muted),
+                ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: onTap,
+        ),
       ),
     );
   }
@@ -1904,12 +4312,14 @@ class _SearchMediaTile extends StatelessWidget {
 
 class MoviesScreen extends StatelessWidget {
   const MoviesScreen({
+    required this.tvSelectedIndex,
     required this.movies,
     required this.onPlay,
     required this.onFavorite,
     required this.onWatchLater,
     required this.favorites,
     required this.watchLater,
+    this.onDownload,
     this.title = 'Film',
     this.allCount,
     this.categories = const [],
@@ -1921,6 +4331,7 @@ class MoviesScreen extends StatelessWidget {
     super.key,
   });
 
+  final int? tvSelectedIndex;
   final String title;
   final List<VodMovie> movies;
   final int? allCount;
@@ -1933,11 +4344,13 @@ class MoviesScreen extends StatelessWidget {
   final ValueChanged<VodMovie> onPlay;
   final ValueChanged<VodMovie> onFavorite;
   final ValueChanged<VodMovie> onWatchLater;
+  final ValueChanged<VodMovie>? onDownload;
   final Set<int> favorites;
   final Set<int> watchLater;
 
   @override
   Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: title,
       eyebrow: allCount == null
@@ -1958,14 +4371,13 @@ class MoviesScreen extends StatelessWidget {
             child: movies.isEmpty
                 ? const _EmptyState(message: 'Nessun titolo da mostrare.')
                 : GridView.builder(
-                    padding: const EdgeInsets.all(28),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 210,
-                          mainAxisExtent: 332,
-                          crossAxisSpacing: 18,
-                          mainAxisSpacing: 20,
-                        ),
+                    padding: EdgeInsets.all(mobile ? 16 : 28),
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: mobile ? 170 : 210,
+                      mainAxisExtent: mobile ? 288 : 332,
+                      crossAxisSpacing: mobile ? 12 : 18,
+                      mainAxisSpacing: mobile ? 14 : 20,
+                    ),
                     itemCount: movies.length,
                     itemBuilder: (_, index) {
                       final movie = movies[index];
@@ -1975,8 +4387,10 @@ class MoviesScreen extends StatelessWidget {
                         onPlay: onPlay,
                         onFavorite: onFavorite,
                         onWatchLater: onWatchLater,
+                        onDownload: onDownload,
                         isFavorite: favorites.contains(movie.id),
                         isWatchLater: watchLater.contains(movie.id),
+                        selected: tvSelectedIndex == index,
                       );
                     },
                   ),
@@ -1990,14 +4404,18 @@ class MoviesScreen extends StatelessWidget {
 class MovieDetailScreen extends StatelessWidget {
   const MovieDetailScreen({
     required this.movie,
+    required this.description,
     required this.category,
     required this.controller,
     required this.player,
+    this.appleController,
+    this.tizenController,
     required this.playerTitle,
     required this.rate,
     required this.labelFor,
     required this.onBack,
     required this.onPlay,
+    required this.onDownload,
     required this.onAudioChanged,
     required this.onSubtitleChanged,
     required this.onRateChanged,
@@ -2007,14 +4425,18 @@ class MovieDetailScreen extends StatelessWidget {
   });
 
   final VodMovie movie;
+  final String description;
   final String category;
-  final VideoController controller;
-  final Player player;
+  final VideoController? controller;
+  final Player? player;
+  final vp.VideoPlayerController? appleController;
+  final avplay.VideoPlayerController? tizenController;
   final String playerTitle;
   final double rate;
   final String Function(dynamic value) labelFor;
   final VoidCallback onBack;
   final VoidCallback onPlay;
+  final VoidCallback onDownload;
   final ValueChanged<AudioTrack> onAudioChanged;
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
   final ValueChanged<double> onRateChanged;
@@ -2023,6 +4445,7 @@ class MovieDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: movie.name,
       eyebrow: [
@@ -2031,45 +4454,120 @@ class MovieDetailScreen extends StatelessWidget {
         movie.containerExtension.toUpperCase(),
       ].join(' · '),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
+        padding: EdgeInsets.fromLTRB(
+          mobile ? 16 : 28,
+          8,
+          mobile ? 16 : 28,
+          mobile ? 18 : 28,
+        ),
         child: Column(
           children: [
-            Row(
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
               children: [
                 OutlinedButton.icon(
                   onPressed: onBack,
                   icon: const Icon(Icons.arrow_back),
                   label: const Text('Film'),
                 ),
-                const SizedBox(width: 12),
                 FilledButton.icon(
                   onPressed: onPlay,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Play'),
                 ),
+                OutlinedButton.icon(
+                  onPressed: onDownload,
+                  icon: const Icon(Icons.download),
+                  label: const Text('Download'),
+                ),
               ],
             ),
             const SizedBox(height: 18),
             Expanded(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    width: 260,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: _Poster(url: movie.logo),
-                    ),
-                  ),
-                  const SizedBox(width: 22),
-                  Expanded(
-                    child: Column(
+              child: mobile
+                  ? ListView(
                       children: [
+                        SizedBox(
+                          height: 280,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: _Poster(url: movie.logo),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: LelegColors.surface2,
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: LelegColors.line),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  _MetaBadge(
+                                    icon: Icons.movie_outlined,
+                                    label: category.isEmpty ? 'Film' : category,
+                                  ),
+                                  if (movie.rating.isNotEmpty)
+                                    _MetaBadge(
+                                      icon: Icons.star_outline,
+                                      label: movie.rating,
+                                    ),
+                                  _MetaBadge(
+                                    icon: Icons.video_file_outlined,
+                                    label: movie.containerExtension
+                                        .toUpperCase(),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 14),
+                              if (description.trim().isNotEmpty)
+                                Text(
+                                  description.trim(),
+                                  style: const TextStyle(
+                                    color: LelegColors.muted,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.45,
+                                  ),
+                                )
+                              else
+                                const Text(
+                                  'Nessuna descrizione disponibile dal provider.',
+                                  style: TextStyle(
+                                    color: LelegColors.muted,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.45,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          width: 260,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: _Poster(url: movie.logo),
+                          ),
+                        ),
+                        const SizedBox(width: 22),
                         Expanded(
                           child: PlayerCard(
                             title: playerTitle,
                             controller: controller,
                             player: player,
+                            appleController: appleController,
+                            tizenController: tizenController,
                             rate: rate,
                             labelFor: labelFor,
                             onAudioChanged: onAudioChanged,
@@ -2081,9 +4579,6 @@ class MovieDetailScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                  ),
-                ],
-              ),
             ),
           ],
         ),
@@ -2094,6 +4589,7 @@ class MovieDetailScreen extends StatelessWidget {
 
 class SeriesScreen extends StatelessWidget {
   const SeriesScreen({
+    required this.tvSelectedIndex,
     required this.shows,
     required this.allCount,
     required this.categories,
@@ -2106,6 +4602,7 @@ class SeriesScreen extends StatelessWidget {
     super.key,
   });
 
+  final int? tvSelectedIndex;
   final List<SeriesShow> shows;
   final int allCount;
   final List<XtreamCategory> categories;
@@ -2118,6 +4615,7 @@ class SeriesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: 'Serie',
       eyebrow: '${shows.length} di $allCount nel catalogo',
@@ -2135,19 +4633,19 @@ class SeriesScreen extends StatelessWidget {
             child: shows.isEmpty
                 ? const _EmptyState(message: 'Nessuna serie da mostrare.')
                 : GridView.builder(
-                    padding: const EdgeInsets.all(28),
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 210,
-                          mainAxisExtent: 320,
-                          crossAxisSpacing: 18,
-                          mainAxisSpacing: 20,
-                        ),
+                    padding: EdgeInsets.all(mobile ? 16 : 28),
+                    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: mobile ? 170 : 210,
+                      mainAxisExtent: mobile ? 280 : 320,
+                      crossAxisSpacing: mobile ? 12 : 18,
+                      mainAxisSpacing: mobile ? 14 : 20,
+                    ),
                     itemCount: shows.length,
                     itemBuilder: (_, index) => _SeriesPosterCard(
                       show: shows[index],
                       category: categoryName(shows[index].categoryId),
                       onOpen: onOpen,
+                      selected: tvSelectedIndex == index,
                     ),
                   ),
           ),
@@ -2160,10 +4658,13 @@ class SeriesScreen extends StatelessWidget {
 class SeriesDetailScreen extends StatelessWidget {
   const SeriesDetailScreen({
     required this.show,
+    required this.description,
     required this.episodes,
     required this.loading,
     required this.controller,
     required this.player,
+    this.appleController,
+    this.tizenController,
     required this.playerTitle,
     required this.rate,
     required this.labelFor,
@@ -2178,10 +4679,13 @@ class SeriesDetailScreen extends StatelessWidget {
   });
 
   final SeriesShow show;
+  final String description;
   final List<SeriesEpisode> episodes;
   final bool loading;
-  final VideoController controller;
-  final Player player;
+  final VideoController? controller;
+  final Player? player;
+  final vp.VideoPlayerController? appleController;
+  final avplay.VideoPlayerController? tizenController;
   final String playerTitle;
   final double rate;
   final String Function(dynamic value) labelFor;
@@ -2195,17 +4699,15 @@ class SeriesDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: show.name,
       eyebrow: '${episodes.length} episodi',
-      child: Row(
-        children: [
-          SizedBox(
-            width: 430,
-            child: Column(
+      child: mobile
+          ? ListView(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
                   child: Row(
                     children: [
                       OutlinedButton.icon(
@@ -2223,33 +4725,103 @@ class SeriesDetailScreen extends StatelessWidget {
                     ],
                   ),
                 ),
-                Expanded(
-                  child: episodes.isEmpty
-                      ? const _EmptyState(message: 'Nessun episodio caricato.')
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                          itemCount: episodes.length,
-                          separatorBuilder: (_, _) => const SizedBox(height: 8),
-                          itemBuilder: (_, index) => _EpisodeTile(
-                            episode: episodes[index],
-                            onPlay: onPlay,
-                          ),
-                        ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: LelegColors.surface2,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: LelegColors.line),
+                    ),
+                    child: Text(
+                      description.trim().isNotEmpty
+                          ? description.trim()
+                          : 'Nessuna descrizione disponibile dal provider.',
+                      style: const TextStyle(
+                        color: LelegColors.muted,
+                        fontWeight: FontWeight.w700,
+                        height: 1.45,
+                      ),
+                    ),
+                  ),
                 ),
+                const SizedBox(height: 14),
+                if (episodes.isEmpty)
+                  const _EmptyState(message: 'Nessun episodio caricato.')
+                else
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                    itemCount: episodes.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, index) =>
+                        _EpisodeTile(episode: episodes[index], onPlay: onPlay),
+                  ),
               ],
-            ),
-          ),
-          const VerticalDivider(width: 1, color: LelegColors.line),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                children: [
-                  Expanded(
+            )
+          : Row(
+              children: [
+                SizedBox(
+                  width: 430,
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                        child: Row(
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: onBack,
+                              icon: const Icon(Icons.arrow_back),
+                              label: const Text('Serie'),
+                            ),
+                            const SizedBox(width: 12),
+                            if (loading)
+                              const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: episodes.isEmpty
+                            ? const _EmptyState(
+                                message: 'Nessun episodio caricato.',
+                              )
+                            : ListView.separated(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  20,
+                                  20,
+                                ),
+                                itemCount: episodes.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (_, index) => _EpisodeTile(
+                                  episode: episodes[index],
+                                  onPlay: onPlay,
+                                ),
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1, color: LelegColors.line),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
                     child: PlayerCard(
                       title: playerTitle,
                       controller: controller,
                       player: player,
+                      appleController: appleController,
+                      tizenController: tizenController,
                       rate: rate,
                       labelFor: labelFor,
                       onAudioChanged: onAudioChanged,
@@ -2259,18 +4831,16 @@ class SeriesDetailScreen extends StatelessWidget {
                       onPictureInPicture: onPictureInPicture,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 }
 
 class EpgScreen extends StatelessWidget {
   const EpgScreen({
+    required this.tvSelectedIndex,
     required this.channels,
     required this.categories,
     required this.selectedCategoryId,
@@ -2285,6 +4855,7 @@ class EpgScreen extends StatelessWidget {
     super.key,
   });
 
+  final int? tvSelectedIndex;
   final List<LiveChannel> channels;
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
@@ -2345,6 +4916,7 @@ class EpgScreen extends StatelessWidget {
                     onSelectChannel: onSelectChannel,
                     onWatchProgramme: onWatchProgramme,
                     loading: loading,
+                    selectedIndex: tvSelectedIndex,
                   ),
           ),
         ],
@@ -2361,6 +4933,7 @@ class _EpgGrid extends StatefulWidget {
     required this.onSelectChannel,
     required this.onWatchProgramme,
     required this.loading,
+    required this.selectedIndex,
   });
 
   final List<LiveChannel> channels;
@@ -2370,6 +4943,7 @@ class _EpgGrid extends StatefulWidget {
   final void Function(LiveChannel channel, EpgProgramme programme)
   onWatchProgramme;
   final bool loading;
+  final int? selectedIndex;
 
   @override
   State<_EpgGrid> createState() => _EpgGridState();
@@ -2451,12 +5025,15 @@ class _EpgGridState extends State<_EpgGrid> {
                   }
                   final channel =
                       widget.channels[index - (widget.loading ? 1 : 0)];
+                  final channelIndex = index - (widget.loading ? 1 : 0);
                   return _EpgTimelineRow(
                     channel: channel,
                     programmes:
                         widget.epgByChannel[channel.id] ??
                         const <EpgProgramme>[],
-                    active: widget.selectedChannel?.id == channel.id,
+                    active:
+                        widget.selectedChannel?.id == channel.id ||
+                        widget.selectedIndex == channelIndex,
                     viewStart: _viewStart,
                     channelWidth: channelWidth,
                     hourWidth: hourWidth,
@@ -2966,41 +5543,64 @@ class _NowLine extends StatelessWidget {
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
+    required this.tvSelectedIndex,
     required this.profiles,
     required this.activeProfile,
     required this.titleController,
     required this.serverController,
     required this.userController,
     required this.passController,
-    required this.manualUrlController,
+    required this.titleFocusNode,
+    required this.serverFocusNode,
+    required this.userFocusNode,
+    required this.passFocusNode,
+    required this.liveCount,
+    required this.movieCount,
+    required this.seriesCount,
+    required this.favoriteCount,
+    required this.watchLaterCount,
     required this.onSave,
     required this.onReload,
     required this.onSelectProfile,
     required this.onDeleteProfile,
-    required this.onOpenManualUrl,
     super.key,
   });
 
+  final int? tvSelectedIndex;
   final List<XtreamProfile> profiles;
   final XtreamProfile? activeProfile;
   final TextEditingController titleController;
   final TextEditingController serverController;
   final TextEditingController userController;
   final TextEditingController passController;
-  final TextEditingController manualUrlController;
+  final FocusNode titleFocusNode;
+  final FocusNode serverFocusNode;
+  final FocusNode userFocusNode;
+  final FocusNode passFocusNode;
+  final int liveCount;
+  final int movieCount;
+  final int seriesCount;
+  final int favoriteCount;
+  final int watchLaterCount;
   final VoidCallback onSave;
   final VoidCallback onReload;
   final ValueChanged<XtreamProfile> onSelectProfile;
   final ValueChanged<XtreamProfile> onDeleteProfile;
-  final VoidCallback onOpenManualUrl;
 
   @override
   Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final titleSelected = tvSelectedIndex == profiles.length;
+    final serverSelected = tvSelectedIndex == profiles.length + 1;
+    final userSelected = tvSelectedIndex == profiles.length + 2;
+    final passSelected = tvSelectedIndex == profiles.length + 3;
+    final saveSelected = tvSelectedIndex == profiles.length + 4;
+    final reloadSelected = tvSelectedIndex == profiles.length + 5;
     return _PageScaffold(
       title: 'Impostazioni',
       eyebrow: 'Provider',
       child: ListView(
-        padding: const EdgeInsets.all(28),
+        padding: EdgeInsets.all(mobile ? 16 : 28),
         children: [
           _SettingsBand(
             title: 'Liste IPTV',
@@ -3017,51 +5617,163 @@ class SettingsScreen extends StatelessWidget {
                     (profile) => _ProfileTile(
                       profile: profile,
                       active: activeProfile?.id == profile.id,
+                      selected:
+                          tvSelectedIndex != null &&
+                          profiles.indexOf(profile) == tvSelectedIndex,
                       onSelect: () => onSelectProfile(profile),
                       onDelete: () => onDeleteProfile(profile),
                     ),
                   ),
                 if (profiles.isNotEmpty) const SizedBox(height: 18),
-                TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nome lista',
-                    hintText: 'Es. Casa, Sport, Provider principale',
+                _EnsureVisibleWhenSelected(
+                  selected: titleSelected,
+                  child: TextField(
+                    focusNode: titleFocusNode,
+                    controller: titleController,
+                    decoration: InputDecoration(
+                      labelText: 'Nome lista',
+                      hintText: 'Es. Casa, Sport, Provider principale',
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: titleSelected
+                              ? LelegColors.accent
+                              : LelegColors.line,
+                          width: titleSelected ? 2 : 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: LelegColors.accent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => onSave(),
                   ),
-                  onSubmitted: (_) => onSave(),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: serverController,
-                  decoration: const InputDecoration(labelText: 'Server URL'),
-                  onSubmitted: (_) => onSave(),
+                _EnsureVisibleWhenSelected(
+                  selected: serverSelected,
+                  child: TextField(
+                    focusNode: serverFocusNode,
+                    controller: serverController,
+                    decoration: InputDecoration(
+                      labelText: 'Server URL',
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: serverSelected
+                              ? LelegColors.accent
+                              : LelegColors.line,
+                          width: serverSelected ? 2 : 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: LelegColors.accent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => onSave(),
+                  ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: userController,
-                  decoration: const InputDecoration(labelText: 'Username'),
-                  onSubmitted: (_) => onSave(),
+                _EnsureVisibleWhenSelected(
+                  selected: userSelected,
+                  child: TextField(
+                    focusNode: userFocusNode,
+                    controller: userController,
+                    decoration: InputDecoration(
+                      labelText: 'Username',
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: userSelected
+                              ? LelegColors.accent
+                              : LelegColors.line,
+                          width: userSelected ? 2 : 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: LelegColors.accent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => onSave(),
+                  ),
                 ),
                 const SizedBox(height: 12),
-                TextField(
-                  controller: passController,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                  obscureText: true,
-                  onSubmitted: (_) => onSave(),
+                _EnsureVisibleWhenSelected(
+                  selected: passSelected,
+                  child: TextField(
+                    focusNode: passFocusNode,
+                    controller: passController,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: passSelected
+                              ? LelegColors.accent
+                              : LelegColors.line,
+                          width: passSelected ? 2 : 1,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: LelegColors.accent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
+                    obscureText: true,
+                    onSubmitted: (_) => onSave(),
+                  ),
                 ),
                 const SizedBox(height: 14),
-                Row(
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
                   children: [
-                    FilledButton.icon(
-                      onPressed: onSave,
-                      icon: const Icon(Icons.cloud_sync),
-                      label: const Text('Salva e carica'),
+                    _EnsureVisibleWhenSelected(
+                      selected: saveSelected,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          side: saveSelected
+                              ? const BorderSide(
+                                  color: LelegColors.fg,
+                                  width: 2,
+                                )
+                              : null,
+                        ),
+                        onPressed: onSave,
+                        icon: const Icon(Icons.cloud_sync),
+                        label: const Text('Salva e carica'),
+                      ),
                     ),
-                    const SizedBox(width: 10),
-                    OutlinedButton.icon(
-                      onPressed: onReload,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Ricarica dal provider'),
+                    _EnsureVisibleWhenSelected(
+                      selected: reloadSelected,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: reloadSelected
+                                ? LelegColors.accent
+                                : LelegColors.line,
+                            width: reloadSelected ? 2 : 1,
+                          ),
+                        ),
+                        onPressed: onReload,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Ricarica dal provider'),
+                      ),
                     ),
                   ],
                 ),
@@ -3075,25 +5787,231 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           _SettingsBand(
-            title: 'Player diagnostico',
-            child: Row(
+            title: 'Stato libreria',
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: manualUrlController,
-                    decoration: const InputDecoration(
-                      labelText: 'URL stream manuale',
-                    ),
-                  ),
+                _MetricPill(label: 'Live TV', value: liveCount.toString()),
+                _MetricPill(label: 'Film', value: movieCount.toString()),
+                _MetricPill(label: 'Serie', value: seriesCount.toString()),
+                _MetricPill(
+                  label: 'Preferiti',
+                  value: favoriteCount.toString(),
                 ),
-                const SizedBox(width: 12),
-                FilledButton.icon(
-                  onPressed: onOpenManualUrl,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Play URL'),
+                _MetricPill(
+                  label: 'Da vedere',
+                  value: watchLaterCount.toString(),
                 ),
+                const _MetricPill(label: 'Cache', value: '24h'),
+                const _MetricPill(label: 'Player', value: 'media_kit'),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum DownloadStatus { queued, downloading, completed, failed }
+
+class DownloadTask {
+  const DownloadTask({
+    required this.movie,
+    this.status = DownloadStatus.queued,
+    this.progress = 0,
+    this.filePath,
+    this.error,
+  });
+
+  final VodMovie movie;
+  final DownloadStatus status;
+  final double progress;
+  final String? filePath;
+  final String? error;
+
+  DownloadTask copyWith({
+    DownloadStatus? status,
+    double? progress,
+    String? filePath,
+    String? error,
+  }) {
+    return DownloadTask(
+      movie: movie,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      filePath: filePath ?? this.filePath,
+      error: error,
+    );
+  }
+}
+
+class DownloadsScreen extends StatelessWidget {
+  const DownloadsScreen({
+    required this.tvSelectedIndex,
+    required this.movies,
+    required this.downloads,
+    required this.onPlay,
+    required this.onFavorite,
+    required this.onWatchLater,
+    required this.onDownload,
+    required this.onOpenDownloadedFile,
+    required this.favorites,
+    required this.watchLater,
+    super.key,
+  });
+
+  final int? tvSelectedIndex;
+  final List<VodMovie> movies;
+  final Map<int, DownloadTask> downloads;
+  final ValueChanged<VodMovie> onPlay;
+  final ValueChanged<VodMovie> onFavorite;
+  final ValueChanged<VodMovie> onWatchLater;
+  final ValueChanged<VodMovie> onDownload;
+  final ValueChanged<DownloadTask> onOpenDownloadedFile;
+  final Set<int> favorites;
+  final Set<int> watchLater;
+
+  @override
+  Widget build(BuildContext context) {
+    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    return _PageScaffold(
+      title: 'Download',
+      eyebrow: 'Offline',
+      child: ListView(
+        padding: EdgeInsets.all(mobile ? 16 : 28),
+        children: [
+          _SettingsBand(
+            title: 'Download offline',
+            child: downloads.isEmpty
+                ? const _InlineNotice(
+                    text:
+                        'Nessun download ancora avviato. Usa il pulsante Download su un film o da questa pagina.',
+                  )
+                : Column(
+                    children: [
+                      for (final task in downloads.values) ...[
+                        _DownloadTaskTile(
+                          task: task,
+                          onOpen: () => onOpenDownloadedFile(task),
+                        ),
+                        if (task != downloads.values.last)
+                          const SizedBox(height: 10),
+                      ],
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 22),
+          Text(
+            'Pronti da scaricare',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 14),
+          if (movies.isEmpty)
+            const _EmptyState(
+              message: 'Aggiungi film a Da vedere per prepararli al download.',
+              icon: Icons.download_outlined,
+            )
+          else
+            GridView.builder(
+              itemCount: movies.length,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: mobile ? 170 : 210,
+                mainAxisExtent: mobile ? 288 : 332,
+                crossAxisSpacing: mobile ? 12 : 18,
+                mainAxisSpacing: mobile ? 14 : 20,
+              ),
+              itemBuilder: (_, index) {
+                final movie = movies[index];
+                return _MoviePosterCard(
+                  movie: movie,
+                  onPlay: onPlay,
+                  onFavorite: onFavorite,
+                  onWatchLater: onWatchLater,
+                  onDownload: onDownload,
+                  isFavorite: favorites.contains(movie.id),
+                  isWatchLater: watchLater.contains(movie.id),
+                  selected: tvSelectedIndex == index,
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DownloadTaskTile extends StatelessWidget {
+  const _DownloadTaskTile({required this.task, required this.onOpen});
+
+  final DownloadTask task;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = task.status == DownloadStatus.completed;
+    final failed = task.status == DownloadStatus.failed;
+    final subtitle = switch (task.status) {
+      DownloadStatus.queued => 'In coda',
+      DownloadStatus.downloading =>
+        task.progress <= 0
+            ? 'Scaricamento in corso...'
+            : '${(task.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
+      DownloadStatus.completed => task.filePath ?? 'Completato',
+      DownloadStatus.failed => task.error ?? 'Errore download',
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: LelegColors.bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: failed ? Colors.redAccent : LelegColors.line),
+      ),
+      child: Row(
+        children: [
+          _Logo(url: task.movie.logo, fallback: Icons.movie),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  task.movie.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: failed ? Colors.redAccent : LelegColors.muted,
+                    fontSize: 12,
+                  ),
+                ),
+                if (task.status == DownloadStatus.downloading) ...[
+                  const SizedBox(height: 8),
+                  LinearProgressIndicator(
+                    value: task.progress <= 0
+                        ? null
+                        : task.progress.clamp(0, 1),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          OutlinedButton.icon(
+            onPressed: completed ? onOpen : null,
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Apri'),
           ),
         ],
       ),
@@ -3127,67 +6045,77 @@ class _ProfileTile extends StatelessWidget {
   const _ProfileTile({
     required this.profile,
     required this.active,
+    required this.selected,
     required this.onSelect,
     required this.onDelete,
   });
 
   final XtreamProfile profile;
   final bool active;
+  final bool selected;
   final VoidCallback onSelect;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: active ? LelegColors.surface3 : LelegColors.bg,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: active
-              ? LelegColors.accent.withValues(alpha: 0.55)
-              : LelegColors.line,
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: active || selected ? LelegColors.surface3 : LelegColors.bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected
+                ? LelegColors.accent
+                : active
+                ? LelegColors.accent.withValues(alpha: 0.55)
+                : LelegColors.line,
+            width: selected ? 2 : 1,
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            active ? Icons.check_circle : Icons.playlist_play,
-            color: active ? LelegColors.accent : LelegColors.muted,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  profile.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                Text(
-                  '${profile.baseUrl.replaceFirst(RegExp(r'^https?://'), '')} · ${profile.username}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: LelegColors.muted),
-                ),
-              ],
+        child: Row(
+          children: [
+            Icon(
+              active ? Icons.check_circle : Icons.playlist_play,
+              color: active || selected
+                  ? LelegColors.accent
+                  : LelegColors.muted,
             ),
-          ),
-          const SizedBox(width: 10),
-          OutlinedButton(
-            onPressed: active ? null : onSelect,
-            child: Text(active ? 'Attiva' : 'Usa'),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: onDelete,
-            tooltip: 'Rimuovi lista',
-            icon: const Icon(Icons.delete_outline),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    profile.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  Text(
+                    '${profile.baseUrl.replaceFirst(RegExp(r'^https?://'), '')} · ${profile.username}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: LelegColors.muted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton(
+              onPressed: active ? null : onSelect,
+              child: Text(active ? 'Attiva' : 'Usa'),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: onDelete,
+              tooltip: 'Rimuovi lista',
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3221,6 +6149,81 @@ class _InlineNotice extends StatelessWidget {
   }
 }
 
+class _MetricPill extends StatelessWidget {
+  const _MetricPill({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: LelegColors.bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: LelegColors.line),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              color: LelegColors.accent,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(
+              color: LelegColors.muted,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetaBadge extends StatelessWidget {
+  const _MetaBadge({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: LelegColors.bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: LelegColors.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: LelegColors.accent),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              color: LelegColors.fg,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PageScaffold extends StatelessWidget {
   const _PageScaffold({required this.title, required this.child, this.eyebrow});
 
@@ -3230,6 +6233,7 @@ class _PageScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 760;
     return DecoratedBox(
       decoration: const BoxDecoration(
         gradient: RadialGradient(
@@ -3242,7 +6246,12 @@ class _PageScaffold extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 10),
+            padding: EdgeInsets.fromLTRB(
+              mobile ? 16 : 28,
+              mobile ? 14 : 24,
+              mobile ? 16 : 28,
+              mobile ? 8 : 10,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -3258,8 +6267,8 @@ class _PageScaffold extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 54,
+                  style: TextStyle(
+                    fontSize: mobile ? 38 : 54,
                     fontWeight: FontWeight.w900,
                     height: 0.95,
                   ),
@@ -3269,69 +6278,6 @@ class _PageScaffold extends StatelessWidget {
           ),
           Expanded(child: child),
         ],
-      ),
-    );
-  }
-}
-
-class _HeroCard extends StatelessWidget {
-  const _HeroCard({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String title;
-  final String subtitle;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 260,
-      height: 128,
-      child: Material(
-        color: LelegColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(18),
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: LelegColors.line),
-            ),
-            child: Row(
-              children: [
-                Icon(icon, color: LelegColors.accent, size: 34),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(color: LelegColors.muted),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -3378,6 +6324,8 @@ class PlayerCard extends StatefulWidget {
     required this.title,
     required this.controller,
     required this.player,
+    this.appleController,
+    this.tizenController,
     required this.rate,
     required this.labelFor,
     required this.onAudioChanged,
@@ -3390,8 +6338,10 @@ class PlayerCard extends StatefulWidget {
   });
 
   final String title;
-  final VideoController controller;
-  final Player player;
+  final VideoController? controller;
+  final Player? player;
+  final vp.VideoPlayerController? appleController;
+  final avplay.VideoPlayerController? tizenController;
   final double rate;
   final String Function(dynamic value) labelFor;
   final ValueChanged<AudioTrack> onAudioChanged;
@@ -3409,6 +6359,10 @@ class _PlayerCardState extends State<PlayerCard> {
   bool _showControls = false;
   Timer? _hideControlsTimer;
 
+  bool get _pinControlsInFocusMode {
+    return widget.focusMode && !(Platform.isAndroid || Platform.isIOS);
+  }
+
   @override
   void dispose() {
     _hideControlsTimer?.cancel();
@@ -3420,8 +6374,8 @@ class _PlayerCardState extends State<PlayerCard> {
     if (!_showControls && mounted) {
       setState(() => _showControls = true);
     }
-    _hideControlsTimer = Timer(const Duration(milliseconds: 1800), () {
-      if (mounted && !widget.focusMode) {
+    _hideControlsTimer = Timer(const Duration(milliseconds: 1100), () {
+      if (mounted && !_pinControlsInFocusMode) {
         setState(() => _showControls = false);
       }
     });
@@ -3429,82 +6383,610 @@ class _PlayerCardState extends State<PlayerCard> {
 
   void _hideControls() {
     _hideControlsTimer?.cancel();
-    if (mounted && !widget.focusMode) {
+    if (mounted && !_pinControlsInFocusMode) {
       setState(() => _showControls = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => _revealControls(),
-      onHover: (_) => _revealControls(),
-      onExit: (_) => _hideControls(),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: ColoredBox(
-          color: Colors.black,
-          child: Column(
-            children: [
-              Container(
-                height: widget.focusMode ? 0 : 54,
-                alignment: Alignment.centerLeft,
-                padding: widget.focusMode
-                    ? EdgeInsets.zero
-                    : const EdgeInsets.symmetric(horizontal: 18),
-                color: LelegColors.surface,
-                child: widget.focusMode
-                    ? const SizedBox.shrink()
-                    : Text(
-                        widget.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 18,
+    final tizenController = widget.tizenController;
+    final appleController = widget.appleController;
+    final mediaController = widget.controller;
+    final mediaPlayer = widget.player;
+    final controlsVisible = _showControls || _pinControlsInFocusMode;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _revealControls,
+      onDoubleTap: widget.onToggleFocusMode,
+      child: MouseRegion(
+        onEnter: (_) => _revealControls(),
+        onHover: (_) => _revealControls(),
+        onExit: (_) => _hideControls(),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: ColoredBox(
+            color: Colors.black,
+            child: Column(
+              children: [
+                Container(
+                  height: widget.focusMode ? 0 : 54,
+                  alignment: Alignment.centerLeft,
+                  padding: widget.focusMode
+                      ? EdgeInsets.zero
+                      : const EdgeInsets.symmetric(horizontal: 18),
+                  color: LelegColors.surface,
+                  child: widget.focusMode
+                      ? const SizedBox.shrink()
+                      : Text(
+                          widget.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 18,
+                          ),
                         ),
+                ),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: tizenController != null
+                            ? _TizenVideoSurface(controller: tizenController)
+                            : appleController != null
+                            ? _AppleVideoSurface(controller: appleController)
+                            : mediaController == null
+                            ? const Center(
+                                child: Text(
+                                  'Player non inizializzato',
+                                  style: TextStyle(color: LelegColors.muted),
+                                ),
+                              )
+                            : Video(
+                                controller: mediaController,
+                                controls: NoVideoControls,
+                              ),
                       ),
-              ),
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Video(
-                        controller: widget.controller,
-                        controls: NoVideoControls,
-                      ),
-                    ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: AnimatedOpacity(
-                        opacity: _showControls || widget.focusMode ? 1 : 0,
-                        duration: const Duration(milliseconds: 160),
-                        child: IgnorePointer(
-                          ignoring: !(_showControls || widget.focusMode),
-                          child: _PlayerTimelineControls(
-                            player: widget.player,
-                            rate: widget.rate,
-                            labelFor: widget.labelFor,
-                            onAudioChanged: widget.onAudioChanged,
-                            onSubtitleChanged: widget.onSubtitleChanged,
-                            onRateChanged: widget.onRateChanged,
-                            focusMode: widget.focusMode,
-                            onToggleFocusMode: widget.onToggleFocusMode,
-                            onPictureInPicture: widget.onPictureInPicture,
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: AnimatedOpacity(
+                          opacity: controlsVisible ? 1 : 0,
+                          duration: const Duration(milliseconds: 160),
+                          child: IgnorePointer(
+                            ignoring: !controlsVisible,
+                            child: tizenController != null
+                                ? _TizenTimelineControls(
+                                    controller: tizenController,
+                                    rate: widget.rate,
+                                    onRateChanged: widget.onRateChanged,
+                                    focusMode: widget.focusMode,
+                                    onToggleFocusMode: widget.onToggleFocusMode,
+                                    onPictureInPicture:
+                                        widget.onPictureInPicture,
+                                  )
+                                : appleController != null
+                                ? _AppleTimelineControls(
+                                    controller: appleController,
+                                    rate: widget.rate,
+                                    onRateChanged: widget.onRateChanged,
+                                    focusMode: widget.focusMode,
+                                    onToggleFocusMode: widget.onToggleFocusMode,
+                                    onPictureInPicture:
+                                        widget.onPictureInPicture,
+                                  )
+                                : mediaPlayer == null
+                                ? const SizedBox.shrink()
+                                : _PlayerTimelineControls(
+                                    player: mediaPlayer,
+                                    rate: widget.rate,
+                                    labelFor: widget.labelFor,
+                                    onAudioChanged: widget.onAudioChanged,
+                                    onSubtitleChanged: widget.onSubtitleChanged,
+                                    onRateChanged: widget.onRateChanged,
+                                    focusMode: widget.focusMode,
+                                    onToggleFocusMode: widget.onToggleFocusMode,
+                                    onPictureInPicture:
+                                        widget.onPictureInPicture,
+                                  ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+}
+
+class _TizenVideoSurface extends StatelessWidget {
+  const _TizenVideoSurface({required this.controller});
+
+  final avplay.VideoPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<avplay.VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        if (value.hasError) {
+          return Center(
+            child: Text(
+              value.errorDescription ?? 'Video non riproducibile',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: LelegColors.muted),
+            ),
+          );
+        }
+        if (!value.isInitialized) {
+          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+        }
+        final aspectRatio = value.aspectRatio <= 0 ? 16 / 9 : value.aspectRatio;
+        return Center(
+          child: AspectRatio(
+            aspectRatio: aspectRatio,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                avplay.VideoPlayer(controller),
+                avplay.ClosedCaption(captions: value.captions),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AppleVideoSurface extends StatelessWidget {
+  const _AppleVideoSurface({required this.controller});
+
+  final vp.VideoPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<vp.VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        if (value.hasError) {
+          return Center(
+            child: Text(
+              value.errorDescription ?? 'Video non riproducibile',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: LelegColors.muted),
+            ),
+          );
+        }
+        if (!value.isInitialized) {
+          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+        }
+        final aspectRatio = value.aspectRatio <= 0 ? 16 / 9 : value.aspectRatio;
+        return Center(
+          child: AspectRatio(
+            aspectRatio: aspectRatio,
+            child: vp.VideoPlayer(controller),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _AppleTimelineControls extends StatelessWidget {
+  const _AppleTimelineControls({
+    required this.controller,
+    required this.rate,
+    required this.onRateChanged,
+    required this.focusMode,
+    required this.onToggleFocusMode,
+    required this.onPictureInPicture,
+  });
+
+  final vp.VideoPlayerController controller;
+  final double rate;
+  final ValueChanged<double> onRateChanged;
+  final bool focusMode;
+  final VoidCallback onToggleFocusMode;
+  final VoidCallback onPictureInPicture;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.74),
+        border: const Border(top: BorderSide(color: LelegColors.line)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        child: ValueListenableBuilder<vp.VideoPlayerValue>(
+          valueListenable: controller,
+          builder: (context, value, _) {
+            final duration = value.duration;
+            final position = value.position;
+            final maxMs = duration.inMilliseconds <= 0
+                ? 1.0
+                : duration.inMilliseconds.toDouble();
+            final valueMs = position.inMilliseconds
+                .clamp(0, maxMs.toInt())
+                .toDouble();
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 760;
+                final topRow = Row(
+                  children: [
+                    IconButton(
+                      tooltip: value.isPlaying ? 'Pausa' : 'Play',
+                      onPressed: value.isPlaying
+                          ? controller.pause
+                          : controller.play,
+                      icon: Icon(
+                        value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      ),
+                    ),
+                    _SeekIconButton(
+                      tooltip: '-10s',
+                      icon: Icons.replay_10,
+                      onPressed: duration.inMilliseconds <= 0
+                          ? null
+                          : () => controller.seekTo(
+                              position - const Duration(seconds: 10),
+                            ),
+                    ),
+                    _SeekIconButton(
+                      tooltip: '+10s',
+                      icon: Icons.forward_10,
+                      onPressed: duration.inMilliseconds <= 0
+                          ? null
+                          : () => controller.seekTo(
+                              position + const Duration(seconds: 10),
+                            ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${_formatDuration(position)} / ${_formatDuration(duration)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                );
+                final controlsRow = compact
+                    ? Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _AppleVolumeControl(controller: controller),
+                          PopupMenuButton<double>(
+                            tooltip: 'Velocita',
+                            initialValue: rate,
+                            onSelected: (next) {
+                              controller.setPlaybackSpeed(next);
+                              onRateChanged(next);
+                            },
+                            child: const _PlayerMenuChip(
+                              icon: Icons.speed,
+                              label: 'Velocita',
+                            ),
+                            itemBuilder: (_) =>
+                                const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                    .map(
+                                      (speed) => PopupMenuItem<double>(
+                                        value: speed,
+                                        child: Text('${speed}x'),
+                                      ),
+                                    )
+                                    .toList(),
+                          ),
+                          IconButton(
+                            tooltip: focusMode
+                                ? 'Esci fullscreen'
+                                : 'Fullscreen',
+                            onPressed: onToggleFocusMode,
+                            icon: Icon(
+                              focusMode
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Picture-in-Picture non disponibile',
+                            onPressed: onPictureInPicture,
+                            icon: const Icon(Icons.picture_in_picture_alt),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          PopupMenuButton<double>(
+                            tooltip: 'Velocita',
+                            initialValue: rate,
+                            onSelected: (next) {
+                              controller.setPlaybackSpeed(next);
+                              onRateChanged(next);
+                            },
+                            child: const _PlayerMenuChip(
+                              icon: Icons.speed,
+                              label: 'Velocita',
+                            ),
+                            itemBuilder: (_) =>
+                                const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                    .map(
+                                      (speed) => PopupMenuItem<double>(
+                                        value: speed,
+                                        child: Text('${speed}x'),
+                                      ),
+                                    )
+                                    .toList(),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _AppleVolumeControl(controller: controller),
+                          ),
+                          IconButton(
+                            tooltip: focusMode
+                                ? 'Esci fullscreen'
+                                : 'Fullscreen',
+                            onPressed: onToggleFocusMode,
+                            icon: Icon(
+                              focusMode
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Picture-in-Picture non disponibile',
+                            onPressed: onPictureInPicture,
+                            icon: const Icon(Icons.picture_in_picture_alt),
+                          ),
+                        ],
+                      );
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    topRow,
+                    Slider(
+                      value: valueMs,
+                      min: 0,
+                      max: maxMs,
+                      onChanged: duration.inMilliseconds <= 0
+                          ? null
+                          : (next) => controller.seekTo(
+                              Duration(milliseconds: next.round()),
+                            ),
+                    ),
+                    controlsRow,
+                  ],
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(Duration value) {
+    if (value == Duration.zero) return '00:00';
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+}
+
+class _TizenTimelineControls extends StatelessWidget {
+  const _TizenTimelineControls({
+    required this.controller,
+    required this.rate,
+    required this.onRateChanged,
+    required this.focusMode,
+    required this.onToggleFocusMode,
+    required this.onPictureInPicture,
+  });
+
+  final avplay.VideoPlayerController controller;
+  final double rate;
+  final ValueChanged<double> onRateChanged;
+  final bool focusMode;
+  final VoidCallback onToggleFocusMode;
+  final VoidCallback onPictureInPicture;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.74),
+        border: const Border(top: BorderSide(color: LelegColors.line)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        child: ValueListenableBuilder<avplay.VideoPlayerValue>(
+          valueListenable: controller,
+          builder: (context, value, _) {
+            final duration = value.duration.end;
+            final position = value.position;
+            final maxMs = duration.inMilliseconds <= 0
+                ? 1.0
+                : duration.inMilliseconds.toDouble();
+            final valueMs = position.inMilliseconds
+                .clamp(0, maxMs.toInt())
+                .toDouble();
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 760;
+                final topRow = Row(
+                  children: [
+                    IconButton(
+                      tooltip: value.isPlaying ? 'Pausa' : 'Play',
+                      onPressed: value.isPlaying
+                          ? controller.pause
+                          : controller.play,
+                      icon: Icon(
+                        value.isPlaying ? Icons.pause : Icons.play_arrow,
+                      ),
+                    ),
+                    _SeekIconButton(
+                      tooltip: '-10s',
+                      icon: Icons.replay_10,
+                      onPressed: duration.inMilliseconds <= 0
+                          ? null
+                          : () => controller.seekTo(
+                              position - const Duration(seconds: 10),
+                            ),
+                    ),
+                    _SeekIconButton(
+                      tooltip: '+10s',
+                      icon: Icons.forward_10,
+                      onPressed: duration.inMilliseconds <= 0
+                          ? null
+                          : () => controller.seekTo(
+                              position + const Duration(seconds: 10),
+                            ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${_formatDuration(position)} / ${_formatDuration(duration)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                );
+                final controlsRow = compact
+                    ? Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _TizenVolumeControl(controller: controller),
+                          PopupMenuButton<double>(
+                            tooltip: 'Velocita',
+                            initialValue: rate,
+                            onSelected: (next) {
+                              controller.setPlaybackSpeed(next);
+                              onRateChanged(next);
+                            },
+                            child: const _PlayerMenuChip(
+                              icon: Icons.speed,
+                              label: 'Velocita',
+                            ),
+                            itemBuilder: (_) =>
+                                const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                    .map(
+                                      (speed) => PopupMenuItem<double>(
+                                        value: speed,
+                                        child: Text('${speed}x'),
+                                      ),
+                                    )
+                                    .toList(),
+                          ),
+                          IconButton(
+                            tooltip: focusMode
+                                ? 'Esci fullscreen'
+                                : 'Fullscreen',
+                            onPressed: onToggleFocusMode,
+                            icon: Icon(
+                              focusMode
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Picture-in-Picture non disponibile',
+                            onPressed: onPictureInPicture,
+                            icon: const Icon(Icons.picture_in_picture_alt),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        children: [
+                          PopupMenuButton<double>(
+                            tooltip: 'Velocita',
+                            initialValue: rate,
+                            onSelected: (next) {
+                              controller.setPlaybackSpeed(next);
+                              onRateChanged(next);
+                            },
+                            child: const _PlayerMenuChip(
+                              icon: Icons.speed,
+                              label: 'Velocita',
+                            ),
+                            itemBuilder: (_) =>
+                                const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                                    .map(
+                                      (speed) => PopupMenuItem<double>(
+                                        value: speed,
+                                        child: Text('${speed}x'),
+                                      ),
+                                    )
+                                    .toList(),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _TizenVolumeControl(controller: controller),
+                          ),
+                          IconButton(
+                            tooltip: focusMode
+                                ? 'Esci fullscreen'
+                                : 'Fullscreen',
+                            onPressed: onToggleFocusMode,
+                            icon: Icon(
+                              focusMode
+                                  ? Icons.fullscreen_exit
+                                  : Icons.fullscreen,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Picture-in-Picture non disponibile',
+                            onPressed: onPictureInPicture,
+                            icon: const Icon(Icons.picture_in_picture_alt),
+                          ),
+                        ],
+                      );
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    topRow,
+                    Slider(
+                      value: valueMs,
+                      min: 0,
+                      max: maxMs,
+                      onChanged: duration.inMilliseconds <= 0
+                          ? null
+                          : (next) => controller.seekTo(
+                              Duration(milliseconds: next.round()),
+                            ),
+                    ),
+                    controlsRow,
+                  ],
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _formatDuration(Duration value) {
+    if (value == Duration.zero) return '00:00';
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
   }
 }
 
@@ -3561,10 +7043,10 @@ class _PlayerTimelineControls extends StatelessWidget {
                     final valueMs = position.inMilliseconds
                         .clamp(0, maxMs.toInt())
                         .toDouble();
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 760;
+                        final topRow = Row(
                           children: [
                             IconButton(
                               tooltip: playing ? 'Pausa' : 'Play',
@@ -3574,56 +7056,125 @@ class _PlayerTimelineControls extends StatelessWidget {
                                 playing ? Icons.pause : Icons.play_arrow,
                               ),
                             ),
-                            SizedBox(
-                              width: 118,
+                            _SeekIconButton(
+                              tooltip: '-10s',
+                              icon: Icons.replay_10,
+                              onPressed: duration.inMilliseconds <= 0
+                                  ? null
+                                  : () => player.seek(
+                                      position - const Duration(seconds: 10),
+                                    ),
+                            ),
+                            _SeekIconButton(
+                              tooltip: '+10s',
+                              icon: Icons.forward_10,
+                              onPressed: duration.inMilliseconds <= 0
+                                  ? null
+                                  : () => player.seek(
+                                      position + const Duration(seconds: 10),
+                                    ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
                               child: Text(
                                 '${_formatDuration(position)} / ${_formatDuration(duration)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
                             ),
-                            Expanded(
-                              child: Slider(
-                                value: valueMs,
-                                min: 0,
-                                max: maxMs,
-                                onChanged: duration.inMilliseconds <= 0
-                                    ? null
-                                    : (value) => player.seek(
-                                        Duration(milliseconds: value.round()),
-                                      ),
-                              ),
-                            ),
-                            _CompactTrackControls(
-                              player: player,
-                              rate: rate,
-                              labelFor: labelFor,
-                              onAudioChanged: onAudioChanged,
-                              onSubtitleChanged: onSubtitleChanged,
-                              onRateChanged: onRateChanged,
-                            ),
-                            _VolumeControl(player: player),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              tooltip: focusMode
-                                  ? 'Esci fullscreen'
-                                  : 'Fullscreen',
-                              onPressed: onToggleFocusMode,
-                              icon: Icon(
-                                focusMode
-                                    ? Icons.fullscreen_exit
-                                    : Icons.fullscreen,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: 'Picture-in-Picture non disponibile',
-                              onPressed: onPictureInPicture,
-                              icon: const Icon(Icons.picture_in_picture_alt),
-                            ),
                           ],
-                        ),
-                      ],
+                        );
+                        final controlBar = compact
+                            ? Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  _CompactTrackControls(
+                                    compact: true,
+                                    player: player,
+                                    rate: rate,
+                                    labelFor: labelFor,
+                                    onAudioChanged: onAudioChanged,
+                                    onSubtitleChanged: onSubtitleChanged,
+                                    onRateChanged: onRateChanged,
+                                  ),
+                                  _VolumeControl(player: player, compact: true),
+                                  IconButton(
+                                    tooltip: focusMode
+                                        ? 'Esci fullscreen'
+                                        : 'Fullscreen',
+                                    onPressed: onToggleFocusMode,
+                                    icon: Icon(
+                                      focusMode
+                                          ? Icons.fullscreen_exit
+                                          : Icons.fullscreen,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip:
+                                        'Picture-in-Picture non disponibile',
+                                    onPressed: onPictureInPicture,
+                                    icon: const Icon(
+                                      Icons.picture_in_picture_alt,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Row(
+                                children: [
+                                  _CompactTrackControls(
+                                    player: player,
+                                    rate: rate,
+                                    labelFor: labelFor,
+                                    onAudioChanged: onAudioChanged,
+                                    onSubtitleChanged: onSubtitleChanged,
+                                    onRateChanged: onRateChanged,
+                                  ),
+                                  _VolumeControl(player: player),
+                                  const SizedBox(width: 8),
+                                  IconButton(
+                                    tooltip: focusMode
+                                        ? 'Esci fullscreen'
+                                        : 'Fullscreen',
+                                    onPressed: onToggleFocusMode,
+                                    icon: Icon(
+                                      focusMode
+                                          ? Icons.fullscreen_exit
+                                          : Icons.fullscreen,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip:
+                                        'Picture-in-Picture non disponibile',
+                                    onPressed: onPictureInPicture,
+                                    icon: const Icon(
+                                      Icons.picture_in_picture_alt,
+                                    ),
+                                  ),
+                                ],
+                              );
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            topRow,
+                            Slider(
+                              value: valueMs,
+                              min: 0,
+                              max: maxMs,
+                              onChanged: duration.inMilliseconds <= 0
+                                  ? null
+                                  : (value) => player.seek(
+                                      Duration(milliseconds: value.round()),
+                                    ),
+                            ),
+                            controlBar,
+                          ],
+                        );
+                      },
                     );
                   },
                 );
@@ -3645,28 +7196,58 @@ class _PlayerTimelineControls extends StatelessWidget {
 }
 
 class _VolumeControl extends StatelessWidget {
-  const _VolumeControl({required this.player});
+  const _VolumeControl({required this.player, this.compact = false});
 
   final Player player;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<double>(
-      stream: player.stream.volume,
-      initialData: player.state.volume,
-      builder: (context, snapshot) {
-        final volume = (snapshot.data ?? 100).clamp(0, 100).toDouble();
+    final volume = player.state.volume.clamp(0, 100).toDouble();
+    return SizedBox(
+      width: compact ? 110 : 128,
+      child: Row(
+        children: [
+          Icon(volume == 0 ? Icons.volume_off : Icons.volume_up, size: 20),
+          Expanded(
+            child: Slider(
+              value: volume,
+              min: 0,
+              max: 100,
+              onChanged: player.setVolume,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppleVolumeControl extends StatelessWidget {
+  const _AppleVolumeControl({required this.controller});
+
+  final vp.VideoPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<vp.VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
         return SizedBox(
           width: 128,
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(volume == 0 ? Icons.volume_off : Icons.volume_up, size: 20),
+              Icon(
+                value.volume <= 0 ? Icons.volume_off : Icons.volume_up,
+                size: 20,
+              ),
               Expanded(
                 child: Slider(
-                  value: volume,
+                  value: value.volume.clamp(0, 1).toDouble(),
                   min: 0,
-                  max: 100,
-                  onChanged: player.setVolume,
+                  max: 1,
+                  onChanged: controller.setVolume,
                 ),
               ),
             ],
@@ -3697,38 +7278,32 @@ class TrackControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<Tracks>(
-      stream: player.stream.tracks,
-      initialData: player.state.tracks,
-      builder: (context, snapshot) {
-        final tracks = snapshot.data ?? const Tracks();
-        return Wrap(
-          spacing: 18,
-          runSpacing: 10,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            _TrackMenu<AudioTrack>(
-              label: 'Audio',
-              value: player.state.track.audio,
-              values: [AudioTrack.auto(), AudioTrack.no(), ...tracks.audio],
-              labelFor: labelFor,
-              onChanged: onAudioChanged,
-            ),
-            _TrackMenu<SubtitleTrack>(
-              label: 'Sottotitoli',
-              value: player.state.track.subtitle,
-              values: [
-                SubtitleTrack.no(),
-                SubtitleTrack.auto(),
-                ...tracks.subtitle,
-              ],
-              labelFor: labelFor,
-              onChanged: onSubtitleChanged,
-            ),
-            _RateMenu(value: rate, onChanged: onRateChanged),
+    final tracks = player.state.tracks;
+    return Wrap(
+      spacing: 18,
+      runSpacing: 10,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _TrackMenu<AudioTrack>(
+          label: 'Audio',
+          value: player.state.track.audio,
+          values: [AudioTrack.auto(), AudioTrack.no(), ...tracks.audio],
+          labelFor: labelFor,
+          onChanged: onAudioChanged,
+        ),
+        _TrackMenu<SubtitleTrack>(
+          label: 'Sottotitoli',
+          value: player.state.track.subtitle,
+          values: [
+            SubtitleTrack.no(),
+            SubtitleTrack.auto(),
+            ...tracks.subtitle,
           ],
-        );
-      },
+          labelFor: labelFor,
+          onChanged: onSubtitleChanged,
+        ),
+        _RateMenu(value: rate, onChanged: onRateChanged),
+      ],
     );
   }
 }
@@ -3741,6 +7316,7 @@ class _CompactTrackControls extends StatelessWidget {
     required this.onAudioChanged,
     required this.onSubtitleChanged,
     required this.onRateChanged,
+    this.compact = false,
   });
 
   final Player player;
@@ -3749,59 +7325,110 @@ class _CompactTrackControls extends StatelessWidget {
   final ValueChanged<AudioTrack> onAudioChanged;
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
   final ValueChanged<double> onRateChanged;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<Tracks>(
-      stream: player.stream.tracks,
-      initialData: player.state.tracks,
-      builder: (context, snapshot) {
-        final tracks = snapshot.data ?? const Tracks();
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _CompactMenu<AudioTrack>(
-              icon: Icons.audiotrack,
-              label: 'Audio',
-              tooltip: 'Cambia traccia audio',
-              value: player.state.track.audio,
-              values: [AudioTrack.auto(), AudioTrack.no(), ...tracks.audio],
-              labelFor: labelFor,
-              onChanged: onAudioChanged,
-            ),
-            _CompactMenu<SubtitleTrack>(
-              icon: Icons.subtitles,
-              label: 'Sub',
-              tooltip: 'Sottotitoli',
-              value: player.state.track.subtitle,
-              values: [
-                SubtitleTrack.no(),
-                SubtitleTrack.auto(),
-                ...tracks.subtitle,
-              ],
-              labelFor: labelFor,
-              onChanged: onSubtitleChanged,
-            ),
-            PopupMenuButton<double>(
-              tooltip: 'Velocita',
-              initialValue: rate,
-              onSelected: onRateChanged,
-              child: const _PlayerMenuChip(
-                icon: Icons.speed,
-                label: 'Velocita',
-              ),
-              itemBuilder: (_) => const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-                  .map(
-                    (value) => PopupMenuItem<double>(
-                      value: value,
-                      child: Text('${value}x'),
-                    ),
-                  )
-                  .toList(),
-            ),
+    final tracks = player.state.tracks;
+    return Wrap(
+      spacing: compact ? 8 : 0,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _CompactMenu<AudioTrack>(
+          icon: Icons.audiotrack,
+          label: 'Audio',
+          tooltip: 'Cambia traccia audio',
+          value: player.state.track.audio,
+          values: [AudioTrack.auto(), AudioTrack.no(), ...tracks.audio],
+          labelFor: labelFor,
+          onChanged: onAudioChanged,
+        ),
+        _CompactMenu<SubtitleTrack>(
+          icon: Icons.subtitles,
+          label: 'Sub',
+          tooltip: 'Sottotitoli',
+          value: player.state.track.subtitle,
+          values: [
+            SubtitleTrack.no(),
+            SubtitleTrack.auto(),
+            ...tracks.subtitle,
           ],
+          labelFor: labelFor,
+          onChanged: onSubtitleChanged,
+        ),
+        PopupMenuButton<double>(
+          tooltip: 'Velocita',
+          initialValue: rate,
+          onSelected: onRateChanged,
+          child: const _PlayerMenuChip(icon: Icons.speed, label: 'Velocita'),
+          itemBuilder: (_) => const [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+              .map(
+                (value) => PopupMenuItem<double>(
+                  value: value,
+                  child: Text('${value}x'),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class _TizenVolumeControl extends StatelessWidget {
+  const _TizenVolumeControl({required this.controller});
+
+  final avplay.VideoPlayerController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<avplay.VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        return SizedBox(
+          width: 128,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                value.volume <= 0 ? Icons.volume_off : Icons.volume_up,
+                size: 20,
+              ),
+              Expanded(
+                child: Slider(
+                  value: value.volume.clamp(0, 1).toDouble(),
+                  min: 0,
+                  max: 1,
+                  onChanged: controller.setVolume,
+                ),
+              ),
+            ],
+          ),
         );
       },
+    );
+  }
+}
+
+class _SeekIconButton extends StatelessWidget {
+  const _SeekIconButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(icon, size: 20),
+      visualDensity: VisualDensity.compact,
     );
   }
 }
@@ -3894,38 +7521,61 @@ class _CatalogToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = MediaQuery.sizeOf(context).width < 760;
     final categoryIds = ['', ...categories.map((item) => item.id)];
     final selected = categoryIds.contains(selectedCategoryId)
         ? selectedCategoryId
         : '';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
-      child: Row(
-        children: [
-          Expanded(
-            child: _ToolbarSelect<String>(
-              label: 'Categoria',
-              value: selected,
-              items: categoryIds,
-              itemLabel: categoryName,
-              onChanged: onCategoryChanged,
+      padding: EdgeInsets.fromLTRB(mobile ? 16 : 20, 8, mobile ? 16 : 20, 18),
+      child: mobile
+          ? Column(
+              children: [
+                _ToolbarSelect<String>(
+                  label: 'Categoria',
+                  value: selected,
+                  items: categoryIds,
+                  itemLabel: categoryName,
+                  onChanged: onCategoryChanged,
+                ),
+                if (sort != null && onSortChanged != null) ...[
+                  const SizedBox(height: 12),
+                  _ToolbarSelect<String>(
+                    label: 'Ordina',
+                    value: sort!,
+                    items: const ['default', 'az'],
+                    itemLabel: (value) => value == 'az' ? 'A-Z' : 'Recenti',
+                    onChanged: onSortChanged!,
+                  ),
+                ],
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: _ToolbarSelect<String>(
+                    label: 'Categoria',
+                    value: selected,
+                    items: categoryIds,
+                    itemLabel: categoryName,
+                    onChanged: onCategoryChanged,
+                  ),
+                ),
+                if (sort != null && onSortChanged != null) ...[
+                  const SizedBox(width: 14),
+                  SizedBox(
+                    width: 210,
+                    child: _ToolbarSelect<String>(
+                      label: 'Ordina',
+                      value: sort!,
+                      items: const ['default', 'az'],
+                      itemLabel: (value) => value == 'az' ? 'A-Z' : 'Recenti',
+                      onChanged: onSortChanged!,
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ),
-          if (sort != null && onSortChanged != null) ...[
-            const SizedBox(width: 14),
-            SizedBox(
-              width: 210,
-              child: _ToolbarSelect<String>(
-                label: 'Ordina',
-                value: sort!,
-                items: const ['default', 'az'],
-                itemLabel: (value) => value == 'az' ? 'A-Z' : 'Default',
-                onChanged: onSortChanged!,
-              ),
-            ),
-          ],
-        ],
-      ),
     );
   }
 }
@@ -3966,6 +7616,238 @@ class _ToolbarSelect<T> extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _QuickCategoryStrip extends StatelessWidget {
+  const _QuickCategoryStrip({
+    required this.categories,
+    required this.selectedCategoryId,
+    required this.onCategoryChanged,
+  });
+
+  final List<XtreamCategory> categories;
+  final String selectedCategoryId;
+  final ValueChanged<String> onCategoryChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleCategories = categories.take(12).toList();
+    return SizedBox(
+      height: 58,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+        scrollDirection: Axis.horizontal,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _CategoryChipButton(
+              label: 'Tutte',
+              selected: selectedCategoryId.isEmpty,
+              onTap: () => onCategoryChanged(''),
+            ),
+          ),
+          for (final category in visibleCategories)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _CategoryChipButton(
+                label: category.name,
+                selected: category.id == selectedCategoryId,
+                onTap: () => onCategoryChanged(category.id),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryChipButton extends StatelessWidget {
+  const _CategoryChipButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected
+          ? LelegColors.accent.withValues(alpha: 0.16)
+          : LelegColors.surface,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? LelegColors.accent : LelegColors.line,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: selected ? LelegColors.fg : LelegColors.muted,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CompactEpgRail extends StatelessWidget {
+  const _CompactEpgRail({
+    required this.programmes,
+    required this.loading,
+    required this.channel,
+    required this.onWatch,
+  });
+
+  final List<EpgProgramme> programmes;
+  final bool loading;
+  final LiveChannel? channel;
+  final void Function(LiveChannel channel, EpgProgramme programme) onWatch;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (channel == null || programmes.isEmpty) {
+      return const Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Guida non disponibile',
+          style: TextStyle(
+            color: LelegColors.muted,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+    }
+    final items = [...programmes]
+      ..sort((a, b) {
+        final aStart = a.start;
+        final bStart = b.start;
+        if (aStart == null && bStart == null) return 0;
+        if (aStart == null) return 1;
+        if (bStart == null) return -1;
+        return aStart.compareTo(bStart);
+      });
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      itemCount: items.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 10),
+      itemBuilder: (_, index) {
+        final programme = items[index];
+        final live = _programmeIsLive(programme);
+        final replay = _programmeCanReplay(channel!, programme);
+        return InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: (live || replay) ? () => onWatch(channel!, programme) : null,
+          child: Container(
+            width: 190,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: live ? LelegColors.surface3 : LelegColors.bg,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: live || replay
+                    ? LelegColors.accent.withValues(alpha: 0.5)
+                    : LelegColors.line,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${live
+                          ? 'LIVE'
+                          : replay
+                          ? 'REC'
+                          : ''} ${_programmeTimeRange(programme)}'
+                      .trim(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: LelegColors.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  programme.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+                if (programme.description.trim().isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    programme.description.trim(),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: LelegColors.muted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  bool _programmeIsLive(EpgProgramme programme) {
+    final now = DateTime.now();
+    final start = programme.start;
+    final end = programme.end;
+    return start != null &&
+        end != null &&
+        start.isBefore(now) &&
+        end.isAfter(now);
+  }
+
+  bool _programmeCanReplay(LiveChannel channel, EpgProgramme programme) {
+    final now = DateTime.now();
+    final start = programme.start;
+    final end = programme.end;
+    if (!channel.hasCatchup || start == null || end == null) return false;
+    if (end.isAfter(now) || !end.isAfter(start)) return false;
+    final days = channel.catchupDays > 0 ? channel.catchupDays : 7;
+    return start.isAfter(now.subtract(Duration(days: days)));
+  }
+
+  String _programmeTimeRange(EpgProgramme programme) {
+    String fmt(DateTime? value) {
+      if (value == null) return '--:--';
+      return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+    }
+
+    return '${fmt(programme.start)} - ${fmt(programme.end)}';
   }
 }
 
@@ -4043,33 +7925,56 @@ class _RateMenu extends StatelessWidget {
 class _ChannelTile extends StatelessWidget {
   const _ChannelTile({
     required this.channel,
+    required this.onOpen,
     required this.onPlay,
     this.category,
+    this.selected = false,
   });
 
   final LiveChannel channel;
+  final ValueChanged<LiveChannel> onOpen;
   final ValueChanged<LiveChannel> onPlay;
   final String? category;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: LelegColors.surface,
-      borderRadius: BorderRadius.circular(14),
-      child: ListTile(
-        leading: _Logo(url: channel.logo, fallback: Icons.live_tv),
-        title: Text(channel.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          category == null || category!.isEmpty
-              ? '#${channel.id}'
-              : '$category · #${channel.id}',
-          style: const TextStyle(color: LelegColors.muted),
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: Material(
+        color: selected ? LelegColors.surface3 : LelegColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: _RemoteActivate(
+          onActivate: () => onOpen(channel),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: selected ? LelegColors.accent : Colors.transparent,
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: ListTile(
+              leading: _Logo(url: channel.logo, fallback: Icons.live_tv),
+              title: Text(
+                channel.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                category == null || category!.isEmpty
+                    ? '#${channel.id}'
+                    : '$category · #${channel.id}',
+                style: const TextStyle(color: LelegColors.muted),
+              ),
+              trailing: IconButton.filledTonal(
+                onPressed: () => onPlay(channel),
+                icon: const Icon(Icons.play_arrow),
+              ),
+              onTap: () => onOpen(channel),
+            ),
+          ),
         ),
-        trailing: IconButton.filledTonal(
-          onPressed: () => onPlay(channel),
-          icon: const Icon(Icons.play_arrow),
-        ),
-        onTap: () => onPlay(channel),
       ),
     );
   }
@@ -4082,8 +7987,10 @@ class _MoviePosterCard extends StatelessWidget {
     this.category,
     this.onFavorite,
     this.onWatchLater,
+    this.onDownload,
     this.isFavorite = false,
     this.isWatchLater = false,
+    this.selected = false,
   });
 
   final VodMovie movie;
@@ -4091,113 +7998,132 @@ class _MoviePosterCard extends StatelessWidget {
   final String? category;
   final ValueChanged<VodMovie>? onFavorite;
   final ValueChanged<VodMovie>? onWatchLater;
+  final ValueChanged<VodMovie>? onDownload;
   final bool isFavorite;
   final bool isWatchLater;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: LelegColors.surface,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: Material(
+        color: selected ? LelegColors.surface3 : LelegColors.surface,
         borderRadius: BorderRadius.circular(18),
-        onTap: () => onPlay(movie),
-        child: Container(
-          width: 190,
-          decoration: BoxDecoration(
+        child: _RemoteActivate(
+          onActivate: () => onPlay(movie),
+          child: InkWell(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: LelegColors.line),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _Poster(url: movie.logo),
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.58),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 5,
-                          ),
-                          child: Text(
-                            movie.rating.isEmpty ? 'MOVIE' : movie.rating,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+            onTap: () => onPlay(movie),
+            child: Container(
+              width: 190,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected ? LelegColors.accent : LelegColors.line,
+                  width: selected ? 2 : 1,
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      movie.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    if (category != null && category!.isNotEmpty) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        category!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: LelegColors.muted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    Row(
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        IconButton.filledTonal(
-                          onPressed: () => onPlay(movie),
-                          icon: const Icon(Icons.play_arrow),
-                          tooltip: 'Play',
+                        _Poster(url: movie.logo),
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.58),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
+                              child: Text(
+                                movie.rating.isEmpty ? 'MOVIE' : movie.rating,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                        if (onFavorite != null)
-                          IconButton(
-                            onPressed: () => onFavorite!(movie),
-                            icon: Icon(
-                              isFavorite ? Icons.star : Icons.star_border,
-                            ),
-                            tooltip: 'Preferiti',
-                          ),
-                        if (onWatchLater != null)
-                          IconButton(
-                            onPressed: () => onWatchLater!(movie),
-                            icon: Icon(
-                              isWatchLater
-                                  ? Icons.bookmark
-                                  : Icons.bookmark_border,
-                            ),
-                            tooltip: 'Da vedere',
-                          ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          movie.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        if (category != null && category!.isNotEmpty) ...[
+                          const SizedBox(height: 5),
+                          Text(
+                            category!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: LelegColors.muted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 2,
+                          runSpacing: 2,
+                          children: [
+                            IconButton.filledTonal(
+                              onPressed: () => onPlay(movie),
+                              icon: const Icon(Icons.chevron_right),
+                              tooltip: 'Dettagli',
+                            ),
+                            if (onFavorite != null)
+                              IconButton(
+                                onPressed: () => onFavorite!(movie),
+                                icon: Icon(
+                                  isFavorite ? Icons.star : Icons.star_border,
+                                ),
+                                tooltip: 'Preferiti',
+                              ),
+                            if (onWatchLater != null)
+                              IconButton(
+                                onPressed: () => onWatchLater!(movie),
+                                icon: Icon(
+                                  isWatchLater
+                                      ? Icons.bookmark
+                                      : Icons.bookmark_border,
+                                ),
+                                tooltip: 'Da vedere',
+                              ),
+                            if (onDownload != null)
+                              IconButton(
+                                onPressed: () => onDownload!(movie),
+                                icon: const Icon(Icons.download_outlined),
+                                tooltip: 'Download',
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -4210,108 +8136,119 @@ class _SeriesPosterCard extends StatelessWidget {
     required this.show,
     required this.category,
     required this.onOpen,
+    this.selected = false,
   });
 
   final SeriesShow show;
   final String category;
   final ValueChanged<SeriesShow> onOpen;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: LelegColors.surface,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: Material(
+        color: selected ? LelegColors.surface3 : LelegColors.surface,
         borderRadius: BorderRadius.circular(18),
-        onTap: () => onOpen(show),
-        child: Container(
-          decoration: BoxDecoration(
+        child: _RemoteActivate(
+          onActivate: () => onOpen(show),
+          child: InkWell(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: LelegColors.line),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _Poster(url: show.logo),
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.58),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 5,
-                          ),
-                          child: Text(
-                            show.rating.isEmpty ? 'SERIE' : show.rating,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
+            onTap: () => onOpen(show),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: selected ? LelegColors.accent : LelegColors.line,
+                  width: selected ? 2 : 1,
+                ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _Poster(url: show.logo),
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.58),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
+                              child: Text(
+                                show.rating.isEmpty ? 'SERIE' : show.rating,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      show.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      [
-                        if (show.year.isNotEmpty) show.year,
-                        if (category.isNotEmpty) category,
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: LelegColors.muted,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(Icons.layers_outlined, size: 18),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'Apri episodi',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: LelegColors.muted),
+                        Text(
+                          show.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          [
+                            if (show.year.isNotEmpty) show.year,
+                            if (category.isNotEmpty) category,
+                          ].join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: LelegColors.muted,
+                            fontSize: 12,
                           ),
                         ),
-                        IconButton.filledTonal(
-                          onPressed: () => onOpen(show),
-                          icon: const Icon(Icons.chevron_right),
-                          tooltip: 'Apri',
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.layers_outlined, size: 18),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'Apri episodi',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(color: LelegColors.muted),
+                              ),
+                            ),
+                            IconButton.filledTonal(
+                              onPressed: () => onOpen(show),
+                              icon: const Icon(Icons.chevron_right),
+                              tooltip: 'Apri',
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -4334,32 +8271,35 @@ class _EpisodeTile extends StatelessWidget {
     return Material(
       color: LelegColors.surface,
       borderRadius: BorderRadius.circular(14),
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: LelegColors.surface3,
-          child: Text(
-            code.isEmpty ? 'EP' : code,
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+      child: _RemoteActivate(
+        onActivate: () => onPlay(episode),
+        child: ListTile(
+          leading: CircleAvatar(
+            backgroundColor: LelegColors.surface3,
+            child: Text(
+              code.isEmpty ? 'EP' : code,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+            ),
           ),
+          title: Text(
+            episode.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            episode.duration.isEmpty
+                ? episode.containerExtension.toUpperCase()
+                : '${episode.duration} · ${episode.containerExtension.toUpperCase()}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: LelegColors.muted),
+          ),
+          trailing: IconButton.filledTonal(
+            onPressed: () => onPlay(episode),
+            icon: const Icon(Icons.play_arrow),
+          ),
+          onTap: () => onPlay(episode),
         ),
-        title: Text(
-          episode.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          episode.duration.isEmpty
-              ? episode.containerExtension.toUpperCase()
-              : '${episode.duration} · ${episode.containerExtension.toUpperCase()}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: LelegColors.muted),
-        ),
-        trailing: IconButton.filledTonal(
-          onPressed: () => onPlay(episode),
-          icon: const Icon(Icons.play_arrow),
-        ),
-        onTap: () => onPlay(episode),
       ),
     );
   }

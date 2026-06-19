@@ -17,23 +17,23 @@ experience.
 | Sidebar navigation | `src/components/Sidebar.astro` | Partial | Main sections exist. Needs exact spacing, labels, active-state polish, and account/provider footer parity. |
 | Home | `src/pages/index.astro` | Partial | Cards and recent movies exist. Needs full hub strips, continue watching, favorites/watchlist/recently-added strips, and exact web composition. |
 | Global search | `src/components/SearchView.svelte` | Partial | Native search opens a combined result view. Missing EPG search, richer result metadata, cross-playlist behavior. |
-| Live TV | `src/pages/livetv.astro` | Partial | Native categories, channel list, playback, hover controls, contextual EPG work. Player now uses a smaller flex height so more EPG is visible below it. Needs exact web layout controls and remote/TV polish. |
-| Live contextual EPG | `src/pages/livetv.astro`, `src/scripts/lib/epg-data.js` | Partial | Uses Xtream `get_short_epg` with `epg_listings` parsing and per-channel cache. XMLTV mapping/catchup parity still pending. |
-| EPG page | `src/pages/epg.astro`, `src/scripts/epg/epg.ts` | Partial | Native page now has category filter, refresh, batched `get_short_epg`, XMLTV fallback from `xmltv.php`, and guide-like rows for up to 80 channels. Still missing the true web timeline grid, now button, EPG mapping dialog, favorites/recents categories, and manual mapping UI. |
+| Live TV | `src/pages/livetv.astro` | Functional | Native categories, channel list, playback, hover controls, and contextual EPG work. Phone uses full-screen playback; iPad/iOS live/catchup also enters focus playback to avoid embedded small-player issues. TV/desktop keep the large embedded layout. |
+| Live contextual EPG | `src/pages/livetv.astro`, `src/scripts/lib/epg-data.js` | Functional | Uses Xtream `get_short_epg` with `epg_listings` parsing and per-channel cache. Past/current/future programmes are sorted chronologically and the list auto-scrolls near the current programme while still allowing catchup selection. |
+| EPG page | `src/pages/epg.astro`, `src/scripts/epg/epg.ts` | Functional | Native page has category filter, refresh, batched `get_short_epg`, XMLTV fallback from `xmltv.php`, horizontal timeline controls, dark hover details, catchup badges, and channel rows. Remaining parity gaps: mapping dialog, favorites/recents categories, and manual mapping UI. |
 | Movies catalogue | `src/pages/movies/index.astro` | Partial | Categories, list/grid, play, favorites/watch later exist. Needs exact filters/sort menu, provider errors, hidden categories, and metadata density. |
 | Movie detail | `src/pages/movies/detail.astro` | Partial | Native playback and basic metadata exist. Needs trailer behavior, full detail metadata, persistent resume, full favorite/watch later persistence, and exact web visual rhythm. |
 | Series catalogue | `src/pages/series/index.astro` | Partial | Categories, sorting, opening series, and episode playback exist. Needs exact cards, season navigation polish, favorites/watchlist, and detail parity. |
 | Favorites | `src/pages/favorites.astro`, `src/components/AllFavoritesView.svelte` | Minimal | Native currently tracks movie favorites in memory only. Needs persistent cross-kind/cross-playlist favorites, reorder, metadata backfill, and navigation parity. |
 | Watch later | `src/pages/watchlist.astro`, `src/components/AllWatchlistView.svelte` | Minimal | Native currently tracks movie watch-later in memory only. Needs persistent VOD/series support and cross-playlist behavior. |
 | Recently added | `src/pages/recently-added.astro` | Minimal | Native shows recent movies only. Needs all-kind filtering and web sorting semantics. |
-| Downloads | `src/pages/downloads.astro` | Missing | Native route is placeholder. Needs download queue, destination folder, progress, pause/resume/cancel, and open folder. |
-| Settings playlists | `src/pages/settings.astro`, login flow | Partial | Native persists multiple Xtream profiles, shows saved lists, switches active list, removes lists, refreshes active list on request, and caches catalog data for 24 hours. Missing rename/edit title, import/export, M3U/local playlists, and full account metadata parity. |
+| Downloads | `src/pages/downloads.astro` | Functional | Movie downloads route to a native queue. Android delegates to `DownloadManager`; iOS/iPadOS uses `URLSessionConfiguration.background` through `com.lelegiptv.native/storage`; desktop writes to `~/Downloads/LelegIPTV`. Remaining gap: pause/resume/cancel UI parity. |
+| Settings playlists | `src/pages/settings.astro`, login flow | Functional | Native persists multiple Xtream profiles, shows saved list names, switches active list, removes lists, refreshes active list on request, clears the form after save, supports shortcut codes (`ITALIA1/2/3`, `MONDO1/2`), and caches catalog data for 24 hours. Missing import/export, M3U/local playlists, and full account metadata parity. |
 | Settings appearance | `src/pages/settings.astro` | Missing | Needs language, theme, font scale, TV safe area, home strip editor, web install card equivalent where relevant, close behavior. |
 | Settings watching | `src/pages/settings.astro` | Missing | Needs Live TV layout, progress retention, EPG timezone/offset, playback backend/preferences where relevant to native. |
 | Settings network | `src/pages/settings.astro` | Missing | Needs network/user-agent/provider diagnostics and native-specific connection checks. |
 | Settings library/data | `src/pages/settings.astro` | Missing | Needs hidden categories, favorites reorder, hub strips, downloads folder, backup/export/import, cache/storage controls. |
-| Player | Web ArtPlayer/Shaka/HLS stack | Partial | Native uses `media_kit`; play/pause/seek/audio track selector/subtitle selector/speed/fullscreen are wired. PiP is currently unavailable and needs a native layer. Controls auto-hide on pointer inactivity. |
-| Icons/app identity | `src-tauri/app-icon.png` | Partial | Flutter macOS AppIcon is generated from the Leleg icon. Dock may cache old icons until app rebuild/reinstall. |
+| Player | Web ArtPlayer/Shaka/HLS stack | Functional | Native uses `media_kit` where available, AVPlay on Tizen, and iOS media paths where needed. Play/pause/seek/audio track selector/subtitle selector/speed/fullscreen are wired. PiP is currently unavailable and needs a native layer. Controls auto-hide on pointer inactivity. |
+| Icons/app identity | `src-tauri/app-icon.png` | Functional | Flutter Android/iOS/macOS/Tizen icons are generated from the Leleg icon. Dock/launcher may cache old icons until app rebuild/reinstall. |
 
 ## Native EPG Implementation Notes
 
@@ -58,11 +58,13 @@ experience.
 2. Complete playlist settings: display names/rename, edit existing credentials,
    import/export, M3U/local sources, and account metadata panels.
 3. Persist favorites, watch later, and continue watching by playlist and kind.
-4. Bring Downloads route from placeholder to real queue.
-5. Port Settings groups in this order: appearance, watching,
+4. Complete Downloads parity: pause/resume/cancel, folder management, and persisted completed items.
+5. Port remaining Settings groups in this order: appearance, watching,
    library/data, help/about.
-6. Only after macOS native is stable, reuse the Flutter codebase for Android and
-   iOS validation. Keep Samsung Tizen as a separate web-TV/AVPlay target.
+6. Keep validating the same Flutter codebase on iPhone, iPad, Android phone,
+   Android tablet/TV, macOS, Windows, Linux, and Samsung Tizen. Tablet/iPad and
+   desktop share the large layout; phones use the compact fullscreen-first
+   player flow; TV targets add D-pad focus semantics.
 
 ## Native Catalog Cache
 
@@ -75,3 +77,6 @@ experience.
   catalog entries.
 - The app reuses cached catalog data when it is newer than 24 hours.
 - "Ricarica dal provider" bypasses the cache and downloads the catalog again.
+- Saving a profile no longer forces a provider reload by default; it reuses the
+  24-hour cache when available and clears the form after the active list is
+  stored.

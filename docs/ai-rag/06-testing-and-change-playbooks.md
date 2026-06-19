@@ -3,7 +3,6 @@
 ## Baseline commands
 
 ```bash
-pnpm sync:upstream -- --check
 pnpm test
 pnpm lint
 pnpm build
@@ -12,17 +11,19 @@ pnpm build
 Native/manual commands when environment supports them:
 
 ```bash
-pnpm tauri dev
-pnpm tauri:android
+pnpm flutter:analyze
+pnpm flutter:android:build
+pnpm flutter:ios:build
+pnpm flutter:tizen:build
 ```
 
 ## Before editing
 
 1. Run `git status --short`.
 2. Preserve user changes; do not revert unrelated files.
-3. Run `pnpm sync:upstream -- --check` if `pnpm` is available.
-4. Read the route/component and the owning `src/scripts/lib` module.
-5. Search existing events before inventing new events.
+3. Read the route/component and the owning `src/scripts/lib` module, or the
+   Flutter screen/service under `native/flutter/leleg_iptv`.
+4. Search existing events before inventing new events.
 
 ## Adding a playlist feature
 
@@ -65,19 +66,18 @@ Checklist:
 
 Read first:
 
-- `player-runtime.ts`
-- `stream-urls.ts`
-- `stream-headers.ts`
-- `external-player-button.ts`
-- `src-tauri/src/external_player.rs`
+- Web: `player-runtime.ts`, `stream-urls.ts`, `stream-headers.ts`
+- Native: `native/flutter/leleg_iptv/lib/core/playback/**`
+- Platform wrappers: `native/flutter/leleg_iptv/android/**`,
+  `native/flutter/leleg_iptv/ios/**`, `native/flutter/leleg_iptv/tizen/**`
 
 Checklist:
 
 - Keep URL building pure.
-- Keep external player argv builders pure and tested.
-- Test embedded and external backends separately.
-- Guard Android vs desktop vs web.
-- Preserve progress tracking and Discord cleanup on teardown.
+- Test web playback separately from Flutter native playback.
+- Guard Android phone/tablet/TV, iOS/iPadOS, desktop, and Tizen behavior.
+- Preserve progress tracking, audio/subtitle selection, fullscreen behavior, and
+  download handoff.
 
 ## Adding EPG behavior
 
@@ -244,4 +244,3 @@ Native:
 - UI text added without locale keys.
 - First-paint setting changed only after hydration causing flicker.
 - Virtualized list row height changed without updating math/focus.
-

@@ -410,17 +410,19 @@ Limits:
 
 Tizen is not a Tauri target.
 
-Best path: Web App plus Samsung AVPlay adapter.
+Current path: Flutter native `.tpk` plus Samsung AVPlay through
+`video_player_avplay`.
 
-The current Tizen package is only:
+The release package is:
 
-- Astro static `dist`
-- `build/tizen-web`
-- `packaging/tizen/config.xml`
-- signed `.wgt`
+- Flutter app under `native/flutter/leleg_iptv`
+- Tizen manifest at `native/flutter/leleg_iptv/tizen/tizen-manifest.xml`
+- built package `native/flutter/leleg_iptv/build/tizen/tpk/*.tpk`
+- download copy `www/downloads/current/LelegIPTV-tizen-tv-release.tpk`
 
-For robust TV playback, implement a Tizen backend using `webapis.avplay` when
-available, with browser hls.js/Shaka fallback.
+Do not route Tizen through the old Astro web package. The Flutter code must keep
+the Tizen playback branch separate from `media_kit`, because `media_kit` looks
+for `libmpv`, which is not available on Samsung TV.
 
 Required Tizen backend responsibilities:
 

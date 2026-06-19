@@ -6,18 +6,13 @@ editing?".
 
 ## Root maintenance files
 
-### `scripts/sync-upstream.sh`
-
-Fork alignment script. Fetches `origin` and `upstream`, reports local/fork
-ahead-behind status against `upstream/main`, and can apply updates with
-`ff-only`, `rebase`, or `merge`. Refuses dirty `--apply`, never force-pushes,
-can add default upstream remote.
-
 ### `package.json`
 
 Defines package metadata, dependencies, and scripts. Important scripts:
-`dev`, `build`, `preview`, `tauri`, `tauri:android`, `test`, `lint`,
-`screenshots`, `sync:upstream`. Package manager is `pnpm@10.31.0`.
+`dev`, `build`, `preview`, `test`, `lint`, `screenshots`, `flutter:analyze`,
+`flutter:android:build`, `flutter:ios:build`, `flutter:macos:build`,
+`flutter:tizen:build`, and `download-center:prepare`.
+Package manager is `pnpm@10.31.0`.
 
 ### `astro.config.mjs`
 

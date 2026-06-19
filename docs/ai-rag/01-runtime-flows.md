@@ -1,17 +1,20 @@
 # Runtime flows
 
-## Fork alignment flow
+## Native release flow
 
-Files: `scripts/sync-upstream.sh`, `docs/SYNC_UPSTREAM.md`, `package.json`.
+Files: `native/flutter/leleg_iptv`, `scripts/package-flutter-ios-unsigned-ipa.sh`,
+`scripts/prepare-download-center.mjs`, `docs/BUILD_ARTIFACTS.md`,
+`.github/workflows/flutter-installable-artifacts.yml`.
 
-1. `pnpm sync:upstream -- --check` runs the script in read-only mode.
-2. The script requires `origin` and `upstream`. If `upstream` is missing,
-   `--setup-upstream` adds `https://github.com/infinitel8p/Extreme-InfiniTV.git`.
-3. The script fetches both remotes, compares `upstream/main...HEAD`, compares
-   `upstream/main...origin/main`, and reports ahead/behind.
-4. `--apply` refuses dirty working trees.
-5. Default strategy is `ff-only`; `rebase` and `merge` are explicit.
-6. `--push` pushes the synced branch to `origin`.
+1. The active native app is the Flutter project under
+   `native/flutter/leleg_iptv`.
+2. Android APK, macOS app, unsigned iOS IPA, Tizen TPK, Windows ZIP, and Linux
+   TAR artifacts are described in `docs/BUILD_ARTIFACTS.md`.
+3. `scripts/prepare-download-center.mjs` publishes the public install homepage
+   by copying `docs/installazione-dispositivi.html` to `dist/index.html` and
+   mirroring `www/downloads/current`.
+4. The GitHub Action `Flutter installable artifacts` packages desktop/mobile
+   artifacts and can publish them to the `native-latest` release.
 
 ## First-run and playlist creation flow
 

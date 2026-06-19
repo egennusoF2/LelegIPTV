@@ -533,6 +533,63 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 	const epgTestStatus = $("epgTestStatus");
 	const epgDisableProviderRow = $("epgDisableProviderRow");
 	const epgDisableProviderEl = /** @type {HTMLInputElement} */ ($("epgDisableProvider"));
+
+	const PLAYLIST_CODE_PRESETS = {
+		ITALIA1: {
+			title: "ITALIA1",
+			serverUrl: "http://muti14.fonsecatemp.com",
+			username: "notv_w7cehc",
+			password: "ffhuax4a",
+		},
+		ITALIA2: {
+			title: "ITALIA2",
+			serverUrl: "http://muti14.fonsecatemp.com",
+			username: "notv_71d762",
+			password: "qgjjhnty",
+		},
+		ITALIA3: {
+			title: "ITALIA3",
+			serverUrl: "http://muti14.fonsecatemp.com",
+			username: "notv_93me22",
+			password: "x7g35zhh",
+		},
+		MONDO1: {
+			title: "MONDO1",
+			serverUrl: "http://watchtivo-4k.com",
+			username: "S8eLtOiTtE",
+			password: "ut6YxwMG6X",
+		},
+		MONDO2: {
+			title: "MONDO2",
+			serverUrl: "http://watchtivo-4k.com",
+			username: "bSFZGHX1Gr",
+			password: "zHwiKBmB1O",
+		},
+	};
+
+	function playlistPresetFromTitle() {
+		const code = String(titleEl?.value || "").trim().toUpperCase();
+		return PLAYLIST_CODE_PRESETS[code] || null;
+	}
+
+	function applyPlaylistPresetFromTitle() {
+		const preset = playlistPresetFromTitle();
+		if (!preset) return;
+		let changed = false;
+		if (serverEl.value !== preset.serverUrl) {
+			serverEl.value = preset.serverUrl;
+			changed = true;
+		}
+		if (userEl.value !== preset.username) {
+			userEl.value = preset.username;
+			changed = true;
+		}
+		if (passEl.value !== preset.password) {
+			passEl.value = preset.password;
+			changed = true;
+		}
+		if (changed) showStatus("info", `Lista ${preset.title} compilata automaticamente.`);
+	}
 	let epgTestAbort = null;
 
 	/** @type {{ name: string, text: string } | null} */
@@ -1149,6 +1206,8 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 			showStatus("info", t("login.status.credentialsExtracted"));
 		}
 	});
+	titleEl.addEventListener("input", applyPlaylistPresetFromTitle);
+	titleEl.addEventListener("change", applyPlaylistPresetFromTitle);
 
 	function clearStatus() {
 		statusEl.classList.add("hidden");
@@ -1281,6 +1340,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 		testBtn.disabled = true;
 		try {
 			if (mode === "xtream") {
+				applyPlaylistPresetFromTitle();
 				const serverUrl = serverEl.value.trim();
 				const username = userEl.value.trim();
 				const password = passEl.value.trim();
@@ -1399,7 +1459,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 
 	// Whenever the user edits any credential field, hide the previous
 	// diagnostic result - it's now stale.
-	for (const el of [serverEl, userEl, passEl, m3uEl]) {
+	for (const el of [titleEl, serverEl, userEl, passEl, m3uEl]) {
 		el?.addEventListener("input", hideDiagnosticResult);
 	}
 
@@ -1470,6 +1530,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 					!!editing.disableProviderEpg !== disableProviderEpg);
 
 			if (mode === "xtream") {
+				applyPlaylistPresetFromTitle();
 				const rawServerUrl = serverEl.value.trim();
 				const username = userEl.value.trim();
 				const password = passEl.value.trim();

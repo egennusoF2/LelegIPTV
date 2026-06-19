@@ -82,11 +82,11 @@ describe("isXtreamVodContainerUrl", () => {
 })
 
 describe("shouldSkipVodHlsSibling", () => {
-  it("skips HLS probe for mkv-only panels", () => {
+  it("allows HLS probe for Xtream MKV VOD siblings so tracks can be discovered", () => {
     const mkv = "http://panel.example.com/movie/u/p/734099.mkv"
     expect(containerExtensionFromUrl(mkv)).toBe("mkv")
-    expect(shouldSkipVodHlsSibling(mkv)).toBe(true)
-    expect(shouldSkipVodHlsSibling(mkv, "mkv")).toBe(true)
+    expect(shouldSkipVodHlsSibling(mkv)).toBe(false)
+    expect(shouldSkipVodHlsSibling(mkv, "mkv")).toBe(false)
   })
 
   it("still allows HLS probe for mp4 movie containers", () => {

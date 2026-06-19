@@ -12,6 +12,10 @@ on:
       - "functions/**"
       - "astro.config.mjs"
       - "wrangler.toml"
+      - "docs/installazione-dispositivi.html"
+      - "docs/BUILD_ARTIFACTS.md"
+      - "www/downloads/current/**"
+      - "scripts/prepare-download-center.mjs"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/web-deploy.yml"
@@ -49,13 +53,16 @@ jobs:
       - name: Build web app
         run: pnpm build:pages
 
+      - name: Prepare download center homepage
+        run: pnpm download-center:prepare
+
       - name: Deploy to Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != ''
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy --project-name=leleg-iptv --branch=main
+          command: pages deploy dist --project-name=leleg-iptv --branch=main
 
       - name: Skip deploy notice
         if: env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == ''

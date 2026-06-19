@@ -63,7 +63,7 @@ Current playback-related files:
 - `src-tauri/src/external_player.rs`
 - `src-tauri/gen/android/app/src/main/java/com/lelegiptv/player/MainActivity.kt`
 - `packaging/tizen/config.xml`
-- `scripts/prepare-tizen.mjs`
+- Flutter Tizen packaging under `native/flutter/leleg_iptv/tizen/**`
 
 The current implementation contains many competing media paths:
 

@@ -15,8 +15,11 @@ localized UI.
   `src/scripts`.
 - Styling: Tailwind CSS 4 via Vite, global design tokens in
   `src/styles/global.css`.
-- Native shell: Tauri 2 in `src-tauri`, Rust commands for desktop features,
-  Android generated project under `src-tauri/gen/android`.
+- Native app: Flutter under `native/flutter/leleg_iptv`, with platform bridges
+  for downloads, playback, storage, iOS background transfers, Android
+  DownloadManager, macOS media playback, and Tizen AVPlay.
+- Legacy shell: Tauri 2 in `src-tauri` remains in the repository for historical
+  context and web-era code, but it is not the active native release path.
 - Package manager: `pnpm@10.31.0`.
 - Tests: Vitest under `tests`.
 - Docs site: a separate Astro app under `docs`.
@@ -31,41 +34,36 @@ DOM `CustomEvent`s such as `xt:active-changed`, `xt:entries-updated`,
 
 The app must work in several environments:
 
-- Web preview: no Tauri plugins, localStorage/cookie persistence only.
-- Tauri desktop: native window, tray, updater, plugin-store, filesystem,
-  notifications, external process launch.
-- Tauri Android: Android WebView, Android filesystem plugin, Android bridges,
-  no desktop process launching.
-- Tauri iOS/iPadOS: mobile WebView target through `tauri ios`; no desktop
-  process launching and every native plugin call must be guarded.
-- Samsung Tizen TV: static Web App package generated from `dist`; no Tauri
-  plugins, no Rust commands, playback depends on TV browser media support.
+- Web preview: no native plugins, localStorage/cookie persistence only.
+- Flutter macOS/iOS/iPadOS: native media playback through `media_kit` where
+  available and Apple platform bridges for downloads and orientation behavior.
+- Flutter Android phone/tablet/TV: native Android app with responsive mobile,
+  tablet, and TV layouts, Android DownloadManager, and D-pad/touch navigation.
+- Flutter Tizen TV: `.tpk` app using Samsung AVPlay via `video_player_avplay`;
+  it intentionally skips `media_kit`/`libmpv`.
 - Astro SSR/build/test contexts: browser globals may be unavailable.
 
 Release/device targets currently implied by the codebase:
 
 - Web/PWA-style preview in modern browsers, useful for development and hosted
   static builds but without native Tauri privileges.
-- Desktop Tauri apps for Windows, macOS, and Linux. Desktop supports tray,
-  updater, filesystem downloads, plugin-store, notifications, Discord Rich
-  Presence, and MPV/VLC process launch.
-- Android Tauri apps for phones and tablets. Android uses WebView, Android
-  filesystem APIs, native intent handoff, status bar/device bridges, and VLC or
-  system player handoff where installed.
+- Flutter desktop apps for macOS now, with Windows and Linux artifacts produced
+  by CI or native host toolchains.
+- Flutter Android apps for phones, tablets, and Android TV. The same APK adapts
+  UI by form factor: smartphone flow, tablet/desktop flow, and TV remote flow.
 - Android TV / Google TV layouts are explicitly supported by D-pad navigation,
   overscan controls, TV performance mode, and screenshot profiles.
-- Chromebook is supported through Android/Tauri-WebView packaging assumptions
+- Chromebook is supported through Android/Flutter packaging assumptions
   and responsive layout profiles.
 - Android XR is represented by screenshot profiles and should be treated as a
   large-screen Android target.
-- iOS/iPhone and iPadOS are wired at command level through Tauri mobile scripts:
-  `pnpm tauri:ios:init`, `pnpm tauri:ios:dev`, and `pnpm tauri:ios:build`.
-  The generated Xcode project is expected under `src-tauri/gen/ios` after init
-  and requires macOS, Xcode, Apple signing, and device/simulator validation.
-- Samsung Tizen TV is wired as a Web App packaging path:
-  `pnpm build && pnpm tizen:prepare` prepares `build/tizen-web` with
-  `packaging/tizen/config.xml`; final `.wgt` signing/packaging happens with
-  Tizen Studio or Tizen CLI and a Samsung certificate profile.
+- iOS/iPhone and iPadOS are Flutter targets. Unsigned IPA packaging is handled
+  by `scripts/package-flutter-ios-unsigned-ipa.sh` for Scarlet/Sideloadly/
+  AltStore/Xcode sideloading.
+- Samsung Tizen TV is wired through the Flutter native app, not the Astro web
+  package. Build a `.tpk` with `pnpm flutter:tizen:build`; the Tizen runtime
+  uses Samsung AVPlay via `video_player_avplay` and intentionally skips
+  `media_kit`/`libmpv`.
 
 ## Core data ownership
 
@@ -114,4 +112,6 @@ Local M3U playlist:
 - Use provider helpers for network calls.
 - Update i18n keys when adding visible UI text.
 - Test desktop and Android assumptions separately for native changes.
-- Before routine work on this fork, run `pnpm sync:upstream -- --check`.
+- Before routine work, run `git status --short` and preserve local user
+  changes. This repository is now the Leleg IPTV source of truth, not a fork
+  that must be kept aligned with an upstream.

@@ -6,9 +6,9 @@ Leleg IPTV without rediscovering the codebase from scratch.
 ## Project shape
 
 Leleg IPTV is a cross-platform IPTV player for Xtream Codes and M3U/M3U8
-playlists. The primary app is an Astro site enhanced with Svelte islands and
-browser-side TypeScript/JavaScript modules. Native desktop and Android shells
-are provided by Tauri 2.
+playlists. The web app is an Astro site enhanced with Svelte islands and
+browser-side TypeScript/JavaScript modules. Native installable app work is now
+centered on the Flutter app under `native/flutter/leleg_iptv`.
 
 The app supports live TV, EPG/XMLTV schedules, VOD movies, series, offline-ish
 catalog caching, favorites, watchlist, external players, TV remote navigation,
@@ -16,13 +16,13 @@ multiple playlists, and localized UI.
 
 Release target notes:
 
-- Desktop: Tauri builds for Windows, macOS, and Linux.
-- Android/Android TV/Chromebook/Android XR: Tauri Android plus responsive and
-  D-pad focused UI paths.
-- iOS/iPadOS: Tauri mobile command path is wired via `tauri:ios:*`; generated
-  Xcode files appear under `src-tauri/gen/ios` only after `pnpm tauri:ios:init`.
-- Samsung Tizen TV: static web package path via `pnpm build` then
-  `pnpm tizen:prepare`; final signing/packaging uses Tizen Studio/CLI.
+- macOS, iOS/iPadOS, Android phone/tablet/TV, Windows, Linux, and Tizen are
+  driven by the Flutter app in `native/flutter/leleg_iptv`.
+- Samsung Tizen TV builds a Flutter `.tpk` via `pnpm flutter:tizen:build`;
+  playback uses Samsung AVPlay through `video_player_avplay`, not `media_kit`.
+- Tauri files under `src-tauri` are legacy context from the previous native
+  approach. Do not use them for new native release work unless explicitly
+  asked to maintain the old shell.
 
 Important playback reset:
 
@@ -41,7 +41,8 @@ Important playback reset:
 
 - Package manager: `pnpm@10.31.0`, pinned in `package.json`.
 - Frontend: Astro 6, Svelte 5, Tailwind CSS 4 through Vite.
-- Native shell: Tauri 2, Rust 2021.
+- Native app: Flutter in `native/flutter/leleg_iptv`.
+- Legacy shell: Tauri 2/Rust under `src-tauri`, kept for historical context.
 - Tests: Vitest for pure browser/runtime utilities.
 - Lint: ESLint flat config, no Prettier config.
 - Docs site: separate Astro app under `docs/`.
@@ -54,37 +55,31 @@ pnpm dev
 pnpm build
 pnpm test
 pnpm lint
-pnpm tauri dev
-pnpm tauri:android
-pnpm tauri:ios:init
-pnpm tauri:ios:dev
-pnpm tauri:ios:build
-pnpm tizen:prepare
-pnpm build:all
-pnpm sync:upstream -- --check
+cd native/flutter/leleg_iptv && flutter analyze
+pnpm flutter:tizen:build
+pnpm download-center:prepare
 ```
 
-## Fork alignment
+## Repository baseline
 
-Before making changes, run:
+Before making changes, inspect the local tree and preserve user work:
 
 ```bash
-pnpm sync:upstream -- --check
+git status --short
 ```
 
-If `upstream` is missing:
+The app is no longer maintained as a fork that must be aligned with an
+upstream project. Treat this repository as the source of truth for Leleg IPTV.
+The current native app lives under `native/flutter/leleg_iptv`; Tauri files are
+legacy context unless a task explicitly targets the old web/Tauri shell.
+
+Useful current checks:
 
 ```bash
-pnpm sync:upstream -- --setup-upstream --check
+pnpm test
+pnpm build:pages
+cd native/flutter/leleg_iptv && flutter analyze
 ```
-
-For routine updates of a clean `main` branch:
-
-```bash
-pnpm sync:upstream -- --apply
-```
-
-See `docs/SYNC_UPSTREAM.md` for the full workflow and safety rules.
 
 ## Directory map
 
@@ -95,12 +90,17 @@ See `docs/SYNC_UPSTREAM.md` for the full workflow and safety rules.
 - `src/scripts/livetv|movies|series|epg|settings/`: page-level behavior modules.
 - `src/styles/global.css`: Tailwind entry and global design tokens/styles.
 - `src/i18n/*.json`: locale dictionaries.
-- `src-tauri/`: Rust/Tauri host, capabilities, Android project, icons, native commands.
-- `packaging/tizen/`: Samsung Tizen TV Web App metadata and packaging notes.
-- `scripts/prepare-tizen.mjs`: copies `dist/` into a Tizen-ready project root.
+- `src-tauri/`: legacy Rust/Tauri host retained for historical reference and
+  old web-shell code paths.
+- `native/flutter/leleg_iptv/`: current native app for macOS, iOS/iPadOS,
+  Android, Android TV, Tizen, Windows, and Linux.
+- `native/flutter/local_plugins/`: local Flutter platform plugins used by the
+  native player/download integrations.
+- `packaging/tizen/`: Samsung Tizen TV metadata and packaging notes.
 - `tests/`: Vitest coverage for pure functions and data parsers.
 - `docs/src/`: documentation website pages and components.
-- `scripts/`: repository maintenance scripts, currently upstream sync.
+- `scripts/`: repository maintenance scripts for Flutter packaging, web
+  download-center preparation, local dev cleanup, and log helpers.
 
 ## Routing and UI model
 
@@ -206,25 +206,28 @@ URLs. The programme dialog receives `canReplay` and navigates to
 
 ## Playback
 
-`src/scripts/lib/playback-session.ts` is the current playback entry point for
-pages. Movies, series, and live TV should call `mountPlaybackSession(...)`,
-which currently wraps the stable web runtime through `WebPlaybackSession`.
+For the current native app, playback is implemented in Flutter under
+`native/flutter/leleg_iptv/lib/core/playback/**` and platform-specific files in
+`android/`, `ios/`, `macos/`, and `tizen/`. Movies, series, and live TV must
+share the same playlist/cache/progress model and expose the same audio,
+subtitle, speed, fullscreen, and download behavior across device families.
 
-`src/scripts/lib/player-runtime.ts` remains the lower-level web/external player
-runtime. Do not add new page-level playback conditionals there unless the same
-behavior is exposed through the shared `PlaybackSession` contract.
+For the web app, `src/scripts/lib/playback-session.ts` remains the playback
+entry point for pages and wraps the stable web runtime through
+`WebPlaybackSession`. `src/scripts/lib/player-runtime.ts` is the lower-level
+web runtime. Do not add new page-level playback conditionals there unless the
+same behavior is exposed through the shared playback contract.
 
 Supported backends:
 
-- Embedded: Video.js and Artplayer.
-- Desktop external: MPV and VLC through Tauri command `launch_external_player`.
-- Android handoff: system intent or VLC package when available.
+- Web embedded playback: Video.js, Artplayer, HLS/DASH helpers.
+- Flutter desktop/mobile/tablet playback: `media_kit`/native platform player
+  path in the Flutter app.
+- Tizen TV playback: Samsung AVPlay through `video_player_avplay`.
 
-Tauri desktop also exposes `native_playback_status` from
-`src-tauri/src/native_playback.rs`. Today it is diagnostic only: it reports the
-recommended native backend name such as `macos-libmpv`, but returns
-`available: false` until a real integrated native player is implemented. Android
-and iOS do not register this command; frontend code must tolerate `null`.
+Legacy Tauri desktop also exposes `native_playback_status` from
+`src-tauri/src/native_playback.rs`. Treat it as historical context only unless
+the task explicitly targets the old shell.
 
 The playback factory emits `xt:playback-session-mounted` with capability fields
 such as `nativeIntegratedPlayback`, `availableNativeBackends`, and
@@ -235,26 +238,14 @@ selection (`selectAudioTrack`, `selectSubtitleTrack`), `getState()`, and
 standard event subscription via `on(...)`. Native backends must implement those
 operations instead of creating separate player menus or page-specific state.
 
-`NativePlaybackSession` is already present but gated: it mounts only when
-`native_playback_status` returns both `available: true` and `integrated: true`.
-`src-tauri/src/native_playback.rs` can currently control MPV through JSON IPC
-when `mpv` is installed, but it still reports `integrated: false` because the
-video surface is not embedded into the Tauri window. Current builds keep using
-`WebPlaybackSession`.
-
-For macOS app VOD reliability, movie and series detail pages auto-launch MPV in
-Tauri unless `?embedded=1` is present. Do not remove this temporary path until
-the native video surface is embedded and tested.
-
 Embedded playback supports HLS (`.m3u8`), MPEG-TS (`.ts` through `mpegts.js`),
 DASH (`.mpd` through `dashjs`), and native browser media formats. URL extension
 and MIME hint are checked first; otherwise a small content-type probe chooses
 the container. Live Xtream startup has an HLS-to-TS retry path for providers or
 devices where the `.m3u8` variant stalls.
 
-Keep argument construction pure and testable. Existing tests cover MPV/VLC
-argv builders and error classification. Add tests for new backend behavior
-instead of relying only on manual playback.
+Keep URL and playback-state construction pure and testable. Add tests for new
+backend behavior instead of relying only on manual playback.
 
 Stream URL construction lives in `src/scripts/lib/stream-urls.ts` and related
 helpers such as `stream-headers.ts`. Mirror-aware stream probing is in
@@ -262,9 +253,10 @@ helpers such as `stream-headers.ts`. Mirror-aware stream probing is in
 
 ## Persistence and events
 
-Tauri builds persist credentials and preferences via
-`@tauri-apps/plugin-store`, mirrored to `localStorage`/cookies. Web builds use
-`localStorage`/cookies directly.
+Flutter builds persist credentials, playlist cache, favorites, progress,
+downloads, and settings through the Flutter storage layer. Web builds use
+`localStorage`/cookies/IndexedDB directly. Legacy Tauri code used
+`@tauri-apps/plugin-store`; keep that path working only for the old web shell.
 
 Important storage owners:
 
@@ -294,18 +286,18 @@ Important DOM events:
 When adding a user-facing state mutation, check whether a DOM event already
 exists and dispatch it consistently so open pages update without reloads.
 
-## Native host
+## Legacy Tauri Host
 
-`src-tauri/src/lib.rs` builds the Tauri app and registers plugins. Desktop-only
+`src-tauri/src/lib.rs` builds the legacy Tauri app and registers plugins. Do
+not use this host for new native app development. Desktop-only
 modules are behind platform cfg gates:
 
 - `discord.rs`: Discord Rich Presence commands/state.
 - `external_player.rs`: MPV/VLC process launch and reuse behavior.
 - `tray.rs`: desktop tray and close-to-tray behavior.
 
-Android has generated Gradle/Kotlin files under `src-tauri/gen/android/`.
-`MainActivity.kt` exposes Android bridges used by browser-side code for intents,
-status bar/device information, and Android-specific behavior.
+Android has legacy generated Gradle/Kotlin files under `src-tauri/gen/android/`.
+The active Android app is the Flutter project under `native/flutter/leleg_iptv`.
 
 Tauri permissions are declared under `src-tauri/capabilities/`. When adding a
 new plugin or command, update capabilities deliberately and test both desktop
@@ -345,8 +337,10 @@ For Tauri or Android changes, also run the relevant native command when the
 environment supports it:
 
 ```bash
-pnpm tauri dev
-pnpm tauri:android
+pnpm flutter:analyze
+pnpm flutter:android:build
+pnpm flutter:ios:build
+pnpm flutter:tizen:build
 ```
 
 ## Change guidelines for AI agents
@@ -390,11 +384,11 @@ pnpm tauri:android
 
 ## Quick orientation checklist
 
-1. Run `pnpm sync:upstream -- --check`.
-2. Run `git status --short` and preserve user changes.
-3. Read the target route in `src/pages/`.
-4. Read the page script or component it loads.
-5. Identify the owning library module in `src/scripts/lib/`.
-6. Add or adjust focused tests when changing pure behavior.
-7. Run `pnpm test`, then `pnpm lint` or `pnpm build` when the change reaches UI
+1. Run `git status --short` and preserve user changes.
+2. Read the target route in `src/pages/` or Flutter screen in
+   `native/flutter/leleg_iptv/lib`.
+3. Read the page script, component, or native bridge it loads.
+4. Identify the owning library module in `src/scripts/lib` or Flutter service.
+5. Add or adjust focused tests when changing pure behavior.
+6. Run `pnpm test`, then `pnpm lint` or `pnpm build` when the change reaches UI
    or bundling.

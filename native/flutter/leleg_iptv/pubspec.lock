@@ -65,6 +65,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.7"
+  csslib:
+    dependency: transitive
+    description:
+      name: csslib
+      sha256: "09bad715f418841f976c77db72d5398dc1253c21fb9c0c7f0b0b985860b2d58e"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.2"
   cupertino_icons:
     dependency: "direct main"
     description:
@@ -81,6 +89,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.14"
+  device_info_plus_tizen:
+    dependency: transitive
+    description:
+      name: device_info_plus_tizen
+      sha256: ab5ba568c8c8c3eba302fcc78db4ca2affd4da5243b09285834930c009f2652c
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.4.0"
   fake_async:
     dependency: transitive
     description:
@@ -97,14 +113,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
-  ffi_leak_tracker:
-    dependency: transitive
-    description:
-      name: ffi_leak_tracker
-      sha256: "4093d4ef9ca06ffe2786e73bfb25e22aa92112b9bb4ec941f11e3e6b61489a97"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.1.2"
   file:
     dependency: transitive
     description:
@@ -139,11 +147,27 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_tizen:
+    dependency: transitive
+    description:
+      name: flutter_tizen
+      sha256: "5df51a022828127d8d3bf2af32e67b746b764b1209193148fd33b0d7b7c122a7"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.2.7"
   flutter_web_plugins:
     dependency: transitive
     description: flutter
     source: sdk
     version: "0.0.0"
+  html:
+    dependency: transitive
+    description:
+      name: html
+      sha256: "6d1264f2dffa1b1101c25a91dff0dc2daee4c18e87cd8538729773c073dbf602"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.15.6"
   http:
     dependency: "direct main"
     description:
@@ -300,18 +324,26 @@ packages:
     dependency: transitive
     description:
       name: package_info_plus
-      sha256: "4bf625947f6c7713ee242296a682e23e44823c09cf9d79e4f1238923c92db852"
+      sha256: "468c26b4254ab01979fa5e4a98cb343ea3631b9acee6f21028997419a80e1a20"
       url: "https://pub.dev"
     source: hosted
-    version: "10.1.0"
+    version: "9.0.1"
   package_info_plus_platform_interface:
     dependency: transitive
     description:
       name: package_info_plus_platform_interface
-      sha256: db762cb2f4f25ee60fb6359773861b0f199e00b90d237bd85a76a1e806b46ef4
+      sha256: "202a487f08836a592a6bd4f901ac69b3a8f146af552bbd14407b6b41e1c3f086"
       url: "https://pub.dev"
     source: hosted
-    version: "4.1.0"
+    version: "3.2.1"
+  package_info_plus_tizen:
+    dependency: "direct main"
+    description:
+      name: package_info_plus_tizen
+      sha256: "064b1891c7797e2f9e53f16cf1121d04a0fdf8eebcfd3801139a0005f236f48b"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.0"
   path:
     dependency: transitive
     description:
@@ -464,6 +496,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.4.2"
+  shared_preferences_tizen:
+    dependency: "direct main"
+    description:
+      name: shared_preferences_tizen
+      sha256: "0bb9e5d424570676d23729de251703126d9927016c2617543aa06f463f06401d"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.3.3"
   shared_preferences_web:
     dependency: transitive
     description:
@@ -541,6 +581,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.7.11"
+  tizen_interop:
+    dependency: transitive
+    description:
+      name: tizen_interop
+      sha256: "46303c36a7e45491ce0149c77a3f54f3d57654938983c482ab0363a8ebe6ee27"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   typed_data:
     dependency: transitive
     description:
@@ -581,6 +629,54 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.0"
+  video_player:
+    dependency: "direct main"
+    description:
+      name: video_player
+      sha256: "48a7bdaa38a3d50ec10c78627abdbfad863fdf6f0d6e08c7c3c040cfd80ae36f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.11.1"
+  video_player_android:
+    dependency: transitive
+    description:
+      name: video_player_android
+      sha256: "5d18d04084cc0cfc7afde39d0a308d4041e8ae6e9d5255bc086c263998dd1201"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.9.6"
+  video_player_avfoundation:
+    dependency: transitive
+    description:
+      name: video_player_avfoundation
+      sha256: "9338f3ec22774f88146b22f13273a446719b1da010fd200c4d1d97802156ac58"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.9.7"
+  video_player_avplay:
+    dependency: "direct main"
+    description:
+      name: video_player_avplay
+      sha256: e1b8cd259e816fa0e7329344f08670c5436cf3ab81aa441304cdd94c852948cf
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.8.13"
+  video_player_platform_interface:
+    dependency: transitive
+    description:
+      name: video_player_platform_interface
+      sha256: "16eaed5268c571c31840dc58ef8da5f0cd4db2a98490c3b8f1cf70122546c6e0"
+      url: "https://pub.dev"
+    source: hosted
+    version: "6.7.0"
+  video_player_web:
+    dependency: transitive
+    description:
+      name: video_player_web
+      sha256: "9f3c00be2ef9b76a95d94ac5119fb843dca6f2c69e6c9968f6f2b6c9e7afbdeb"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.4.0"
   vm_service:
     dependency: transitive
     description:
@@ -593,10 +689,10 @@ packages:
     dependency: transitive
     description:
       name: wakelock_plus
-      sha256: "824c5bba0f800e86d32e57d3d1843c531f090005cc89d9a837933e6601093d53"
+      sha256: ddf3db70eaa10c37558ff817519b85d527dbd21034fd5d8e1c2e85f31588f1c1
       url: "https://pub.dev"
     source: hosted
-    version: "1.6.1"
+    version: "1.5.2"
   wakelock_plus_platform_interface:
     dependency: transitive
     description:
@@ -605,6 +701,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.1"
+  wakelock_plus_tizen:
+    dependency: "direct main"
+    description:
+      name: wakelock_plus_tizen
+      sha256: "02366093ac0d9bcf41f0f932ba56b433e89b43751a8eff31917945c7f32e412c"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.0"
   web:
     dependency: transitive
     description:
@@ -617,10 +721,10 @@ packages:
     dependency: transitive
     description:
       name: win32
-      sha256: ba6f4bba816c8d7e3c1580e170f3786d216951cc6b94babc3b814c08d2cb2738
+      sha256: d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e
       url: "https://pub.dev"
     source: hosted
-    version: "6.3.0"
+    version: "5.15.0"
   window_manager:
     dependency: "direct main"
     description:

@@ -33,7 +33,7 @@ const titleHtml = title.replace(
 const metaDescription = description ?? lede ?? "Documentation for Leleg IPTV, a cross-platform IPTV player for Xtream Codes and M3U playlists."
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "")
-const ogImage = "https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/src-tauri/icons/512x512.png"
+const ogImage = "https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/public/icon-512.png"
 
 const navLinks = [
   { href: `${base}/`, label: "Docs" },
@@ -101,7 +101,7 @@ const editUrl = `https://github.com/egennusoF2/LelegIPTV/blob/main/docs/src/page
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:image" content={ogImage} />
-    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/src-tauri/icons/32x32.png" />
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/egennusoF2/LelegIPTV/refs/heads/main/public/icon-512.png" />
     <script is:inline>
       (() => {
         try {
