@@ -4,20 +4,25 @@
 
 (lelegiptv_site) {
     root * /usr/share/caddy
-    encode zstd gzip
 
-    @stream path /__stream*
-    reverse_proxy @stream stream-proxy:3001 {
-        flush_interval -1
+    # Must run before try_files: otherwise /__stream falls back to index.html
+    handle /__stream* {
+        reverse_proxy stream-proxy:3001 {
+            flush_interval -1
+        }
     }
 
-    @static path *.js *.css *.png *.jpg *.jpeg *.ico *.woff2 *.svg *.webp
-    header @static Cache-Control "public, max-age=2592000, immutable"
-    header /manifest.webmanifest Cache-Control "no-cache"
-    header /sw.js Cache-Control "no-cache"
+    handle {
+        encode zstd gzip
 
-    try_files {path} {path}/ /index.html
-    file_server
+        @static path *.js *.css *.png *.jpg *.jpeg *.ico *.woff2 *.svg *.webp
+        header @static Cache-Control "public, max-age=2592000, immutable"
+        header /manifest.webmanifest Cache-Control "no-cache"
+        header /sw.js Cache-Control "no-cache"
+
+        try_files {path} {path}/ /index.html
+        file_server
+    }
 }
 
 http://lelegiptv.ddns.net {
