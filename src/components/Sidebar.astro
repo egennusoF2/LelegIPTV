@@ -18,7 +18,7 @@ import PlaylistSwitcher from "@/components/PlaylistSwitcher.svelte"
 const path = Astro.url.pathname.replace(/\/$/, "") || "/"
 
 const items = [
-  { href: "/",                key: "nav.home",          label: "Home",            Icon: IconHome,         match: (p) => p === "/" },
+  { href: "/login/",          key: "nav.home",          label: "Home",            Icon: IconHome,         match: (p) => p === "/" || p === "/login" },
   { href: "/livetv",          key: "nav.livetv",        label: "Live TV",         Icon: IconDeviceTv,     match: (p) => p === "/livetv" || p.startsWith("/livetv/") },
   { href: "/movies",          key: "nav.movies",        label: "Movies",          Icon: IconMovie,        match: (p) => p === "/movies" || p.startsWith("/movies/") },
   { href: "/series",          key: "nav.series",        label: "Series",          Icon: IconStack2,       match: (p) => p === "/series" || p.startsWith("/series/") },
@@ -30,7 +30,7 @@ const items = [
 ]
 
 const tabItems = [
-  items.find((i) => i.href === "/"),
+  items.find((i) => i.href === "/login/"),
   items.find((i) => i.href === "/livetv"),
   items.find((i) => i.href === "/movies"),
   items.find((i) => i.href === "/series"),
@@ -64,7 +64,7 @@ const settingsActive = path === "/settings" || path.startsWith("/settings/")
          landscape-phone:[&::-webkit-scrollbar]:hidden">
 
   <a
-    href="/"
+    href="/login/"
     aria-label="Leleg IPTV - Home"
     data-i18n-attr="aria-label:sidebar.brandHome"
     class="brand-mark group [view-transition-name:brand-mark]

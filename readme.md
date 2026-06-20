@@ -35,36 +35,6 @@
   <a href="https://github.com/egennusoF2/LelegIPTV/discussions"><img src="https://img.shields.io/github/discussions/egennusoF2/LelegIPTV?logo=github&color=a855f7" alt="Discussions"/></a>
 </p>
 
-## Screenshots
-
-<p align="center">
-  <img src="docs/screenshots/Desktop/home.png" alt="LelegIPTV home screen showing Live TV, Movies, and Series tiles with Continue Watching strip" width="780"/>
-</p>
-
-<details>
-<summary>More screenshots (Live TV, EPG, Movies, Series, Android TV, mobile)</summary>
-
-**Desktop**
-
-| | | |
-|---|---|---|
-| <img src="docs/screenshots/Desktop/livetv.png" alt="Live TV channel list with inline EPG showing now/next programmes"/> | <img src="docs/screenshots/Desktop/movies.png" alt="Movies poster grid with category filtering"/> | <img src="docs/screenshots/Desktop/series.png" alt="Series detail view with seasons and episodes"/> |
-| <img src="docs/screenshots/Desktop/epg.png" alt="Full XMLTV schedule grid for the EPG page"/> | <img src="docs/screenshots/Desktop/settings.png" alt="Settings page with playlists, display, network, and downloads"/> | <img src="docs/screenshots/Desktop/favorites.png" alt="Favorites page showing the cross-playlist union of starred items"/> |
-
-**Android TV (10-foot UI, D-pad focus)**
-
-| | | |
-|---|---|---|
-| <img src="docs/screenshots/Android-TV/home.png" alt="LelegIPTV home screen on Android TV"/> | <img src="docs/screenshots/Android-TV/livetv.png" alt="Live TV on Android TV with D-pad focus on the channel list"/> | <img src="docs/screenshots/Android-TV/movies.png" alt="Movies poster grid on Android TV"/> |
-
-**Phone (portrait, touch)**
-
-| | | |
-|---|---|---|
-| <img src="docs/screenshots/Galaxy-S20-Ultra/home.png" alt="LelegIPTV home screen on a phone in portrait" width="240"/> | <img src="docs/screenshots/Galaxy-S20-Ultra/livetv.png" alt="Live TV on a phone with bottom navigation" width="240"/> | <img src="docs/screenshots/Galaxy-S20-Ultra/series.png" alt="Series poster grid on a phone in portrait" width="240"/> |
-
-</details>
-
 ## Features
 
 - **Two backends, one UI.** Sign in with Xtream Codes credentials (host / port / user / pass) or paste a direct `.m3u` / `.m3u8` URL. The app detects the mode automatically.
@@ -165,7 +135,7 @@ Tests run with Vitest (`pnpm test`); the suite covers pure-function libs in `tes
 
 ## Credits
 
-Copyright (c) 2025 Ludovico Ferrara.
+Copyright (c) 2026 Emanuele Gennuso.
 
 ## License
 

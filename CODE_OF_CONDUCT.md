@@ -6,7 +6,7 @@ In short: be respectful, assume good faith, and prefer technical feedback over p
 
 ## Reporting
 
-If you experience or witness behaviour that violates this code, contact the maintainer privately at <admin@infinitel8p.com>. Reports are handled confidentially. Where possible, use a subject line starting with `xtream conduct`.
+If you experience or witness behaviour that violates this code, contact the maintainer, Emanuele Gennuso, through the GitHub repository owner account or a private repository security advisory. Reports are handled confidentially. Where possible, use a subject line starting with `Leleg IPTV conduct`.
 
 The maintainer will acknowledge within 7 days, investigate, and respond with whatever action is appropriate (which may range from a private clarification to repository-level removal). Retaliation against good-faith reporters is itself a violation.
 

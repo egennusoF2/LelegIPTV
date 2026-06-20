@@ -17,9 +17,9 @@ describe("shouldUseShakaForAdaptive", () => {
     vi.unstubAllGlobals()
   })
 
-  it("does not enable Shaka for VOD by default", () => {
-    expect(shouldUseShakaForAdaptive("hls", false)).toBe(false)
-    expect(shouldUseShakaForAdaptive("dash", false)).toBe(false)
+  it("enables Shaka for web VOD adaptive streams by default", () => {
+    expect(shouldUseShakaForAdaptive("hls", false)).toBe(true)
+    expect(shouldUseShakaForAdaptive("dash", false)).toBe(true)
   })
 
   it("never enables Shaka for live", () => {

@@ -788,13 +788,14 @@ interface ShakaHandle {
   destroy: () => Promise<void> | void
 }
 
-/** Shaka is opt-in only; web VOD defaults to hls.js per playback guidelines. */
+/** Shaka is preferred for web VOD adaptive streams because it exposes tracks reliably. */
 export function shouldUseShakaForAdaptive(
   kind: StreamKind | "unknown",
   isLive: boolean,
 ): boolean {
   if (kind !== "hls" && kind !== "dash") return false
   if (isLive) return false
+  if (!isTauriEmbedded()) return true
   try {
     const params = new URLSearchParams(window.location.search)
     if (params.get("shaka") === "1") return true
@@ -2276,15 +2277,26 @@ async function mountArtPlayer(
 
     if (!isLive && isXtreamVodContainerUrl(normalized)) {
       if (!isTauriEmbedded()) {
+        const hlsPlayUrl = await preferVodHlsUrl(normalized, { containerExtension: ext })
+        if (generation !== loadGeneration || pendingSrc !== src) return
+        if (/\.m3u8(?:[?#]|$)/i.test(hlsPlayUrl)) {
+          emitPlayerDebug("loadArtSrc web hls branch", { hlsPlayUrl })
+          pendingVodFallbackUrl = await resolveArtNativePlayUrl(normalized)
+          await assignArtPlayback(
+            src,
+            hlsPlayUrl,
+            type,
+            "hls",
+            await resolveHlsPlaybackUrl(hlsPlayUrl),
+            generation,
+          )
+          return
+        }
         emitPlayerDebug("loadArtSrc web/native branch", { normalized })
         markContainerTracksPending(normalized)
         const quickUrl = await resolveArtNativePlayUrl(normalized)
-        if (generation !== loadGeneration || pendingSrc !== src) return
         pendingVodFallbackUrl = quickUrl
         await assignArtPlayback(src, normalized, type, "native", quickUrl, generation)
-        if (!shouldSkipVodHlsProbe(normalized, ext)) {
-          void probeHlsUpgradeInBackground(src, normalized, ext, generation)
-        }
         return
       }
       const hlsPlayUrl = await preferVodHlsUrl(normalized, { containerExtension: ext })
