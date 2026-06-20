@@ -19,9 +19,9 @@ pnpm install
 pnpm build:pages
 ```
 
-La pagina download viene pubblicata dal deploy Oracle/Docker. La web app resta
-nelle route applicative (`/login`, `/livetv`, `/movies`, `/series`, `/epg`,
-ecc.).
+La pagina download viene pubblicata dal deploy Oracle/Docker su
+`https://lelegiptv.ddns.net/`. La web app resta nelle route applicative
+(`/home`, `/login`, `/livetv`, `/movies`, `/series`, `/epg`, ecc.).
 
 ## Download center per deploy web
 
@@ -36,10 +36,10 @@ Lo script:
 - copia in `dist/downloads/current/` solo gli artefatti sotto 50 MB;
 - riscrive i link locali `../www/downloads/current/` in link web
   `downloads/current/`;
-- aggiunge il link alla web app su `/login`.
+- aggiunge il link alla web app su `/home`.
 
 Gli artefatti installabili (`.apk`, `.ipa`, `.dmg`, `.zip`, `.tpk`) non sono
-tracciati in Git. Per Oracle, dove possiamo servire anche file grandi:
+tracciati in Git. Per Oracle/Caddy, dove possiamo servire anche file grandi:
 
 ```bash
 ALLOW_LARGE_DOWNLOADS=1 pnpm download-center:prepare

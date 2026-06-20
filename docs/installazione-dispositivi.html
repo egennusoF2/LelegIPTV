@@ -465,11 +465,15 @@ tizen install -n LelegIPTV-tizen-tv-release.tpk -t IP_TV:26101</code></pre>
     <section id="web">
       <h2>Versione web</h2>
       <p>
-        La web app resta disponibile direttamente dal browser. Il manifest PWA apre l'app da <code>/home/</code>,
-        con scorciatoie per Live TV, Film e Guida TV. Per installarla da Chrome, Edge o Safari serve una URL HTTPS:
-        su IP HTTP la navigazione funziona, ma l'installazione PWA e il service worker possono essere bloccati.
+        La web app resta disponibile direttamente dal browser su <code>https://lelegiptv.ddns.net</code>.
+        Il manifest PWA apre l'app da <code>/home/</code>, con scorciatoie per Live TV, Film e Guida TV.
+        Da Chrome, Edge e Safari puo' essere installata come PWA perche' il dominio e' servito via HTTPS.
       </p>
-      <a class="button primary" href="../dist/home/index.html">Apri LelegIPTV Web</a>
+      <p class="note">
+        Se il dominio HTTPS non risponde, verifica su Oracle Cloud che la porta TCP <strong>443</strong>
+        sia aperta nella Security List o nel Network Security Group della VM.
+      </p>
+      <a class="button primary" href="https://lelegiptv.ddns.net/home/">Apri LelegIPTV Web</a>
     </section>
 
     <section id="verifica">

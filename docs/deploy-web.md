@@ -1,6 +1,26 @@
-# Deploy web app (PWA) — Cloudflare Pages
+# Deploy web app (PWA) — Oracle/DDNS o Cloudflare Pages
 
-Hosting pubblico HTTPS gratuito per **Leleg IPTV** (browser + PWA + streaming).
+Hosting pubblico per **Leleg IPTV** (browser + PWA + streaming).
+
+Deploy attuale:
+
+- Download center: <https://lelegiptv.ddns.net/>
+- Web app: <https://lelegiptv.ddns.net/home/>
+- Backend Oracle: `84.8.248.50`
+
+Nota PWA: il manifest e il service worker sono gia' configurati. Il deploy
+Oracle usa Caddy e Let’s Encrypt per esporre HTTPS, requisito necessario per il
+prompt di installazione PWA.
+
+Se `https://lelegiptv.ddns.net/` va in timeout ma sulla VM `docker compose ps`
+mostra `0.0.0.0:443->443/tcp`, il problema non e' Caddy: manca l'ingress TCP
+443 nella Security List o nel Network Security Group Oracle. Apri:
+
+| Campo | Valore |
+|-------|--------|
+| Source CIDR | `0.0.0.0/0` |
+| IP Protocol | `TCP` |
+| Destination port range | `443` |
 
 ## Perché Cloudflare Pages
 

@@ -93,7 +93,7 @@ echo -e "${GREEN}📍 IP Pubblico rilevato: $PUBLIC_IP${NC}"
 echo ""
 echo "Il deploy procederà con:"
 echo "  - IP Pubblico: $PUBLIC_IP"
-echo "  - Porta: 80"
+echo "  - Porte: 80, 443"
 echo ""
 
 if [ -z "$NON_INTERACTIVE" ]; then
@@ -113,6 +113,7 @@ $DOCKER_COMPOSE_CMD up -d
 # firewalld Oracle Linux: apri HTTP (Security List Oracle non basta)
 if command -v firewall-cmd &>/dev/null && $SUDO_CMD systemctl is-active --quiet firewalld 2>/dev/null; then
     $SUDO_CMD firewall-cmd --permanent --add-service=http 2>/dev/null || true
+    $SUDO_CMD firewall-cmd --permanent --add-service=https 2>/dev/null || true
     $SUDO_CMD firewall-cmd --reload 2>/dev/null || true
 fi
 
@@ -130,7 +131,7 @@ if $DOCKER_COMPOSE_CMD ps | grep -q "Up"; then
     echo ""
     echo -e "${GREEN}🎉 Deploy completato!${NC}"
     echo ""
-    echo "App disponibile su: http://$PUBLIC_IP"
+    echo "App disponibile su: https://lelegiptv.ddns.net/"
     echo ""
     echo "Comandi utili:"
     echo "  - Log: $DOCKER_COMPOSE_CMD logs -f"
