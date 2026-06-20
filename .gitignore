@@ -1,11 +1,24 @@
 # build output
 dist/
+dev-dist/
 # generated types
 .astro/
 
 # dependencies
 node_modules/
 .pnpm-store/
+
+# Flutter native generated output
+native/flutter/leleg_iptv/.dart_tool/
+native/flutter/leleg_iptv/build/
+native/flutter/leleg_iptv/android/.gradle/
+native/flutter/leleg_iptv/ios/Flutter/ephemeral/
+native/flutter/leleg_iptv/linux/flutter/ephemeral/
+native/flutter/leleg_iptv/macos/Flutter/ephemeral/
+native/flutter/leleg_iptv/tizen/bin/
+native/flutter/leleg_iptv/tizen/flutter/ephemeral/
+native/flutter/leleg_iptv/tizen/obj/
+native/flutter/leleg_iptv/windows/flutter/ephemeral/
 
 # logs
 npm-debug.log*

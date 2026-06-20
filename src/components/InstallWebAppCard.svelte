@@ -1,25 +1,20 @@
-<script lang="ts">
+<script>
   import { onMount } from "svelte"
   import { IconDeviceMobile, IconCheck } from "@tabler/icons-svelte"
   import { t, LOCALE_EVENT } from "@/scripts/lib/i18n.js"
   import {
     subscribePwaInstallState,
     promptPwaInstall,
-    type PwaInstallState,
   } from "@/scripts/lib/pwa-install.ts"
 
-  interface Props {
-    variant?: "card" | "banner"
-  }
+  let { variant = "card" } = $props()
 
-  let { variant = "card" }: Props = $props()
-
-  let state = $state<PwaInstallState>("unavailable")
+  let state = $state("unavailable")
   let installing = $state(false)
   let locale = $state(0)
-  const tr = (key: string) => (locale, t(key))
+  const tr = (key) => (locale, t(key))
 
-  function helperKey(): string {
+  function helperKey() {
     switch (state) {
       case "installed":
         return "settings.webApp.installedHelper"

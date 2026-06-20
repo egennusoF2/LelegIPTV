@@ -1061,7 +1061,7 @@ async function proxyHandler(
   }
 
   try {
-    let upstream = await fetchUpstreamResilient(target)
+    const upstream = await fetchUpstreamResilient(target)
 
     res.statusCode = upstream.status
     applyCorsHeaders(res)

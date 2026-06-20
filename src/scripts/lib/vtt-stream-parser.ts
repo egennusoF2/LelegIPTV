@@ -87,7 +87,7 @@ export class VttStreamParser {
       if (!lines.length) return
     }
 
-    let timingIndex = lines.findIndex((line) => CUE_TIMING_RE.test(line.trim()))
+    const timingIndex = lines.findIndex((line) => CUE_TIMING_RE.test(line.trim()))
     if (timingIndex < 0) return
 
     const timingLine = lines[timingIndex].trim().replace(/(\d),(\d)/g, "$1.$2")

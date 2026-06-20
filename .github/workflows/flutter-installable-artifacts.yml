@@ -20,7 +20,7 @@ jobs:
       run:
         working-directory: native/flutter/leleg_iptv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -44,7 +44,7 @@ jobs:
       run:
         working-directory: native/flutter/leleg_iptv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -72,7 +72,7 @@ jobs:
       run:
         working-directory: native/flutter/leleg_iptv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
@@ -101,7 +101,7 @@ jobs:
       run:
         working-directory: native/flutter/leleg_iptv
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
