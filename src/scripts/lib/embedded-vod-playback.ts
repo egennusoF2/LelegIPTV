@@ -482,11 +482,15 @@ async function probeReachable(
       try {
         response.body?.cancel?.()
       } catch {}
-      if (
-        !snippet.includes("#EXTM3U") &&
-        !snippet.includes("#EXT-X-") &&
-        !(response.ok && ct.includes("mpegurl"))
-      ) {
+      if (!snippet.includes("#EXTM3U") && !snippet.includes("#EXT-X-")) {
+        if (ct.includes("mpegurl") || /\.m3u8(?:[?#]|$)/i.test(url)) {
+          log.warn("[xt:player] VOD HLS probe rejected (empty/non-HLS body)", {
+            url: redactUrl(url).slice(0, 120),
+            status: response.status,
+            contentType: ct,
+            bytes: snippet.length,
+          })
+        }
         return failed()
       }
       const mediaLines = snippet.match(/^#EXT-X-MEDIA:.*$/gim)?.length || 0
@@ -494,16 +498,6 @@ async function probeReachable(
       const audioLines = snippet.match(/^#EXT-X-MEDIA:.*TYPE=AUDIO.*$/gim)?.length || 0
       const masterPlaylist = /#EXT-X-STREAM-INF/i.test(snippet)
       if (snippet.includes("#EXTM3U") || snippet.includes("#EXT-X-")) {
-        return {
-          reachable: true,
-          url,
-          mediaLines,
-          subtitleLines,
-          audioLines,
-          masterPlaylist,
-        }
-      }
-      if (response.ok && ct.includes("mpegurl")) {
         return {
           reachable: true,
           url,
