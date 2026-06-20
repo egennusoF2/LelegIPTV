@@ -19,8 +19,9 @@ pnpm install
 pnpm build:pages
 ```
 
-La CI pubblica la pagina download come homepage e mantiene la web app nelle
-route applicative (`/login`, `/livetv`, `/movies`, `/series`, `/epg`, ecc.).
+La pagina download viene pubblicata dal deploy Oracle/Docker. La web app resta
+nelle route applicative (`/login`, `/livetv`, `/movies`, `/series`, `/epg`,
+ecc.).
 
 ## Download center per deploy web
 
@@ -32,10 +33,19 @@ node scripts/prepare-download-center.mjs
 Lo script:
 
 - copia `docs/installazione-dispositivi.html` in `dist/index.html`;
-- copia `www/downloads/current/` in `dist/downloads/current/`;
+- copia in `dist/downloads/current/` solo gli artefatti sotto 50 MB;
 - riscrive i link locali `../www/downloads/current/` in link web
   `downloads/current/`;
 - aggiunge il link alla web app su `/login`.
+
+Gli artefatti installabili (`.apk`, `.ipa`, `.dmg`, `.zip`, `.tpk`) non sono
+tracciati in Git. Per Oracle, dove possiamo servire anche file grandi:
+
+```bash
+ALLOW_LARGE_DOWNLOADS=1 pnpm download-center:prepare
+```
+
+`deploy-remote.sh` usa automaticamente questa modalita'.
 
 ## macOS
 

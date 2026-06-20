@@ -1,20 +1,6 @@
 name: pages
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "public/**"
-      - "functions/**"
-      - "astro.config.mjs"
-      - "wrangler.toml"
-      - "docs/**"
-      - "www/downloads/current/**"
-      - "scripts/prepare-download-center.mjs"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:

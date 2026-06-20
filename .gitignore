@@ -48,6 +48,11 @@ buildfiles/
 dump/
 tools/flutter-tizen/
 
+# Installable artifacts are served from Oracle/local release storage, not Git.
+www/downloads/current/*
+!www/downloads/current/SHA256SUMS.txt
+!www/downloads/current/tizen-dev-config.xml
+
 cmds.md
 store-listings.md
 .oracle.env

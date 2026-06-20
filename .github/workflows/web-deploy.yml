@@ -4,21 +4,6 @@ name: web-deploy
 # Setup: docs/deploy-web.md
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "public/**"
-      - "functions/**"
-      - "astro.config.mjs"
-      - "wrangler.toml"
-      - "docs/installazione-dispositivi.html"
-      - "docs/BUILD_ARTIFACTS.md"
-      - "www/downloads/current/**"
-      - "scripts/prepare-download-center.mjs"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/web-deploy.yml"
   workflow_dispatch:
 
 concurrency:

@@ -8,6 +8,8 @@ const sourceBuildDocs = resolve(root, "docs", "BUILD_ARTIFACTS.md")
 const sourceDownloads = resolve(root, "www", "downloads", "current")
 const dist = resolve(root, "dist")
 const distDownloads = resolve(dist, "downloads", "current")
+const allowLargeDownloads = process.env.ALLOW_LARGE_DOWNLOADS === "1"
+const maxHostedDownloadBytes = 50 * 1024 * 1024
 
 if (!existsSync(dist)) {
   throw new Error("Missing dist/. Run pnpm build:pages before prepare-download-center.")
@@ -22,7 +24,12 @@ if (!existsSync(sourceDownloads)) {
 mkdirSync(distDownloads, { recursive: true })
 for (const entry of readdirSync(sourceDownloads)) {
   const source = resolve(sourceDownloads, entry)
-  if (!statSync(source).isFile()) continue
+  const stat = statSync(source)
+  if (!stat.isFile()) continue
+  if (!allowLargeDownloads && stat.size > maxHostedDownloadBytes) {
+    console.warn(`Skipping large download artifact for Pages deploy: ${entry}`)
+    continue
+  }
   cpSync(source, resolve(distDownloads, entry))
 }
 

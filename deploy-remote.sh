@@ -47,6 +47,7 @@ command -v pnpm &>/dev/null || \
 
 echo -e "${YELLOW}🔨 Build locale...${NC}"
 $PNPM build:pages
+ALLOW_LARGE_DOWNLOADS=1 $PNPM download-center:prepare
 [ -f "dist/index.html" ] || { echo -e "${RED}❌ Build fallita: dist/index.html mancante${NC}"; exit 1; }
 echo -e "${GREEN}✅ Build completata${NC}"
 echo ""
@@ -75,8 +76,13 @@ if command -v rsync &> /dev/null; then
         --exclude='.wrangler/' \
         --exclude='src-tauri/' \
         --exclude='.astro/' \
-        --exclude='*.apk' \
-        --exclude='*.zip' \
+        --exclude='tools/flutter-tizen/' \
+        --exclude='native/flutter/leleg_iptv/.dart_tool/' \
+        --exclude='native/flutter/leleg_iptv/build/' \
+        --exclude='native/flutter/leleg_iptv/android/.gradle/' \
+        --exclude='native/flutter/leleg_iptv/tizen/bin/' \
+        --exclude='native/flutter/leleg_iptv/tizen/flutter/ephemeral/' \
+        --exclude='native/flutter/leleg_iptv/tizen/obj/' \
         --exclude='*.log' \
         --exclude='.env' \
         --exclude='ssh-key-*.key' \
@@ -89,8 +95,13 @@ else
         --exclude='.wrangler' \
         --exclude='src-tauri' \
         --exclude='.astro' \
-        --exclude='*.apk' \
-        --exclude='*.zip' \
+        --exclude='tools/flutter-tizen' \
+        --exclude='native/flutter/leleg_iptv/.dart_tool' \
+        --exclude='native/flutter/leleg_iptv/build' \
+        --exclude='native/flutter/leleg_iptv/android/.gradle' \
+        --exclude='native/flutter/leleg_iptv/tizen/bin' \
+        --exclude='native/flutter/leleg_iptv/tizen/flutter/ephemeral' \
+        --exclude='native/flutter/leleg_iptv/tizen/obj' \
         --exclude='*.log' \
         --exclude='.env' \
         --exclude='ssh-key-*.key' \

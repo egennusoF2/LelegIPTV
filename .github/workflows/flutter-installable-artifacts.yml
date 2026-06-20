@@ -2,12 +2,6 @@ name: Flutter installable artifacts
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - native/flutter/leleg_iptv/**
-      - .github/workflows/flutter-installable-artifacts.yml
 
 permissions:
   contents: write
