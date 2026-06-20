@@ -32,6 +32,24 @@ function wrapProviderUrlForWeb(url) {
   return `${STREAM_PROXY_PATH}?url=${encodeURIComponent(String(url))}`
 }
 
+function isProviderApiUrl(url) {
+  try {
+    const parsed = new URL(String(url), typeof window !== "undefined" ? window.location.origin : undefined)
+    return /\/(?:player_api|get|xmltv)\.php$/i.test(parsed.pathname)
+  } catch {
+    return /(?:player_api|get|xmltv)\.php/i.test(String(url))
+  }
+}
+
+function stripProxyHeaders(headers) {
+  const out = new Headers(headers || {})
+  out.delete("X-XT-UA")
+  out.delete("X-XT-Referer")
+  out.delete("User-Agent")
+  out.delete("Referer")
+  return out
+}
+
 let tauriFetchPromise = null
 async function getTauriFetch() {
   if (!isTauri) return null
@@ -343,6 +361,20 @@ export async function providerFetch(url, init = {}) {
     log.log(`[xt:net] native start`, u)
     try {
       const r = await nativeFetch(fetchUrl, callInit, u, callerSignal)
+      if (
+        fetchUrl !== url &&
+        (r.status === 401 || r.status === 403) &&
+        isProviderApiUrl(url)
+      ) {
+        log.warn(`[xt:net] proxy rejected ${r.status}, retrying provider API directly`, u)
+        const directInit = {
+          ...callInit,
+          headers: stripProxyHeaders(init.headers || {}),
+        }
+        const direct = await nativeFetch(url, directInit, u, callerSignal)
+        noteSuccess(direct.status)
+        return direct
+      }
       noteSuccess(r.status)
       return r
     } catch (e) {

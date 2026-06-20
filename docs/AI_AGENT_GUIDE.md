@@ -109,7 +109,8 @@ are either Svelte islands or browser modules imported from `src/scripts`.
 
 Key routes:
 
-- `/`: hub/home experience.
+- `/`: public download center in hosted builds.
+- `/home`: hub/home experience for the web app.
 - `/livetv`: live channel list, embedded/external player, compact EPG panel.
 - `/epg`: full XMLTV schedule grid.
 - `/movies` and `/movies/detail`: VOD browsing and detail/playback.

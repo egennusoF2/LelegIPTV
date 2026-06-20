@@ -1,0 +1,444 @@
+---
+import Layout from "@/layouts/Layout.astro";
+import HubStrips from "@/components/HubStrips.svelte";
+import WelcomeCard from "@/components/WelcomeCard.astro";
+import {
+	IconDeviceTv,
+	IconMovie,
+	IconStack2,
+} from "@tabler/icons-svelte";
+---
+
+<Layout>
+	<script is:inline>
+		try {
+			var raw = localStorage.getItem("xt_playlists") || "";
+			var hasEntries = false;
+			if (raw) {
+				var parsed = JSON.parse(raw);
+				hasEntries = !!(
+					parsed &&
+					Array.isArray(parsed.entries) &&
+					parsed.entries.length
+				);
+			}
+			if (!hasEntries) {
+				document.documentElement.setAttribute("data-first-run", "true");
+			}
+		} catch (e) {}
+	</script>
+
+	<main
+		class="flex-1 w-full mx-auto px-4 py-6 md:px-6 lg:px-8 max-w-480 flex flex-col gap-6">
+
+		<a
+			id="hub-expiration-banner"
+			href="/settings"
+			data-account-expiration="hub-banner"
+			hidden
+			class="rounded-xl px-4 py-3 text-sm font-medium
+				border border-warn/35 bg-warn/10 text-warn
+				data-[state=critical]:border-bad/45 data-[state=critical]:bg-bad/12 data-[state=critical]:text-bad
+				data-[state=expired]:border-bad/55 data-[state=expired]:bg-bad/14 data-[state=expired]:text-bad
+				hover:border-current focus-visible:border-current
+				outline-none transition-colors no-underline">
+		</a>
+
+		<section
+			id="welcome"
+			aria-labelledby="welcome-heading"
+			class="welcome-section hidden flex-1 min-h-0 items-center justify-center py-6">
+			<WelcomeCard />
+		</section>
+
+		<nav
+			id="hub-tiles"
+			aria-label="Browse" data-i18n-attr="aria-label:aria.browse"
+			class="grid gap-3 sm:gap-4 shrink-0
+				grid-cols-1
+				landscape:grid-cols-[2fr_1fr] landscape:grid-rows-2
+				lg:grid-cols-[2fr_1fr] lg:grid-rows-2">
+			<a
+				href="/livetv"
+				aria-label="Watch Live TV" data-i18n-attr="aria-label:aria.watchLiveTv"
+				style="animation-delay: 50ms;"
+				class="tile-enter lg:row-span-2 landscape:row-span-2 group relative flex flex-col justify-between
+					rounded-2xl border border-line bg-surface
+					p-6 sm:p-8 lg:p-12
+					min-h-56 landscape:min-h-0 lg:min-h-0 overflow-hidden
+					transition-[transform,border-color,background-color] duration-300 ease-out
+					hover:border-accent hover:bg-surface-2
+					focus-visible:border-accent focus-visible:bg-surface-2
+					hover:transform-[translateY(-2px)]
+					focus-visible:transform-[translateY(-2px)]">
+				<div
+					id="livetv-tile-art"
+					class="tile-art pointer-events-none"
+					aria-hidden="true"></div>
+				<div class="relative flex items-start justify-between gap-4 z-10">
+					<IconDeviceTv
+						aria-hidden="true"
+						stroke={1}
+						class="size-12 sm:size-16 lg:size-24 text-fg-3 shrink-0 transition-colors duration-200 group-hover:text-accent group-focus-visible:text-accent"
+					/>
+					<p
+						id="hero-eyebrow"
+						class="font-sans text-eyebrow font-medium uppercase text-fg-3 text-right pt-2 tabular-nums"
+						aria-hidden="true">
+					</p>
+				</div>
+				<div class="relative mt-auto pt-6 z-10">
+					<h2
+						data-i18n="nav.livetv"
+						class="font-semibold tracking-[-0.02em] leading-[0.92] text-fg
+							group-hover:text-accent group-focus-visible:text-accent
+							transition-colors duration-200 ms-[-0.05em]"
+						style="font-size: clamp(3rem, 6vw + 1.5rem, 8.5rem);">
+						Live TV
+					</h2>
+					<p
+						id="livetv-tile-sub"
+						data-i18n="hub.tile.livetv.sub"
+						class="mt-4 sm:mt-5 text-sm sm:text-base text-fg-2 max-w-md font-sans tracking-tight truncate">
+						Channels, and what's on right now.
+					</p>
+				</div>
+			</a>
+
+			<a
+				href="/movies"
+				aria-label="Browse Movies" data-i18n-attr="aria-label:aria.browseMovies"
+				style="animation-delay: 150ms;"
+				class="tile-enter group relative overflow-hidden flex flex-col justify-between
+					rounded-2xl border border-line bg-surface
+					p-5 sm:p-6
+					min-h-28 landscape:min-h-0 lg:min-h-0
+					transition-[transform,border-color,background-color] duration-300 ease-out
+					hover:border-accent hover:bg-surface-2
+					focus-visible:border-accent focus-visible:bg-surface-2
+					hover:transform-[translateY(-2px)]
+					focus-visible:transform-[translateY(-2px)]">
+				<div
+					id="movies-tile-art"
+					class="tile-art pointer-events-none"
+					aria-hidden="true"></div>
+				<IconMovie
+					aria-hidden="true"
+					stroke={1.25}
+					class="relative z-10 size-9 sm:size-10 lg:size-12 text-fg-3 transition-colors duration-200 group-hover:text-accent group-focus-visible:text-accent"
+				/>
+				<div class="relative z-10 mt-auto pt-4">
+					<h2 data-i18n="nav.movies" class="text-2xl sm:text-3xl lg:text-5xl font-semibold tracking-[-0.02em] leading-[0.95]
+						text-fg group-hover:text-accent group-focus-visible:text-accent
+						transition-colors duration-200 ms-[-0.05em]">
+						Movies
+					</h2>
+					<p data-i18n="hub.tile.movies.sub" class="mt-1.5 text-sm text-fg-2">
+						Browse the library.
+					</p>
+				</div>
+			</a>
+
+			<a
+				href="/series"
+				aria-label="Browse Series" data-i18n-attr="aria-label:aria.browseSeries"
+				style="animation-delay: 250ms;"
+				class="tile-enter group relative overflow-hidden flex flex-col justify-between
+					rounded-2xl border border-line bg-surface
+					p-5 sm:p-6
+					min-h-28 landscape:min-h-0 lg:min-h-0
+					transition-[transform,border-color,background-color] duration-300 ease-out
+					hover:border-accent hover:bg-surface-2
+					focus-visible:border-accent focus-visible:bg-surface-2
+					hover:transform-[translateY(-2px)]
+					focus-visible:transform-[translateY(-2px)]">
+				<div
+					id="series-tile-art"
+					class="tile-art pointer-events-none"
+					aria-hidden="true"></div>
+				<IconStack2
+					aria-hidden="true"
+					stroke={1.25}
+					class="relative z-10 size-9 sm:size-10 lg:size-12 text-fg-3 transition-colors duration-200 group-hover:text-accent group-focus-visible:text-accent"
+				/>
+				<div class="relative z-10 mt-auto pt-4">
+					<h2 data-i18n="nav.series" class="text-2xl sm:text-3xl lg:text-5xl font-semibold tracking-[-0.02em] leading-[0.95]
+						text-fg group-hover:text-accent group-focus-visible:text-accent
+						transition-colors duration-200 ms-[-0.05em]">
+						Series
+					</h2>
+					<p data-i18n="hub.tile.series.sub" class="mt-1.5 text-sm text-fg-2">
+						Shows and full seasons.
+					</p>
+				</div>
+			</a>
+		</nav>
+
+		<HubStrips client:load />
+
+		<div
+			id="app-version"
+			class="fixed bottom-[max(0.5rem,env(safe-area-inset-bottom))] right-[max(0.75rem,env(safe-area-inset-right))] text-2xs text-fg-3 opacity-70 tabular-nums pointer-events-none">
+			Loading…
+		</div>
+	</main>
+</Layout>
+
+<style>
+	@keyframes tile-enter {
+		from {
+			opacity: 0;
+			transform: translateY(12px);
+		}
+	}
+	.tile-enter {
+		animation: tile-enter 500ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+	}
+	html[data-first-run="true"] #hub-tiles {
+		display: none;
+	}
+	html[data-first-run="true"] #welcome {
+		display: flex;
+	}
+</style>
+
+<script>
+	import "../scripts/updater-startup.js";
+	import { log } from "@/scripts/lib/log.js";
+	import { t, LOCALE_EVENT } from "@/scripts/lib/i18n.js";
+	import { getEntries, getActiveEntry, loadCreds } from "@/scripts/lib/creds.js";
+	import { getCached, hydrate as hydrateCache } from "@/scripts/lib/cache.js";
+	import { getRecents, ensureLoaded as ensurePrefsLoaded } from "@/scripts/lib/preferences.js";
+	import { getProgrammesSync, getNowNext, loadProgrammes } from "@/scripts/lib/epg-data.js";
+	import { injectVersion } from "@/scripts/version.js";
+	injectVersion();
+
+	const eyebrow = document.getElementById("hero-eyebrow");
+	let heroChannelCount = 0;
+	const setHeroChannelCount = (count) => {
+		const next = Number.isFinite(count) ? Math.max(0, count) : 0;
+		if (next === heroChannelCount) return;
+		heroChannelCount = next;
+		window.__refreshHeroEyebrow?.();
+	};
+	if (eyebrow) {
+		const greet = (hour) => {
+			if (hour < 5) return t("hub.greeting.night");
+			if (hour < 12) return t("hub.greeting.morning");
+			if (hour < 18) return t("hub.greeting.afternoon");
+			if (hour < 22) return t("hub.greeting.evening");
+			return t("hub.greeting.night");
+		};
+		const update = () => {
+			const now = new Date();
+			const time = new Intl.DateTimeFormat(undefined, {
+				hour: "numeric",
+				minute: "2-digit",
+			}).format(now);
+			const parts = [greet(now.getHours()), time];
+			if (heroChannelCount > 0) {
+				parts.push(t("hub.channelCount", { count: heroChannelCount.toLocaleString() }));
+			}
+			eyebrow.textContent = parts.join(" · ");
+		};
+		update();
+		setInterval(update, 30_000);
+		window.__refreshHeroEyebrow = update;
+		document.addEventListener(LOCALE_EVENT, update);
+	}
+
+	async function reconcileFirstRun() {
+		const entries = await getEntries();
+		const hasEntries = entries.length > 0;
+		document.documentElement.toggleAttribute("data-first-run", !hasEntries);
+		return hasEntries;
+	}
+
+	window.addEventListener("load", async () => {
+		const hasEntries = await reconcileFirstRun();
+		if (!hasEntries) {
+			document
+				.querySelector("#welcome a.btn-primary")
+				?.focus({ preventScroll: true });
+		}
+	});
+
+	document.addEventListener("xt:entries-updated", reconcileFirstRun);
+	document.addEventListener("xt:active-changed", reconcileFirstRun);
+
+	// ──────────────────────────────────────────────────────────
+	// Hub dashboard signals
+	// ──────────────────────────────────────────────────────────
+	const liveTileArt = document.getElementById("livetv-tile-art");
+	const liveTileSub = document.getElementById("livetv-tile-sub");
+	const moviesTileArt = document.getElementById("movies-tile-art");
+	const seriesTileArt = document.getElementById("series-tile-art");
+
+	const rotators = [];
+	function stopRotator() {
+		for (const rotator of rotators) clearInterval(rotator);
+		rotators.length = 0;
+	}
+
+	function startRotator(el, urls) {
+		if (!el || !urls.length) return;
+		const layers = [document.createElement("img"), document.createElement("img")];
+		for (const layer of layers) {
+			layer.className = "tile-art__layer";
+			layer.alt = "";
+			layer.decoding = "async";
+			layer.loading = "eager";
+			layer.referrerPolicy = "no-referrer";
+			layer.onerror = () => {
+				delete layer.dataset.on;
+			};
+			el.appendChild(layer);
+		}
+		let idx = 0;
+		let active = 0;
+		layers[active].src = urls[0];
+		layers[active].dataset.on = "true";
+		const advance = () => {
+			if (document.hidden) return;
+			idx = (idx + 1) % urls.length;
+			const next = active === 0 ? 1 : 0;
+			layers[next].src = urls[idx];
+			layers[next].dataset.on = "true";
+			delete layers[active].dataset.on;
+			active = next;
+		};
+		rotators.push(setInterval(advance, 8000));
+	}
+
+	function pickRandom(arr, count) {
+		if (arr.length <= count) return arr.slice();
+		const seen = new Set();
+		const out = [];
+		while (out.length < count && seen.size < arr.length) {
+			const idx = Math.floor(Math.random() * arr.length);
+			if (seen.has(idx)) continue;
+			seen.add(idx);
+			out.push(arr[idx]);
+		}
+		return out;
+	}
+
+	async function setupTileArt() {
+		try {
+			stopRotator();
+			const active = await getActiveEntry();
+			if (!active) return;
+			await Promise.all([
+				hydrateCache(active._id, "vod").catch(() => {}),
+				hydrateCache(active._id, "series").catch(() => {}),
+				hydrateCache(active._id, "live").catch(() => {}),
+				hydrateCache(active._id, "m3u").catch(() => {}),
+			]);
+			if (moviesTileArt) {
+				const vod = (getCached(active._id, "vod")?.data || [])
+					.filter((m) => m && m.logo)
+					.map((m) => m.logo);
+				const picks = pickRandom(vod, 6);
+				moviesTileArt.replaceChildren();
+				if (picks.length) startRotator(moviesTileArt, picks);
+			}
+			if (seriesTileArt) {
+				const series = (getCached(active._id, "series")?.data || [])
+					.filter((s) => s && s.logo)
+					.map((s) => s.logo);
+				const picks = pickRandom(series, 6);
+				seriesTileArt.replaceChildren();
+				if (picks.length) startRotator(seriesTileArt, picks);
+			}
+			await setupLiveSignals(active);
+		} catch (e) {
+			log.warn("[hub] setupTileArt failed:", e);
+		}
+	}
+
+	async function setupLiveSignals(active) {
+		if (!liveTileArt || !liveTileSub) return;
+		await ensurePrefsLoaded();
+		const recents = getRecents(active._id, "live") || [];
+		const live = (getCached(active._id, "live")?.data || getCached(active._id, "m3u")?.data || []);
+		setHeroChannelCount(live.length);
+		const liveById = new Map(live.map((c) => [Number(c.id), c]));
+		let lastChannel = null;
+		if (recents.length) {
+			lastChannel = liveById.get(Number(recents[0].id)) || {
+				id: recents[0].id,
+				name: recents[0].name,
+				logo: recents[0].logo,
+				tvgId: null,
+			};
+		}
+		liveTileArt.replaceChildren();
+		const liveTileLink = document.querySelector('#hub-tiles a[href="/livetv"]');
+		if (!lastChannel) {
+			if (liveTileLink) liveTileLink.setAttribute("href", "/livetv");
+			liveTileSub.textContent = t("hub.tile.livetv.sub");
+			return;
+		}
+		if (liveTileLink) {
+			liveTileLink.setAttribute(
+				"href",
+				`/livetv?channel=${encodeURIComponent(String(lastChannel.id))}`,
+			);
+		}
+		if (lastChannel.logo) {
+			const layer = document.createElement("img");
+			layer.className = "tile-art__layer tile-art__layer--logo";
+			layer.alt = "";
+			layer.decoding = "async";
+			layer.loading = "eager";
+			layer.referrerPolicy = "no-referrer";
+			layer.onerror = () => layer.remove();
+			layer.src = lastChannel.logo;
+			layer.dataset.on = "true";
+			liveTileArt.appendChild(layer);
+		}
+		const tvgId = lastChannel.tvgId || "";
+		const setOnAir = (programme) => {
+			if (!programme) return false;
+			liveTileSub.innerHTML =
+				`<span class="text-fg-3 uppercase tracking-wider text-eyebrow font-semibold mr-2">${escapeHtml(t("hub.tile.livetv.onNow"))}</span>` +
+				`<span class="text-fg-2">${escapeHtml(lastChannel.name)}</span>` +
+				`<span class="text-fg-3 mx-1.5">·</span>` +
+				`<span class="text-fg">${escapeHtml(programme.title)}</span>`;
+			return true;
+		};
+		const cached = getProgrammesSync(active._id);
+		const cachedHit = cached?.programmes && tvgId
+			? setOnAir(getNowNext(cached.programmes, tvgId).current)
+			: false;
+		if (!cachedHit) {
+			liveTileSub.textContent = t("hub.tile.livetv.lastWatched", { name: lastChannel.name });
+			if (tvgId) {
+				try {
+					const creds = await loadCreds();
+					if (creds?.host) {
+						const state = await loadProgrammes(active._id, creds);
+						if (state?.programmes) {
+							const { current } = getNowNext(state.programmes, tvgId);
+							if (current) setOnAir(current);
+						}
+					}
+				} catch {}
+			}
+		}
+	}
+
+	function escapeHtml(s) {
+		const d = document.createElement("div");
+		d.textContent = s || "";
+		return d.innerHTML;
+	}
+
+	if (typeof window !== "undefined") {
+		window.requestIdleCallback
+			? window.requestIdleCallback(setupTileArt, { timeout: 1500 })
+			: setTimeout(setupTileArt, 400);
+		document.addEventListener("xt:active-changed", setupTileArt);
+		document.addEventListener("xt:catalog-warmed", setupTileArt);
+	}
+</script>

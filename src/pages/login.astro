@@ -11,7 +11,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 
 		<header class="route-hero mb-10">
 			<a
-				href="/login/"
+				href="/home/"
 				class="self-start inline-flex items-center gap-1.5 text-sm text-fg-3 hover:text-fg focus-visible:text-fg transition-colors min-h-10 -ml-1 mb-2">
 				<IconArrowLeft class="h-4 w-4" /> <span data-i18n="common.back">Back</span>
 			</a>
@@ -1646,7 +1646,7 @@ import { IconArrowLeft, IconChevronDown, IconPlus } from "@tabler/icons-svelte";
 				invalidateEpgPlaylist(savedId);
 			}
 
-			location.href = editing ? "/" : "/livetv";
+			location.href = editing ? "/home/" : "/livetv";
 		} finally {
 			saveBtn.disabled = false;
 		}

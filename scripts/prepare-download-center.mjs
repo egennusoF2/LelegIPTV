@@ -36,7 +36,7 @@ for (const entry of readdirSync(sourceDownloads)) {
 
 let html = readFileSync(sourceHtml, "utf8")
 html = html.replaceAll("../www/downloads/current/", "downloads/current/")
-html = html.replaceAll('href="../dist/login/index.html"', 'href="login/"')
+html = html.replaceAll('href="../dist/home/index.html"', 'href="home/"')
 writeFileSync(resolve(dist, "index.html"), html)
 
 if (existsSync(sourceBuildDocs)) {

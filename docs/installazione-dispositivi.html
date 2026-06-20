@@ -249,10 +249,11 @@
     <div class="brand"><span class="logo">∞</span><span>LelegIPTV download center</span></div>
     <h1>Scarica e installa LelegIPTV</h1>
     <p class="lede">
-      Questa e' la homepage pubblica per installare le app gia compilate. La versione web resta disponibile come app browser.
+      Questa e' la homepage pubblica per installare le app gia compilate. La versione web resta disponibile come app browser
+      e, se servita via HTTPS, puo' essere installata anche come PWA.
     </p>
     <div class="hero-actions">
-      <a class="button primary" href="../dist/login/index.html">Apri versione web</a>
+      <a class="button primary" href="../dist/home/index.html">Apri versione web</a>
       <a class="button" href="#download">Scarica app</a>
       <a class="button" href="../www/downloads/current/SHA256SUMS.txt">Checksum</a>
     </div>
@@ -463,8 +464,12 @@ tizen install -n LelegIPTV-tizen-tv-release.tpk -t IP_TV:26101</code></pre>
 
     <section id="web">
       <h2>Versione web</h2>
-      <p>La web app resta disponibile direttamente dal browser.</p>
-      <a class="button primary" href="../dist/login/index.html">Apri LelegIPTV Web</a>
+      <p>
+        La web app resta disponibile direttamente dal browser. Il manifest PWA apre l'app da <code>/home/</code>,
+        con scorciatoie per Live TV, Film e Guida TV. Per installarla da Chrome, Edge o Safari serve una URL HTTPS:
+        su IP HTTP la navigazione funziona, ma l'installazione PWA e il service worker possono essere bloccati.
+      </p>
+      <a class="button primary" href="../dist/home/index.html">Apri LelegIPTV Web</a>
     </section>
 
     <section id="verifica">
