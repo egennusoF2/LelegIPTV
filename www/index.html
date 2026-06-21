@@ -330,14 +330,14 @@
         <div class="dl-card-head">
           <span class="dl-icon">📺</span>
           <div>
-            <div class="dl-title">Android TV &amp; Google TV</div>
-            <div class="dl-sub">Stesso APK, installazione via ADB o file manager TV</div>
+            <div class="dl-title">Android TV, Google TV, Chromecast &amp; Fire TV</div>
+            <div class="dl-sub">APK TV con launcher Leanback e navigazione telecomando</div>
           </div>
         </div>
         <div>
           <span class="badge badge-warn">APK &middot; 91 MB &middot; unsigned</span>
         </div>
-        <a class="btn-dl" href="downloads/current/LelegIPTV-android-universal-release.apk" download>
+        <a class="btn-dl" href="downloads/current/LelegIPTV-android-tv-release.apk" download>
           ⬇ Scarica .apk TV
         </a>
       </div>
@@ -452,21 +452,32 @@ adb install -r downloads/current/LelegIPTV-android-universal-release.apk</code><
   </section>
 
   <section id="android-tv">
-    <h2>📺 Android TV / Google TV</h2>
+    <h2>📺 Android TV / Google TV / Chromecast / Fire TV</h2>
     <p>
-      La build TV usa lo stesso APK universale della versione smartphone/tablet.
-      Il launcher Leanback è incluso per la comparsa nel launcher TV.
+      Usa <code>LelegIPTV-android-tv-release.apk</code>: è la build Flutter nativa con launcher Leanback,
+      navigazione telecomando, categorie rapide, Guida TV selezionabile e overlay fullscreen con EPG contestuale.
     </p>
 
-    <h3>Installazione su Android TV / Google TV via rete</h3>
+    <h3>Installazione su Android TV, Google TV o Chromecast via rete</h3>
     <ol class="steps">
       <li>Sulla TV: <strong>Impostazioni → Opzioni sviluppatore → Debug USB/ADB di rete</strong> → abilita.</li>
       <li>
         Dal computer (stessa rete Wi-Fi):
         <pre><code>adb connect IP_DELLA_TV:5555
-adb install -r downloads/current/LelegIPTV-android-universal-release.apk</code></pre>
+adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
       </li>
       <li>L'app apparirà nella sezione <strong>App sideloaded</strong> o nel launcher TV.</li>
+    </ol>
+
+    <h3>Installazione su Fire Stick / Fire TV</h3>
+    <ol class="steps">
+      <li>Su Fire TV abilita <strong>Opzioni sviluppatore → Debug ADB</strong> e <strong>App da origini sconosciute</strong>.</li>
+      <li>Installa <strong>Downloader</strong> dallo store Amazon oppure usa ADB dalla stessa rete.</li>
+      <li>Con Downloader apri questa pagina e scarica <code>LelegIPTV-android-tv-release.apk</code>, poi conferma l'installazione.</li>
+      <li>In alternativa da computer:
+        <pre><code>adb connect IP_FIRE_TV:5555
+adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
+      </li>
     </ol>
 
     <div class="note warn">
@@ -614,9 +625,9 @@ sdb devices</code></pre>
           <td data-label="Stato"><span class="badge badge-new">build locale</span></td>
         </tr>
         <tr>
-          <td data-label="Piattaforma">Android / Android TV</td>
-          <td data-label="File"><a href="downloads/current/LelegIPTV-android-universal-release.apk" download>LelegIPTV-android-universal-release.apk</a></td>
-          <td data-label="Dimensione">88 MB</td>
+          <td data-label="Piattaforma">Android TV / Chromecast / Fire TV</td>
+          <td data-label="File"><a href="downloads/current/LelegIPTV-android-tv-release.apk" download>LelegIPTV-android-tv-release.apk</a></td>
+          <td data-label="Dimensione">91 MB</td>
           <td data-label="Stato"><span class="badge badge-warn">unsigned</span></td>
         </tr>
         <tr>

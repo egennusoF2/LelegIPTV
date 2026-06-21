@@ -26,10 +26,16 @@ jobs:
           mkdir -p www/downloads/current
           cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
             www/downloads/current/LelegIPTV-android-universal-release.apk
+          cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
+            www/downloads/current/LelegIPTV-android-tv-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: LelegIPTV-android-universal-release
           path: www/downloads/current/LelegIPTV-android-universal-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LelegIPTV-android-tv-release
+          path: www/downloads/current/LelegIPTV-android-tv-release.apk
 
   windows:
     name: Windows desktop bundle
@@ -143,6 +149,7 @@ jobs:
           name: LelegIPTV native latest
           body: |
             Artefatti nativi generati dal workflow Flutter installable artifacts.
+            Android TV, Chromecast e Fire TV usano LelegIPTV-android-tv-release.apk.
             Windows x64 e Linux x64 sono prodotti dalla CI; Windows ARM64 va generato da Parallels se necessario.
           make_latest: true
           files: release-assets/*

@@ -1,11 +1,14 @@
 package com.lelegiptv.leleg_iptv
 
 import android.app.DownloadManager
+import android.app.UiModeManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.view.KeyEvent
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,19 +16,36 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private var nativeChannel: MethodChannel? = null
+    private var remoteKeyPassthrough = false
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(
+        nativeChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.lelegiptv.native/storage"
-        ).setMethodCallHandler { call, result ->
+        )
+        nativeChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "downloadsDirectory" -> {
                     val externalDownloads =
                         getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
                     val fallback = File(filesDir, "downloads")
                     result.success((externalDownloads ?: fallback).absolutePath)
+                }
+
+                "isTelevision" -> {
+                    val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+                    val isTv =
+                        uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+                            packageManager.hasSystemFeature("android.software.leanback")
+                    result.success(isTv)
+                }
+
+                "setRemoteKeyPassthrough" -> {
+                    remoteKeyPassthrough = call.argument<Boolean>("enabled") == true
+                    result.success(true)
                 }
 
                 "notifyFileSaved" -> {
@@ -120,5 +140,32 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (remoteKeyPassthrough) {
+            return super.dispatchKeyEvent(event)
+        }
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val key = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> "up"
+                KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+                KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+                KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER,
+                KeyEvent.KEYCODE_BUTTON_A -> "select"
+                KeyEvent.KEYCODE_BACK,
+                KeyEvent.KEYCODE_ESCAPE,
+                KeyEvent.KEYCODE_BUTTON_B -> "back"
+                else -> null
+            }
+            if (key != null) {
+                nativeChannel?.invokeMethod("remoteKey", mapOf("key" to key))
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 }

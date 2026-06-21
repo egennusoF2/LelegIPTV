@@ -323,17 +323,12 @@ class XtreamClient {
     final episodes = <SeriesEpisode>[];
     if (rawEpisodes is Map) {
       for (final entry in rawEpisodes.entries) {
-        final seasonNumber = int.tryParse(entry.key.toString()) ?? 0;
-        final rawSeason = entry.value;
-        if (rawSeason is! List) continue;
-        for (final item in rawSeason.whereType<Map>()) {
-          episodes.add(
-            SeriesEpisode.fromJson(
-              item.map((key, value) => MapEntry(key.toString(), value)),
-              seasonNumber,
-            ),
-          );
-        }
+        final seasonNumber = _parseSeasonMapKey(entry.key.toString());
+        _collectSeasonEpisodes(
+          episodes,
+          entry.value,
+          seasonNumber,
+        );
       }
     } else if (rawEpisodes is List) {
       for (final item in rawEpisodes.whereType<Map>()) {
@@ -397,6 +392,44 @@ class XtreamClient {
         : episode.containerExtension;
     return '${profile.baseUrl}/series/${Uri.encodeComponent(profile.username)}/'
         '${Uri.encodeComponent(profile.password)}/${episode.id}.$ext';
+  }
+
+  static int _parseSeasonMapKey(String key) {
+    final direct = int.tryParse(key.trim());
+    if (direct != null && direct > 0) return direct;
+    final match = RegExp(r'\d+').firstMatch(key);
+    if (match == null) return 0;
+    return int.tryParse(match.group(0)!) ?? 0;
+  }
+
+  static void _collectSeasonEpisodes(
+    List<SeriesEpisode> episodes,
+    dynamic rawSeason,
+    int seasonNumber,
+  ) {
+    if (rawSeason is List) {
+      for (final item in rawSeason) {
+        if (item is! Map) continue;
+        episodes.add(
+          SeriesEpisode.fromJson(
+            item.map((key, value) => MapEntry(key.toString(), value)),
+            seasonNumber,
+          ),
+        );
+      }
+      return;
+    }
+    if (rawSeason is Map) {
+      for (final item in rawSeason.values) {
+        if (item is! Map) continue;
+        episodes.add(
+          SeriesEpisode.fromJson(
+            item.map((key, value) => MapEntry(key.toString(), value)),
+            seasonNumber,
+          ),
+        );
+      }
+    }
   }
 
   Future<List<XtreamCategory>> _categories(String action) async {
@@ -839,16 +872,20 @@ class SeriesEpisode {
               '',
         ) ??
         0;
+    final jsonSeason = int.tryParse(
+      (json['season'] ?? json['season_num'])?.toString() ?? '',
+    );
+    final infoSeason = int.tryParse(info['season']?.toString() ?? '');
+    // Map key from get_series_info is authoritative when present.
+    final season = seasonHint > 0
+        ? seasonHint
+        : (jsonSeason ?? infoSeason ?? 0);
     return SeriesEpisode(
       id:
           int.tryParse((json['id'] ?? json['stream_id'])?.toString() ?? '') ??
           0,
       title: (json['title'] ?? json['name'])?.toString() ?? 'Episodio',
-      season:
-          int.tryParse(
-            (json['season'] ?? json['season_num'])?.toString() ?? '',
-          ) ??
-          seasonHint,
+      season: season,
       episode: episodeNum,
       containerExtension:
           (json['container_extension'] ?? json['containerExtension'])

@@ -85,13 +85,20 @@ Copia consigliata:
 ```bash
 cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
   www/downloads/current/LelegIPTV-android-universal-release.apk
+cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
+  www/downloads/current/LelegIPTV-android-tv-release.apk
 ```
 
 Nota operativa:
 
 - `www/downloads/current/LelegIPTV-android-universal-release.apk` e' il file
-  pubblicato dalla download center. Evitare copie versionate parallele: in
-  passato hanno creato confusione tra build vecchie e nuove.
+  per smartphone/tablet Android.
+- `www/downloads/current/LelegIPTV-android-tv-release.apk` e' lo stesso runtime
+  Flutter ma pubblicato con nome dedicato per Android TV, Google TV,
+  Chromecast con Google TV e Fire TV/Fire Stick. L'app rileva il form factor a
+  runtime e abilita layout TV, launcher Leanback e navigazione con telecomando.
+- Evitare copie versionate parallele: in passato hanno creato confusione tra
+  build vecchie e nuove.
 - Su Android smartphone/tablet il download offline e' demandato al
   `DownloadManager` di sistema: per la validazione manuale bisogna verificare
   la notifica Android oltre alla sezione `Download` dell'app.

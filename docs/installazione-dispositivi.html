@@ -287,11 +287,11 @@
 
         <article class="download-card">
           <div>
-            <h3>Android TV / Google TV</h3>
-            <p>Usa lo stesso APK Android. Installazione via ADB, Downloader o file manager TV.</p>
-            <p class="meta">Compatibile con sideload su TV Android.</p>
+            <h3>Android TV / Google TV / Chromecast / Fire TV</h3>
+            <p>APK TV con launcher Leanback, navigazione telecomando, categorie rapide ed EPG fullscreen.</p>
+            <p class="meta">Compatibile con sideload su TV Android e Fire TV.</p>
           </div>
-          <a class="button primary" href="../www/downloads/current/LelegIPTV-android-universal-release.apk">Scarica APK TV</a>
+          <a class="button primary" href="../www/downloads/current/LelegIPTV-android-tv-release.apk">Scarica APK TV</a>
         </article>
 
         <article class="download-card">
@@ -368,20 +368,27 @@
     </section>
 
     <section id="android-tv">
-      <h2>Installazione Android TV / Google TV</h2>
+      <h2>Installazione Android TV / Google TV / Chromecast / Fire TV</h2>
       <h3>Metodo ADB</h3>
       <ol>
         <li>Abilita <strong>Opzioni sviluppatore</strong> e <strong>Debug ADB</strong> sulla TV.</li>
         <li>Dal computer collegato alla stessa rete esegui:</li>
       </ol>
       <pre><code>adb connect IP_DELLA_TV:5555
-adb install -r LelegIPTV-android-universal-release.apk</code></pre>
+adb install -r LelegIPTV-android-tv-release.apk</code></pre>
       <h3>Metodo Downloader / file manager</h3>
       <ol>
-        <li>Copia l'APK su USB o scaricalo con Downloader.</li>
+        <li>Copia <code>LelegIPTV-android-tv-release.apk</code> su USB o scaricalo con Downloader.</li>
         <li>Autorizza <strong>Installa app sconosciute</strong> per l'app usata.</li>
         <li>Installa e avvia LelegIPTV dalla schermata app.</li>
       </ol>
+      <h3>Fire Stick / Fire TV</h3>
+      <ol>
+        <li>Abilita <strong>Debug ADB</strong> e <strong>App da origini sconosciute</strong>.</li>
+        <li>Usa Downloader per scaricare l'APK TV da questa pagina oppure ADB:</li>
+      </ol>
+      <pre><code>adb connect IP_FIRE_TV:5555
+adb install -r LelegIPTV-android-tv-release.apk</code></pre>
     </section>
 
     <section id="apple">
