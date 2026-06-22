@@ -42,6 +42,41 @@ bool get isTizenRuntime {
   }
 }
 
+const _iptvUaHls =
+    'Mozilla/5.0 (Linux; Android 9; SM-G960F) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 '
+    'IPTVSmartersPlayer/3.1.5';
+const _iptvUaVod = 'VLC/3.0.20 LibVLC/3.0.20';
+
+String _mediaUserAgentForUrl(String url) {
+  final target = url.toLowerCase();
+  if (RegExp(r'/(movie|series)/').hasMatch(target)) return _iptvUaVod;
+  if (RegExp(r'\.m3u8(?:[?#]|$)').hasMatch(target) ||
+      RegExp(r'/live/').hasMatch(target)) {
+    return _iptvUaHls;
+  }
+  return _iptvUaVod;
+}
+
+Map<String, String> _mediaHttpHeaders(String url, XtreamProfile? profile) {
+  return {
+    'User-Agent': _mediaUserAgentForUrl(url),
+    if (profile != null) 'Referer': '${profile.baseUrl}/',
+  };
+}
+
+List<String> _vodPlayUrls(XtreamProfile profile, VodMovie movie) {
+  final urls = <String>[XtreamClient(profile).vodUrl(movie)];
+  final ext = movie.containerExtension.trim().replaceAll('.', '').toLowerCase();
+  if (ext.isNotEmpty && ext != 'mp4') {
+    urls.add(
+      '${profile.baseUrl}/movie/${Uri.encodeComponent(profile.username)}/'
+      '${Uri.encodeComponent(profile.password)}/${movie.id}.mp4',
+    );
+  }
+  return urls.toSet().toList(growable: false);
+}
+
 bool _useCompactAdaptiveLayout(Size size, {double phoneShortestSide = 700}) {
   return size.shortestSide < phoneShortestSide;
 }
@@ -132,6 +167,38 @@ enum AppSection {
   settings,
 }
 
+class PlaybackProgress {
+  const PlaybackProgress({
+    required this.positionMs,
+    required this.durationMs,
+    required this.updatedAt,
+  });
+
+  final int positionMs;
+  final int durationMs;
+  final int updatedAt;
+
+  double get fraction =>
+      durationMs > 0 ? (positionMs / durationMs).clamp(0.0, 1.0) : 0.0;
+
+  bool get isCompleted => durationMs > 0 && fraction >= 0.92;
+
+  bool get canResume => positionMs >= 15000 && !isCompleted;
+
+  Map<String, dynamic> toJson() => {
+    'p': positionMs,
+    'd': durationMs,
+    't': updatedAt,
+  };
+
+  factory PlaybackProgress.fromJson(Map<String, dynamic> json) =>
+      PlaybackProgress(
+        positionMs: int.tryParse(json['p']?.toString() ?? '') ?? 0,
+        durationMs: int.tryParse(json['d']?.toString() ?? '') ?? 0,
+        updatedAt: int.tryParse(json['t']?.toString() ?? '') ?? 0,
+      );
+}
+
 class LelegNativeShell extends StatefulWidget {
   const LelegNativeShell({super.key});
 
@@ -145,6 +212,8 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   static const _activeProfileIdKey = 'leleg.native.active_profile_id';
   static const _favoriteMoviesPrefix = 'leleg.native.favorite_movies.';
   static const _watchLaterMoviesPrefix = 'leleg.native.watch_later_movies.';
+  static const _movieProgressPrefix = 'leleg.tv.movie_progress.';
+  static const _episodeProgressPrefix = 'leleg.tv.episode_progress.';
   static const _catalogCacheTtl = Duration(days: 1);
   static const _catalogCacheVersion = 3;
   static const _remoteSections = [
@@ -214,6 +283,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   bool _seriesDetailLoading = false;
   bool _epgLoading = false;
   bool _playerFocusMode = false;
+  Map<int, PlaybackProgress> _movieProgress = const {};
+  Map<int, PlaybackProgress> _episodeProgress = const {};
+  int? _activeMovieId;
+  int? _activeEpisodeId;
+  Timer? _playbackProgressTimer;
 
   bool get _useAppleVideoBackend => false;
 
@@ -303,6 +377,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
             }),
           ];
     _storageChannel.setMethodCallHandler(_handleNativeStorageCall);
+    if (Platform.isAndroid) {
+      unawaited(_initAndroidTelevisionMode());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (Platform.isAndroid || Platform.isIOS) {
         unawaited(_applyMobileOrientationPolicy());
@@ -313,6 +390,8 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   @override
   void dispose() {
+    _playbackProgressTimer?.cancel();
+    unawaited(_flushPlaybackProgress());
     _storageChannel.setMethodCallHandler(null);
     for (final subscription in _subscriptions) {
       subscription.cancel();
@@ -395,7 +474,26 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
+  Future<void> _initAndroidTelevisionMode() async {
+    try {
+      final isTv = await _storageChannel.invokeMethod<bool>('isTelevision');
+      if (!mounted || isTv != true) return;
+      setState(() => _remoteMenuMode = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _shellFocusNode.requestFocus();
+      });
+    } catch (_) {}
+  }
+
   Future<void> _handleNativeStorageCall(MethodCall call) async {
+    if (call.method == 'remoteKey') {
+      final args = Map<Object?, Object?>.from(call.arguments as Map);
+      final key = args['key']?.toString();
+      if (key != null) {
+        _handleAndroidRemoteKey(key);
+      }
+      return;
+    }
     if (call.method != 'downloadProgress') return;
     final args = Map<Object?, Object?>.from(call.arguments as Map);
     final movieId = (args['movieId'] as num?)?.toInt();
@@ -434,10 +532,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         (item) => item.id == activeProfileId,
         orElse: () => savedProfiles.first,
       );
-      _titleController.text = profile.title;
-      _serverController.text = profile.serverUrl;
-      _userController.text = profile.username;
-      _passController.text = profile.password;
+      _resetSettingsForm();
       setState(() {
         _profiles = savedProfiles;
         _profile = profile;
@@ -508,6 +603,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     await prefs.setString(_activeProfileIdKey, activeId);
   }
 
+  void _resetSettingsForm() {
+    _titleController.clear();
+    _serverController.clear();
+    _userController.clear();
+    _passController.clear();
+  }
+
   Future<void> _saveAndLoadProfile({bool forceRefresh = false}) async {
     var profile = _profileWithStableId(_readProfileFromForm());
     if (!profile.isComplete) {
@@ -530,11 +632,8 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     setState(() {
       _profiles = profiles;
       _profile = profile;
-      _titleController.clear();
-      _serverController.clear();
-      _userController.clear();
-      _passController.clear();
     });
+    _resetSettingsForm();
     await _loadUserLists(profile);
     await _loadCatalog(profile: profile, forceRefresh: forceRefresh);
   }
@@ -583,11 +682,18 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   Future<void> _changeSection(AppSection section) async {
     if (section == _section) {
       _enterContentMode();
+      if (section == AppSection.settings) {
+        _resetSettingsForm();
+      }
       if (section == AppSection.epg) {
         unawaited(_loadEpgPage(force: true));
       }
       return;
     }
+    if (section == AppSection.settings) {
+      _resetSettingsForm();
+    }
+    await _endPlaybackTracking();
     final mediaPlayer = _player;
     if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
       await mediaPlayer.stop();
@@ -650,11 +756,28 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
+  void _handleAndroidRemoteKey(String key) {
+    final logicalKey = switch (key) {
+      'up' => LogicalKeyboardKey.arrowUp,
+      'down' => LogicalKeyboardKey.arrowDown,
+      'left' => LogicalKeyboardKey.arrowLeft,
+      'right' => LogicalKeyboardKey.arrowRight,
+      'select' => LogicalKeyboardKey.select,
+      'back' => LogicalKeyboardKey.escape,
+      _ => null,
+    };
+    if (logicalKey == null) return;
+    _handleShellLogicalKey(logicalKey);
+  }
+
   KeyEventResult _handleShellKey(KeyEvent event) {
     if (event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
-    final key = event.logicalKey;
+    return _handleShellLogicalKey(event.logicalKey);
+  }
+
+  KeyEventResult _handleShellLogicalKey(LogicalKeyboardKey key) {
     if (_isEditingText) {
       if (key == LogicalKeyboardKey.escape ||
           key == LogicalKeyboardKey.goBack ||
@@ -1254,7 +1377,146 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _watchLaterMovieIds
         ..clear()
         ..addAll(watchLater ?? const {});
+      _movieProgress = _readProgressMap(prefs, _movieProgressKey(profile));
+      _episodeProgress = _readProgressMap(prefs, _episodeProgressKey(profile));
     });
+  }
+
+  String _movieProgressKey(XtreamProfile profile) =>
+      '$_movieProgressPrefix${profile.id}';
+
+  String _episodeProgressKey(XtreamProfile profile) =>
+      '$_episodeProgressPrefix${profile.id}';
+
+  Map<int, PlaybackProgress> _readProgressMap(
+    SharedPreferences prefs,
+    String key,
+  ) {
+    final raw = prefs.getString(key);
+    if (raw == null || raw.trim().isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      final result = <int, PlaybackProgress>{};
+      for (final entry in decoded.entries) {
+        final id = int.tryParse(entry.key.toString());
+        if (id == null || entry.value is! Map) continue;
+        result[id] = PlaybackProgress.fromJson(
+          (entry.value as Map).map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        );
+      }
+      return result;
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<void> _persistProgressMap(
+    String key,
+    Map<int, PlaybackProgress> values,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = values.map(
+      (id, progress) => MapEntry(id.toString(), progress.toJson()),
+    );
+    await prefs.setString(key, jsonEncode(encoded));
+  }
+
+  bool _movieCanResume(int id) => _movieProgress[id]?.canResume ?? false;
+
+  Future<void> _saveMovieProgress(
+    XtreamProfile profile,
+    int movieId,
+    PlaybackProgress progress,
+  ) async {
+    final next = Map<int, PlaybackProgress>.from(_movieProgress)
+      ..[movieId] = progress;
+    if (!mounted) return;
+    setState(() => _movieProgress = next);
+    await _persistProgressMap(_movieProgressKey(profile), next);
+  }
+
+  Future<void> _saveEpisodeProgress(
+    XtreamProfile profile,
+    int episodeId,
+    PlaybackProgress progress,
+  ) async {
+    final next = Map<int, PlaybackProgress>.from(_episodeProgress)
+      ..[episodeId] = progress;
+    if (!mounted) return;
+    setState(() => _episodeProgress = next);
+    await _persistProgressMap(_episodeProgressKey(profile), next);
+  }
+
+  int _currentPlaybackPositionMs() {
+    final mediaPlayer = _player;
+    if (mediaPlayer != null) {
+      return mediaPlayer.state.position.inMilliseconds;
+    }
+    final apple = _appleVideoController?.value;
+    if (apple != null && apple.isInitialized) {
+      return apple.position.inMilliseconds;
+    }
+    final tizen = _tizenVideoController?.value;
+    if (tizen != null && tizen.isInitialized) {
+      return tizen.position.inMilliseconds;
+    }
+    return 0;
+  }
+
+  int _currentPlaybackDurationMs() {
+    final mediaPlayer = _player;
+    if (mediaPlayer != null) {
+      return mediaPlayer.state.duration.inMilliseconds;
+    }
+    final apple = _appleVideoController?.value;
+    if (apple != null && apple.isInitialized) {
+      return apple.duration.inMilliseconds;
+    }
+    final tizen = _tizenVideoController?.value;
+    if (tizen != null && tizen.isInitialized) {
+      return tizen.duration.end.inMilliseconds;
+    }
+    return 0;
+  }
+
+  Future<void> _flushPlaybackProgress() async {
+    final profile = _profile;
+    if (profile == null) return;
+    final durationMs = _currentPlaybackDurationMs();
+    if (durationMs <= 0) return;
+    final positionMs = _currentPlaybackPositionMs().clamp(0, durationMs);
+    final progress = PlaybackProgress(
+      positionMs: positionMs,
+      durationMs: durationMs,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (_activeMovieId != null) {
+      await _saveMovieProgress(profile, _activeMovieId!, progress);
+    }
+    if (_activeEpisodeId != null) {
+      await _saveEpisodeProgress(profile, _activeEpisodeId!, progress);
+    }
+  }
+
+  void _beginPlaybackTracking({int? movieId, int? episodeId}) {
+    _playbackProgressTimer?.cancel();
+    _activeMovieId = movieId;
+    _activeEpisodeId = episodeId;
+    _playbackProgressTimer = Timer.periodic(
+      const Duration(seconds: 12),
+      (_) => unawaited(_flushPlaybackProgress()),
+    );
+  }
+
+  Future<void> _endPlaybackTracking({bool save = true}) async {
+    _playbackProgressTimer?.cancel();
+    _playbackProgressTimer = null;
+    if (save) await _flushPlaybackProgress();
+    _activeMovieId = null;
+    _activeEpisodeId = null;
   }
 
   Future<void> _persistUserLists() async {
@@ -1519,15 +1781,23 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     await _playProgramme(channel, programme);
   }
 
-  Future<void> _playMovie(VodMovie movie) async {
+  Future<void> _playMovie(VodMovie movie, {bool fromStart = false}) async {
     final profile = _profile;
     if (profile == null) return;
-    final opened = await _openMedia(
-      XtreamClient(profile).vodUrl(movie),
-      movie.name,
-    );
+    final progress = fromStart ? null : _movieProgress[movie.id];
+    final startAt = progress?.canResume == true
+        ? Duration(milliseconds: progress!.positionMs)
+        : null;
+    _beginPlaybackTracking(movieId: movie.id);
+    var opened = false;
+    for (final url in _vodPlayUrls(profile, movie)) {
+      opened = await _openMedia(url, movie.name, startAt: startAt);
+      if (opened) break;
+    }
     if (opened) {
       _enterFullscreenOnPhonePlayback(force: Platform.isIOS);
+    } else {
+      await _endPlaybackTracking();
     }
     if (!opened && mounted) {
       setState(() => _status = 'Riproduzione film non riuscita: ${movie.name}');
@@ -1724,7 +1994,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         'url': url,
         'filename': filename,
         'referer': referer,
-        'userAgent': 'VLC/3.0.20 LibVLC/3.0.20',
+        'userAgent': _mediaUserAgentForUrl(url),
       });
     } catch (error) {
       _traceTv('download enqueue android failed error="$error"');
@@ -1747,7 +2017,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       final request = await client.getUrl(Uri.parse(url));
       request.headers.set(
         HttpHeaders.userAgentHeader,
-        'VLC/3.0.20 LibVLC/3.0.20',
+        _mediaUserAgentForUrl(url),
       );
       request.headers.set(HttpHeaders.refererHeader, '${profile.baseUrl}/');
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
@@ -1882,6 +2152,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _status = 'Dettaglio film: ${movie.name}';
     });
     if (profile == null) return;
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      unawaited(_playMovie(movie));
+    }
     try {
       final description = await XtreamClient(profile).vodDescription(movie);
       if (!mounted || _selectedMovie?.id != movie.id) return;
@@ -1916,16 +2189,24 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
-  Future<void> _playEpisode(SeriesEpisode episode) async {
+  Future<void> _playEpisode(SeriesEpisode episode, {bool fromStart = false}) async {
     final profile = _profile;
     final show = _selectedSeries;
     if (profile == null) return;
+    final progress = fromStart ? null : _episodeProgress[episode.id];
+    final startAt = progress?.canResume == true
+        ? Duration(milliseconds: progress!.positionMs)
+        : null;
+    _beginPlaybackTracking(episodeId: episode.id);
     final opened = await _openMedia(
       XtreamClient(profile).episodeUrl(episode),
       show == null ? episode.title : '${show.name} - ${episode.title}',
+      startAt: startAt,
     );
     if (opened) {
       _enterFullscreenOnPhonePlayback();
+    } else {
+      await _endPlaybackTracking();
     }
     if (!opened && mounted) {
       setState(
@@ -1961,30 +2242,31 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     String url,
     String title, {
     bool preferApple = false,
+    Duration? startAt,
   }) async {
     setState(() {
       _playerTitle = title;
       _status = 'Apertura: $title';
     });
     if (preferApple || _useAppleVideoBackend) {
-      final opened = await _openAppleMedia(url, title);
+      final opened = await _openAppleMedia(url, title, startAt: startAt);
       if (opened) return true;
       if (preferApple && !_useAppleVideoBackend) {
-        return _openMediaKitMedia(url);
+        return _openMediaKitMedia(url, startAt: startAt);
       }
       return false;
     }
     if (isTizenRuntime) {
       for (final candidate in _tizenMediaCandidates(url)) {
-        final opened = await _openTizenMedia(candidate, title);
+        final opened = await _openTizenMedia(candidate, title, startAt: startAt);
         if (opened) return true;
       }
       return false;
     }
-    return _openMediaKitMedia(url);
+    return _openMediaKitMedia(url, startAt: startAt);
   }
 
-  Future<bool> _openMediaKitMedia(String url) async {
+  Future<bool> _openMediaKitMedia(String url, {Duration? startAt}) async {
     final appleController = _appleVideoController;
     _appleVideoController = null;
     if (mounted && appleController != null) setState(() {});
@@ -1996,21 +2278,20 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final mediaPlayer = _player;
     if (mediaPlayer == null) return false;
     await mediaPlayer.open(
-      Media(
-        url,
-        httpHeaders: _profile == null
-            ? const {}
-            : {
-                'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-                'Referer': '${_profile!.baseUrl}/',
-              },
-      ),
+      Media(url, httpHeaders: _mediaHttpHeaders(url, _profile)),
       play: true,
     );
+    if (startAt != null && startAt.inMilliseconds > 0) {
+      await mediaPlayer.seek(startAt);
+    }
     return true;
   }
 
-  Future<bool> _openAppleMedia(String url, String title) async {
+  Future<bool> _openAppleMedia(
+    String url,
+    String title, {
+    Duration? startAt,
+  }) async {
     final mediaPlayer = _player;
     if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
       try {
@@ -2027,12 +2308,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
     final controller = vp.VideoPlayerController.networkUrl(
       Uri.parse(url),
-      httpHeaders: _profile == null
-          ? const <String, String>{}
-          : {
-              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-              'Referer': '${_profile!.baseUrl}/',
-            },
+      httpHeaders: _mediaHttpHeaders(url, _profile),
       videoPlayerOptions: vp.VideoPlayerOptions(allowBackgroundPlayback: false),
     );
     controller.addListener(() {
@@ -2058,6 +2334,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         throw StateError('Player Apple inizializzato senza traccia video');
       }
       await controller.play();
+      if (startAt != null && startAt.inMilliseconds > 0) {
+        await controller.seekTo(startAt);
+      }
       if (mounted) setState(() => _status = 'In riproduzione');
       return true;
     } catch (error) {
@@ -2075,7 +2354,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
-  Future<bool> _openTizenMedia(String url, String title) async {
+  Future<bool> _openTizenMedia(
+    String url,
+    String title, {
+    Duration? startAt,
+  }) async {
     _traceTv('open tizen media title="$title" url="$url"');
     final previous = _tizenVideoController;
     _tizenVideoController = null;
@@ -2083,13 +2366,17 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     await previous?.pause();
     await previous?.dispose();
 
-    final headers = _profile == null
-        ? const <String, String>{}
-        : {'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'};
+    final headers = _mediaHttpHeaders(url, _profile);
+    final userAgent = headers['User-Agent'] ?? _iptvUaHls;
     final controller = avplay.VideoPlayerController.network(
       url,
       httpHeaders: headers,
       formatHint: _tizenFormatHint(url),
+      streamingProperty: {
+        avplay_platform.StreamingPropertyType.userAgent: userAgent,
+        if (url.contains('/live/') || url.endsWith('.ts'))
+          avplay_platform.StreamingPropertyType.isLive: 'true',
+      },
     );
     controller.addListener(() {
       final value = controller.value;
@@ -2111,6 +2398,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     setState(() => _status = 'Preparazione AVPlay: $title');
     try {
       await controller.initialize();
+      if (startAt != null && startAt.inMilliseconds > 0) {
+        await controller.seekTo(startAt);
+      }
       await controller.play();
       if (mounted) setState(() => _status = 'In riproduzione');
       return true;
@@ -2384,6 +2674,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 
   Future<void> _closePlayer() async {
+    await _endPlaybackTracking();
     final mediaPlayer = _player;
     if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
       await mediaPlayer.stop();
@@ -2783,7 +3074,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 rate: _rate,
                 labelFor: _trackLabel,
                 onBack: () => setState(() => _selectedMovie = null),
-                onPlay: () => _playMovie(_selectedMovie!),
+                onPlay: () => _playMovie(_selectedMovie!, fromStart: true),
+                onResume: () => _playMovie(_selectedMovie!),
+                onRestart: () => _playMovie(_selectedMovie!, fromStart: true),
+                canResume: _movieCanResume(_selectedMovie!.id),
+                watchProgress: _movieProgress[_selectedMovie!.id],
                 onDownload: () => _downloadMovie(_selectedMovie!),
                 onAudioChanged: _selectAudioTrack,
                 onSubtitleChanged: _selectSubtitleTrack,
@@ -2865,6 +3160,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 show: _selectedSeries!,
                 description: _selectedSeriesDescription,
                 episodes: _seriesEpisodes,
+                episodeProgress: _episodeProgress,
                 loading: _seriesDetailLoading,
                 controller: _videoController,
                 player: _player,
@@ -2877,7 +3173,8 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                   _selectedSeries = null;
                   _seriesEpisodes = const [];
                 }),
-                onPlay: _playEpisode,
+                onPlay: (episode) => _playEpisode(episode),
+                onRestart: (episode) => _playEpisode(episode, fromStart: true),
                 onAudioChanged: _selectAudioTrack,
                 onSubtitleChanged: _selectSubtitleTrack,
                 onRateChanged: _setRate,
@@ -3969,7 +4266,9 @@ class LiveScreen extends StatelessWidget {
                       onOpen: mobile ? onSelectChannel : onPlay,
                       onPlay: onPlay,
                       category: categoryName(channel.categoryId),
-                      selected: tvSelectedIndex == index,
+                      selected:
+                          selectedChannel?.id == channel.id ||
+                          tvSelectedIndex == index,
                     );
                   },
                 );
@@ -4415,6 +4714,10 @@ class MovieDetailScreen extends StatelessWidget {
     required this.labelFor,
     required this.onBack,
     required this.onPlay,
+    this.onResume,
+    this.onRestart,
+    this.canResume = false,
+    this.watchProgress,
     required this.onDownload,
     required this.onAudioChanged,
     required this.onSubtitleChanged,
@@ -4436,6 +4739,10 @@ class MovieDetailScreen extends StatelessWidget {
   final String Function(dynamic value) labelFor;
   final VoidCallback onBack;
   final VoidCallback onPlay;
+  final VoidCallback? onResume;
+  final VoidCallback? onRestart;
+  final bool canResume;
+  final PlaybackProgress? watchProgress;
   final VoidCallback onDownload;
   final ValueChanged<AudioTrack> onAudioChanged;
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
@@ -4471,11 +4778,23 @@ class MovieDetailScreen extends StatelessWidget {
                   icon: const Icon(Icons.arrow_back),
                   label: const Text('Film'),
                 ),
-                FilledButton.icon(
-                  onPressed: onPlay,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Play'),
-                ),
+                if (canResume && onResume != null && onRestart != null) ...[
+                  FilledButton.icon(
+                    onPressed: onResume,
+                    icon: const Icon(Icons.play_circle_outline),
+                    label: const Text('Riprendi'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onRestart,
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Ricomincia'),
+                  ),
+                ] else
+                  FilledButton.icon(
+                    onPressed: onPlay,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Riproduci'),
+                  ),
                 OutlinedButton.icon(
                   onPressed: onDownload,
                   icon: const Icon(Icons.download),
@@ -4483,24 +4802,46 @@ class MovieDetailScreen extends StatelessWidget {
                 ),
               ],
             ),
+            if (watchProgress != null && watchProgress!.fraction > 0) ...[
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  minHeight: 5,
+                  value: watchProgress!.isCompleted ? 1 : watchProgress!.fraction,
+                  backgroundColor: LelegColors.line,
+                  color: LelegColors.accent,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                watchProgress!.isCompleted
+                    ? 'Visto'
+                    : '${(watchProgress!.fraction * 100).round()}% visto',
+                style: const TextStyle(
+                  color: LelegColors.muted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             Expanded(
               child: mobile
                   ? ListView(
                       children: [
                         SizedBox(
-                          height: 280,
+                          height: 360,
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(18),
+                            borderRadius: BorderRadius.circular(20),
                             child: _Poster(url: movie.logo),
                           ),
                         ),
                         const SizedBox(height: 16),
                         Container(
-                          padding: const EdgeInsets.all(16),
+                          padding: const EdgeInsets.all(18),
                           decoration: BoxDecoration(
                             color: LelegColors.surface2,
-                            borderRadius: BorderRadius.circular(18),
+                            borderRadius: BorderRadius.circular(20),
                             border: Border.all(color: LelegColors.line),
                           ),
                           child: Column(
@@ -4527,24 +4868,17 @@ class MovieDetailScreen extends StatelessWidget {
                                 ],
                               ),
                               const SizedBox(height: 14),
-                              if (description.trim().isNotEmpty)
-                                Text(
-                                  description.trim(),
-                                  style: const TextStyle(
-                                    color: LelegColors.muted,
-                                    fontWeight: FontWeight.w700,
-                                    height: 1.45,
-                                  ),
-                                )
-                              else
-                                const Text(
-                                  'Nessuna descrizione disponibile dal provider.',
-                                  style: TextStyle(
-                                    color: LelegColors.muted,
-                                    fontWeight: FontWeight.w700,
-                                    height: 1.45,
-                                  ),
+                              Text(
+                                description.trim().isNotEmpty
+                                    ? description.trim()
+                                    : 'Nessuna descrizione disponibile dal provider.',
+                                style: const TextStyle(
+                                  color: LelegColors.fg,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.55,
                                 ),
+                              ),
                             ],
                           ),
                         ),
@@ -4554,13 +4888,29 @@ class MovieDetailScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         SizedBox(
-                          width: 260,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(18),
-                            child: _Poster(url: movie.logo),
+                          width: 380,
+                          child: _DetailHeroPanel(
+                            imageUrl: movie.logo,
+                            description: description,
+                            posterHeight: 480,
+                            badges: [
+                              _MetaBadge(
+                                icon: Icons.movie_outlined,
+                                label: category.isEmpty ? 'Film' : category,
+                              ),
+                              if (movie.rating.isNotEmpty)
+                                _MetaBadge(
+                                  icon: Icons.star_outline,
+                                  label: movie.rating,
+                                ),
+                              _MetaBadge(
+                                icon: Icons.video_file_outlined,
+                                label: movie.containerExtension.toUpperCase(),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(width: 22),
+                        const SizedBox(width: 24),
                         Expanded(
                           child: PlayerCard(
                             title: playerTitle,
@@ -4660,6 +5010,7 @@ class SeriesDetailScreen extends StatelessWidget {
     required this.show,
     required this.description,
     required this.episodes,
+    required this.episodeProgress,
     required this.loading,
     required this.controller,
     required this.player,
@@ -4670,6 +5021,7 @@ class SeriesDetailScreen extends StatelessWidget {
     required this.labelFor,
     required this.onBack,
     required this.onPlay,
+    required this.onRestart,
     required this.onAudioChanged,
     required this.onSubtitleChanged,
     required this.onRateChanged,
@@ -4681,6 +5033,7 @@ class SeriesDetailScreen extends StatelessWidget {
   final SeriesShow show;
   final String description;
   final List<SeriesEpisode> episodes;
+  final Map<int, PlaybackProgress> episodeProgress;
   final bool loading;
   final VideoController? controller;
   final Player? player;
@@ -4691,6 +5044,7 @@ class SeriesDetailScreen extends StatelessWidget {
   final String Function(dynamic value) labelFor;
   final VoidCallback onBack;
   final ValueChanged<SeriesEpisode> onPlay;
+  final ValueChanged<SeriesEpisode> onRestart;
   final ValueChanged<AudioTrack> onAudioChanged;
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
   final ValueChanged<double> onRateChanged;
@@ -4727,11 +5081,22 @@ class SeriesDetailScreen extends StatelessWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: SizedBox(
+                      height: 360,
+                      child: _Poster(url: show.logo),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Container(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
                       color: LelegColors.surface2,
-                      borderRadius: BorderRadius.circular(18),
+                      borderRadius: BorderRadius.circular(20),
                       border: Border.all(color: LelegColors.line),
                     ),
                     child: Text(
@@ -4739,9 +5104,10 @@ class SeriesDetailScreen extends StatelessWidget {
                           ? description.trim()
                           : 'Nessuna descrizione disponibile dal provider.',
                       style: const TextStyle(
-                        color: LelegColors.muted,
-                        fontWeight: FontWeight.w700,
-                        height: 1.45,
+                        color: LelegColors.fg,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        height: 1.55,
                       ),
                     ),
                   ),
@@ -4750,21 +5116,33 @@ class SeriesDetailScreen extends StatelessWidget {
                 if (episodes.isEmpty)
                   const _EmptyState(message: 'Nessun episodio caricato.')
                 else
-                  ListView.separated(
+                  _SeriesSeasonList(
+                    episodes: episodes,
+                    episodeProgress: episodeProgress,
+                    onPlay: onPlay,
+                    onRestart: onRestart,
                     shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                    itemCount: episodes.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (_, index) =>
-                        _EpisodeTile(episode: episodes[index], onPlay: onPlay),
+                    horizontalPadding: 16,
                   ),
               ],
             )
           : Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(
-                  width: 430,
+                  width: 380,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 12, 20),
+                    child: _DetailHeroPanel(
+                      imageUrl: show.logo,
+                      description: description,
+                      posterHeight: 480,
+                    ),
+                  ),
+                ),
+                const VerticalDivider(width: 1, color: LelegColors.line),
+                SizedBox(
+                  width: 440,
                   child: Column(
                     children: [
                       Padding(
@@ -4793,20 +5171,12 @@ class SeriesDetailScreen extends StatelessWidget {
                             ? const _EmptyState(
                                 message: 'Nessun episodio caricato.',
                               )
-                            : ListView.separated(
-                                padding: const EdgeInsets.fromLTRB(
-                                  20,
-                                  0,
-                                  20,
-                                  20,
-                                ),
-                                itemCount: episodes.length,
-                                separatorBuilder: (_, _) =>
-                                    const SizedBox(height: 8),
-                                itemBuilder: (_, index) => _EpisodeTile(
-                                  episode: episodes[index],
-                                  onPlay: onPlay,
-                                ),
+                            : _SeriesSeasonList(
+                                episodes: episodes,
+                                episodeProgress: episodeProgress,
+                                onPlay: onPlay,
+                                onRestart: onRestart,
+                                horizontalPadding: 20,
                               ),
                       ),
                     ],
@@ -8256,49 +8626,287 @@ class _SeriesPosterCard extends StatelessWidget {
   }
 }
 
-class _EpisodeTile extends StatelessWidget {
-  const _EpisodeTile({required this.episode, required this.onPlay});
+class _DetailHeroPanel extends StatelessWidget {
+  const _DetailHeroPanel({
+    required this.imageUrl,
+    required this.description,
+    this.badges = const [],
+    this.posterHeight = 400,
+  });
 
-  final SeriesEpisode episode;
-  final ValueChanged<SeriesEpisode> onPlay;
+  final String imageUrl;
+  final String description;
+  final List<Widget> badges;
+  final double posterHeight;
 
   @override
   Widget build(BuildContext context) {
-    final code = [
-      if (episode.season > 0) 'S${episode.season.toString().padLeft(2, '0')}',
-      if (episode.episode > 0) 'E${episode.episode.toString().padLeft(2, '0')}',
-    ].join('');
+    final text = description.trim().isNotEmpty
+        ? description.trim()
+        : 'Nessuna descrizione disponibile dal provider.';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: SizedBox(
+            height: posterHeight,
+            child: _Poster(url: imageUrl),
+          ),
+        ),
+        if (badges.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          Wrap(spacing: 8, runSpacing: 8, children: badges),
+        ],
+        const SizedBox(height: 14),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: LelegColors.surface2,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: LelegColors.line),
+            ),
+            child: SingleChildScrollView(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: LelegColors.fg,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  height: 1.6,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SeriesSeasonList extends StatelessWidget {
+  const _SeriesSeasonList({
+    required this.episodes,
+    required this.episodeProgress,
+    required this.onPlay,
+    required this.onRestart,
+    this.shrinkWrap = false,
+    this.horizontalPadding = 20,
+  });
+
+  final List<SeriesEpisode> episodes;
+  final Map<int, PlaybackProgress> episodeProgress;
+  final ValueChanged<SeriesEpisode> onPlay;
+  final ValueChanged<SeriesEpisode> onRestart;
+  final bool shrinkWrap;
+  final double horizontalPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final grouped = <int, List<SeriesEpisode>>{};
+    for (final episode in episodes) {
+      final season = episode.season > 0 ? episode.season : 1;
+      grouped.putIfAbsent(season, () => []).add(episode);
+    }
+    final seasons = grouped.keys.toList()..sort();
+    for (final season in seasons) {
+      grouped[season]!.sort((a, b) {
+        final left = a.episode > 0 ? a.episode : a.id;
+        final right = b.episode > 0 ? b.episode : b.id;
+        return left.compareTo(right);
+      });
+    }
+    return ListView(
+      shrinkWrap: shrinkWrap,
+      physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        0,
+        horizontalPadding,
+        20,
+      ),
+      children: [
+        for (final season in seasons) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            child: Text(
+              'Stagione $season',
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+          for (final episode in grouped[season]!)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _EpisodeTile(
+                episode: episode,
+                progress: episodeProgress[episode.id],
+                onPlay: onPlay,
+                onRestart: onRestart,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _EpisodeBadge extends StatelessWidget {
+  const _EpisodeBadge({required this.season, required this.episode});
+
+  final int season;
+  final int episode;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 48,
+      height: 48,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: LelegColors.surface3,
+          shape: BoxShape.circle,
+          border: Border.all(color: LelegColors.line),
+        ),
+        child: Center(
+          child: episode > 0
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'S${season.toString().padLeft(2, '0')}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        height: 1.05,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                    Text(
+                      'E${episode.toString().padLeft(2, '0')}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        height: 1.05,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(
+                  'S${season.toString().padLeft(2, '0')}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EpisodeTile extends StatelessWidget {
+  const _EpisodeTile({
+    required this.episode,
+    required this.onPlay,
+    required this.onRestart,
+    this.progress,
+  });
+
+  final SeriesEpisode episode;
+  final ValueChanged<SeriesEpisode> onPlay;
+  final ValueChanged<SeriesEpisode> onRestart;
+  final PlaybackProgress? progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final season = episode.season > 0 ? episode.season : 1;
+    final episodeNum = episode.episode > 0 ? episode.episode : 0;
+    final watched = progress != null && progress!.fraction > 0;
+    final canResume = progress?.canResume == true;
+    final progressLabel = progress == null
+        ? ''
+        : progress!.isCompleted
+        ? 'Visto'
+        : '${(progress!.fraction * 100).round()}%';
     return Material(
       color: LelegColors.surface,
       borderRadius: BorderRadius.circular(14),
       child: _RemoteActivate(
         onActivate: () => onPlay(episode),
-        child: ListTile(
-          leading: CircleAvatar(
-            backgroundColor: LelegColors.surface3,
-            child: Text(
-              code.isEmpty ? 'EP' : code,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  _EpisodeBadge(season: season, episode: episodeNum),
+                  if (progress?.isCompleted == true)
+                    const Positioned(
+                      right: -2,
+                      bottom: -2,
+                      child: Icon(
+                        Icons.check_circle,
+                        color: LelegColors.accent,
+                        size: 16,
+                      ),
+                    ),
+                ],
+              ),
+              title: Text(
+                episode.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                [
+                  if (episode.duration.isNotEmpty) episode.duration,
+                  episode.containerExtension.toUpperCase(),
+                  if (progressLabel.isNotEmpty) progressLabel,
+                ].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: LelegColors.muted),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (canResume)
+                    IconButton(
+                      tooltip: 'Ricomincia',
+                      onPressed: () => onRestart(episode),
+                      icon: const Icon(Icons.restart_alt),
+                    ),
+                  IconButton.filledTonal(
+                    tooltip: canResume ? 'Riprendi' : 'Riproduci',
+                    onPressed: () => onPlay(episode),
+                    icon: Icon(canResume ? Icons.play_circle_outline : Icons.play_arrow),
+                  ),
+                ],
+              ),
+              onTap: () => onPlay(episode),
             ),
-          ),
-          title: Text(
-            episode.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-          subtitle: Text(
-            episode.duration.isEmpty
-                ? episode.containerExtension.toUpperCase()
-                : '${episode.duration} · ${episode.containerExtension.toUpperCase()}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: LelegColors.muted),
-          ),
-          trailing: IconButton.filledTonal(
-            onPressed: () => onPlay(episode),
-            icon: const Icon(Icons.play_arrow),
-          ),
-          onTap: () => onPlay(episode),
+            if (watched && progress!.isCompleted != true)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    minHeight: 4,
+                    value: progress!.fraction,
+                    backgroundColor: LelegColors.line,
+                    color: LelegColors.accent,
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
