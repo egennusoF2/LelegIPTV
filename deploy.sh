@@ -109,6 +109,7 @@ fi
 echo ""
 echo -e "${YELLOW}🚀 Avvio container...${NC}"
 $DOCKER_COMPOSE_CMD up -d
+$DOCKER_COMPOSE_CMD restart web
 
 # firewalld Oracle Linux: apri HTTP (Security List Oracle non basta)
 if command -v firewall-cmd &>/dev/null && $SUDO_CMD systemctl is-active --quiet firewalld 2>/dev/null; then

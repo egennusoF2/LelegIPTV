@@ -12,6 +12,41 @@
         }
     }
 
+    # Short direct links for Downloader / Fire TV (no redirect, no SPA fallback, no compression)
+    handle /dl/tv.apk {
+        root * /usr/share/caddy/downloads/current
+        rewrite * /LelegIPTV-android-tv-release.apk
+        header Content-Type "application/vnd.android.package-archive"
+        header Content-Disposition "attachment; filename=LelegIPTV-android-tv-release.apk"
+        header Cache-Control "public, max-age=3600"
+        file_server
+    }
+
+    handle /dl/mobile.apk {
+        root * /usr/share/caddy/downloads/current
+        rewrite * /LelegIPTV-android-universal-release.apk
+        header Content-Type "application/vnd.android.package-archive"
+        header Content-Disposition "attachment; filename=LelegIPTV-android-universal-release.apk"
+        header Cache-Control "public, max-age=3600"
+        file_server
+    }
+
+    handle /dl/tizen.tpk {
+        root * /usr/share/caddy/downloads/current
+        rewrite * /LelegIPTV-tizen-tv-release.tpk
+        header Content-Type "application/vnd.android.package-archive"
+        header Content-Disposition "attachment; filename=LelegIPTV-tizen-tv-release.tpk"
+        header Cache-Control "public, max-age=3600"
+        file_server
+    }
+
+    # Installable artifacts: never fall back to index.html, never gzip large binaries
+    handle /downloads/* {
+        header Content-Disposition "attachment"
+        header Cache-Control "public, max-age=3600"
+        file_server
+    }
+
     handle {
         encode zstd gzip
 
@@ -19,6 +54,7 @@
         header @static Cache-Control "public, max-age=2592000, immutable"
         header /manifest.webmanifest Cache-Control "no-cache"
         header /sw.js Cache-Control "no-cache"
+        header /index.html Cache-Control "no-cache, no-store, must-revalidate"
 
         try_files {path} {path}/ /index.html
         file_server

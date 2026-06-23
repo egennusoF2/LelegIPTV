@@ -4,6 +4,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+import java.util.Base64
+
 android {
     namespace = "com.lelegiptv.leleg_iptv"
     compileSdk = flutter.compileSdkVersion
@@ -12,6 +14,25 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    flavorDimensions += "device"
+    productFlavors {
+        create("mobile") {
+            dimension = "device"
+            isDefault = true
+            buildConfigField("boolean", "LELEG_TV_FLAVOR", "false")
+            manifestPlaceholders["lelegTvFlavor"] = "false"
+        }
+        create("tv") {
+            dimension = "device"
+            buildConfigField("boolean", "LELEG_TV_FLAVOR", "true")
+            manifestPlaceholders["lelegTvFlavor"] = "true"
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     defaultConfig {
@@ -42,4 +63,23 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+// Garantisce LELEG_ANDROID_TV=true su ogni build flavor tv (anche senza --dart-define CLI).
+val lelegTvDartDefine =
+    Base64.getEncoder()
+        .encodeToString("LELEG_ANDROID_TV=true".toByteArray(Charsets.UTF_8))
+
+val requestedTvBuild =
+    gradle.startParameter.taskNames.any { task ->
+        task.contains("Tv", ignoreCase = true) || task.contains("tv", ignoreCase = false)
+    }
+
+if (requestedTvBuild) {
+    val existing = project.findProperty("dart-defines")?.toString().orEmpty()
+    if (existing.contains(lelegTvDartDefine).not()) {
+        val merged =
+            if (existing.isEmpty()) lelegTvDartDefine else "$existing,$lelegTvDartDefine"
+        project.extensions.extraProperties.set("dart-defines", merged)
+    }
 }

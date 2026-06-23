@@ -20,6 +20,39 @@ const MethodChannel _storageChannel = MethodChannel(
   'com.lelegiptv.native/storage',
 );
 
+const bool kAndroidTvBuild = bool.fromEnvironment('LELEG_ANDROID_TV');
+
+/// True on Tizen, Android TV flavor, or Android TV hardware at runtime.
+bool lelegTvShellActive = kAndroidTvBuild;
+
+Future<bool> _resolveAndroidTvShell() async {
+  if (kAndroidTvBuild || isTizenRuntime) {
+    debugPrint('[leleg-tv] shell=compile-time (kAndroidTvBuild=$kAndroidTvBuild)');
+    return true;
+  }
+  if (!Platform.isAndroid) return false;
+  for (var attempt = 0; attempt < 12; attempt++) {
+    try {
+      final tvFlavor = await _storageChannel.invokeMethod<bool>('isTvFlavor');
+      if (tvFlavor == true) {
+        debugPrint('[leleg-tv] shell=isTvFlavor attempt=$attempt');
+        return true;
+      }
+      final isTv = await _storageChannel.invokeMethod<bool>('isTelevision');
+      if (isTv == true) {
+        debugPrint('[leleg-tv] shell=isTelevision attempt=$attempt');
+        return true;
+      }
+      debugPrint('[leleg-tv] shell=miss attempt=$attempt tvFlavor=$tvFlavor isTv=$isTv');
+    } catch (error) {
+      debugPrint('[leleg-tv] shell=channel-error attempt=$attempt $error');
+    }
+    await Future<void>.delayed(Duration(milliseconds: 40 * (attempt + 1)));
+  }
+  debugPrint('[leleg-tv] shell=failed after retries');
+  return false;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isMacOS || Platform.isWindows) {
@@ -28,7 +61,41 @@ Future<void> main() async {
   if (!isTizenRuntime) {
     MediaKit.ensureInitialized();
   }
-  runApp(const LelegIptvNativeApp());
+  runApp(const _LelegBootstrapApp());
+}
+
+class _LelegBootstrapApp extends StatefulWidget {
+  const _LelegBootstrapApp();
+
+  @override
+  State<_LelegBootstrapApp> createState() => _LelegBootstrapAppState();
+}
+
+class _LelegBootstrapAppState extends State<_LelegBootstrapApp> {
+  late final Future<bool> _androidTvFuture = _resolveAndroidTvShell();
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _androidTvFuture,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const MaterialApp(
+            debugShowCheckedModeBanner: false,
+            home: Scaffold(
+              backgroundColor: LelegColors.bg,
+              body: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+        final initialAndroidTv = snapshot.data!;
+        if (initialAndroidTv) {
+          lelegTvShellActive = true;
+        }
+        return LelegIptvNativeApp(initialAndroidTv: initialAndroidTv);
+      },
+    );
+  }
 }
 
 bool get isTizenRuntime {
@@ -78,6 +145,7 @@ List<String> _vodPlayUrls(XtreamProfile profile, VodMovie movie) {
 }
 
 bool _useCompactAdaptiveLayout(Size size, {double phoneShortestSide = 700}) {
+  if (lelegTvShellActive || isTizenRuntime) return false;
   return size.shortestSide < phoneShortestSide;
 }
 
@@ -94,7 +162,9 @@ bool _useCompactAdaptiveConstraints(
 }
 
 class LelegIptvNativeApp extends StatelessWidget {
-  const LelegIptvNativeApp({super.key});
+  const LelegIptvNativeApp({super.key, this.initialAndroidTv = false});
+
+  final bool initialAndroidTv;
 
   @override
   Widget build(BuildContext context) {
@@ -137,7 +207,7 @@ class LelegIptvNativeApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const LelegNativeShell(),
+      home: LelegNativeShell(initialAndroidTv: initialAndroidTv),
     );
   }
 }
@@ -152,6 +222,66 @@ class LelegColors {
   static const fg = Color(0xFFF4F8FB);
   static const muted = Color(0xFF9AA7B1);
   static const accent = Color(0xFF45C7F1);
+}
+
+/// Unified sizing and typography for 1080p Android TV.
+class TvUi {
+  static const contentPadding = 32.0;
+  static const rowGap = 12.0;
+  static const cardWidth = 158.0;
+  static const thumbnailWidth = 158.0;
+  static const navHeight = 46.0;
+  static const liveCategoryWidth = 158.0;
+  static const liveChannelWidth = 228.0;
+  static const browseHeroFraction = 0.48;
+  static const seriesHeroFraction = 0.28;
+
+  static const eyebrow = 11.0;
+  static const heroTitle = 22.0;
+  static const sectionTitle = 14.5;
+  static const body = 13.0;
+  static const caption = 11.0;
+  static const navLabel = 13.0;
+  static const brandLabel = 14.0;
+  static const brandIcon = 24.0;
+
+  static double font(double size) => size;
+
+  static double heroHeight(BuildContext context) {
+    final height = MediaQuery.sizeOf(context).height;
+    return (height * 0.34).clamp(230.0, 310.0);
+  }
+
+  static bool isActive(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_TvUiScope>() != null;
+}
+
+bool _epgIsLiveNow(EpgProgramme programme) {
+  final now = DateTime.now();
+  final start = programme.start;
+  final end = programme.end;
+  return start != null &&
+      end != null &&
+      !start.isAfter(now) &&
+      end.isAfter(now);
+}
+
+int _epgLiveOrNextIndex(List<EpgProgramme> programmes) {
+  if (programmes.isEmpty) return 0;
+  final liveIndex = programmes.indexWhere(_epgIsLiveNow);
+  if (liveIndex >= 0) return liveIndex;
+  final now = DateTime.now();
+  final nextIndex = programmes.indexWhere(
+    (programme) => programme.start?.isAfter(now) ?? false,
+  );
+  return nextIndex >= 0 ? nextIndex : programmes.length - 1;
+}
+
+class _TvUiScope extends InheritedWidget {
+  const _TvUiScope({required super.child});
+
+  @override
+  bool updateShouldNotify(covariant InheritedWidget oldWidget) => false;
 }
 
 enum AppSection {
@@ -199,8 +329,60 @@ class PlaybackProgress {
       );
 }
 
+class _LastVodPlay {
+  const _LastVodPlay({
+    required this.type,
+    required this.updatedAt,
+    this.movieId,
+    this.seriesId,
+    this.episodeId,
+  });
+
+  final String type;
+  final int? movieId;
+  final int? seriesId;
+  final int? episodeId;
+  final int updatedAt;
+
+  Map<String, dynamic> toJson() => {
+    'type': type,
+    'movieId': movieId,
+    'seriesId': seriesId,
+    'episodeId': episodeId,
+    't': updatedAt,
+  };
+
+  factory _LastVodPlay.fromJson(Map<String, dynamic> json) => _LastVodPlay(
+    type: json['type']?.toString() ?? '',
+    movieId: int.tryParse(json['movieId']?.toString() ?? ''),
+    seriesId: int.tryParse(json['seriesId']?.toString() ?? ''),
+    episodeId: int.tryParse(json['episodeId']?.toString() ?? ''),
+    updatedAt: int.tryParse(json['t']?.toString() ?? '') ?? 0,
+  );
+}
+
+class TvHomeHeroTarget {
+  const TvHomeHeroTarget({
+    required this.eyebrow,
+    required this.title,
+    required this.imageUrl,
+    required this.actionLabel,
+    required this.onAction,
+    this.progress,
+  });
+
+  final String eyebrow;
+  final String title;
+  final String imageUrl;
+  final String actionLabel;
+  final VoidCallback onAction;
+  final PlaybackProgress? progress;
+}
+
 class LelegNativeShell extends StatefulWidget {
-  const LelegNativeShell({super.key});
+  const LelegNativeShell({super.key, this.initialAndroidTv = false});
+
+  final bool initialAndroidTv;
 
   @override
   State<LelegNativeShell> createState() => _LelegNativeShellState();
@@ -208,15 +390,22 @@ class LelegNativeShell extends StatefulWidget {
 
 class _LelegNativeShellState extends State<LelegNativeShell> {
   static const _profileKey = 'leleg.native.profile';
+  static const _lastMovieIdKey = 'leleg.tv.last_movie_id';
+  static const _lastSeriesIdKey = 'leleg.tv.last_series_id';
+  static const _recentLiveChannelsPrefix = 'leleg.tv.recent_live.';
+  static const _recentMoviesHistoryPrefix = 'leleg.tv.recent_movies.';
+  static const _recentSeriesHistoryPrefix = 'leleg.tv.recent_series.';
+  static const _movieProgressPrefix = 'leleg.tv.movie_progress.';
+  static const _episodeProgressPrefix = 'leleg.tv.episode_progress.';
+  static const _lastVodPlayPrefix = 'leleg.tv.last_vod.';
+  static const _recentHistoryMax = 16;
   static const _profilesKey = 'leleg.native.profiles';
   static const _activeProfileIdKey = 'leleg.native.active_profile_id';
   static const _favoriteMoviesPrefix = 'leleg.native.favorite_movies.';
   static const _watchLaterMoviesPrefix = 'leleg.native.watch_later_movies.';
-  static const _movieProgressPrefix = 'leleg.tv.movie_progress.';
-  static const _episodeProgressPrefix = 'leleg.tv.episode_progress.';
   static const _catalogCacheTtl = Duration(days: 1);
   static const _catalogCacheVersion = 3;
-  static const _remoteSections = [
+  static const _defaultRemoteSections = [
     AppSection.home,
     AppSection.live,
     AppSection.movies,
@@ -238,6 +427,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   late final TextEditingController _passController;
   late final TextEditingController _searchController;
   late final FocusNode _shellFocusNode;
+  late final FocusNode _searchFocusNode;
   late final FocusScopeNode _contentFocusScopeNode;
   late final FocusNode _settingsTitleFocusNode;
   late final FocusNode _settingsServerFocusNode;
@@ -263,12 +453,27 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   List<VodMovie> _movies = const [];
   VodMovie? _selectedMovie;
   String _selectedMovieDescription = '';
+  String _browseHeroDescription = '';
+  bool _browseHeroLoading = false;
+  bool _browseHeroActionSelected = false;
+  int? _browseHeroItemId;
+  final Map<int, String> _movieDescriptionCache = {};
+  final Map<int, String> _seriesDescriptionCache = {};
   List<SeriesShow> _series = const [];
   SeriesShow? _selectedSeries;
   String _selectedSeriesDescription = '';
   List<SeriesEpisode> _seriesEpisodes = const [];
   final Set<int> _favoriteMovieIds = {};
   final Set<int> _watchLaterMovieIds = {};
+  List<int> _recentLiveChannelIds = const [];
+  List<int> _recentMovieHistoryIds = const [];
+  List<int> _recentSeriesHistoryIds = const [];
+  Map<int, PlaybackProgress> _movieProgress = const {};
+  Map<int, PlaybackProgress> _episodeProgress = const {};
+  _LastVodPlay? _lastVodPlay;
+  int? _activeMovieId;
+  int? _activeEpisodeId;
+  Timer? _playbackProgressTimer;
   final Map<int, DownloadTask> _downloads = {};
   String _liveCategoryId = '';
   String _movieCategoryId = '';
@@ -283,11 +488,63 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   bool _seriesDetailLoading = false;
   bool _epgLoading = false;
   bool _playerFocusMode = false;
-  Map<int, PlaybackProgress> _movieProgress = const {};
-  Map<int, PlaybackProgress> _episodeProgress = const {};
-  int? _activeMovieId;
-  int? _activeEpisodeId;
-  Timer? _playbackProgressTimer;
+  bool _isAndroidTv = false;
+  bool _livePlayerActive = false;
+  bool _fullscreenOverlayVisible = true;
+  bool _remoteSearchSelected = false;  // campo di testo aperto
+  bool _remoteSearchIconFocused = false; // solo l'icona cerca è evidenziata
+  bool _tvSearchEditing = false;
+  bool _remotePassthroughActive = false;
+  int _epgProgrammeIndex = 0;
+  int _vodToolbarIndex = -1;
+  Timer? _fullscreenOverlayTimer;
+
+  static const _vodToolbarLabels = [
+    'Play/Pausa',
+    '-10 secondi',
+    '+10 secondi',
+    'Audio',
+    'Sottotitoli',
+    'Esci',
+  ];
+
+  List<AppSection> get _remoteSections => _isAndroidTv
+      ? const [
+          AppSection.home,
+          AppSection.live,
+          AppSection.movies,
+          AppSection.series,
+          AppSection.favorites,
+        ]
+      : _defaultRemoteSections;
+
+  List<AppSection> get _homeTargets => _isAndroidTv
+      ? const <AppSection>[]
+      : [
+          AppSection.live,
+          AppSection.movies,
+          AppSection.series,
+          AppSection.favorites,
+          AppSection.watchLater,
+          AppSection.epg,
+          AppSection.downloads,
+          AppSection.settings,
+        ];
+
+  String _sectionLabel(AppSection section) {
+    return switch (section) {
+      AppSection.home => 'Home',
+      AppSection.live => 'Live TV',
+      AppSection.movies => 'Film',
+      AppSection.series => 'Serie',
+      AppSection.favorites => 'Preferiti',
+      AppSection.watchLater => 'Da vedere',
+      AppSection.recentlyAdded => 'Aggiunti di recente',
+      AppSection.epg => 'Guida TV',
+      AppSection.downloads => 'Download',
+      AppSection.settings => 'Impostazioni',
+    };
+  }
 
   bool get _useAppleVideoBackend => false;
 
@@ -303,6 +560,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   bool get _isPhoneMobileDevice {
     if (!(Platform.isAndroid || Platform.isIOS)) return false;
+    if (_isAndroidTv) return false;
     final view = _activeFlutterView;
     final logicalSize = view.physicalSize / view.devicePixelRatio;
     return logicalSize.shortestSide < 700;
@@ -355,6 +613,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     _titleController.addListener(_applyPlaylistPresetFromTitle);
     _searchController = TextEditingController();
     _shellFocusNode = FocusNode(debugLabel: 'Leleg shell keyboard focus');
+    _searchFocusNode = FocusNode(debugLabel: 'Leleg sidebar search focus');
     _contentFocusScopeNode = FocusScopeNode(
       debugLabel: 'Leleg content keyboard focus',
     );
@@ -377,22 +636,69 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
             }),
           ];
     _storageChannel.setMethodCallHandler(_handleNativeStorageCall);
-    if (Platform.isAndroid) {
-      unawaited(_initAndroidTelevisionMode());
-    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (Platform.isAndroid || Platform.isIOS) {
         unawaited(_applyMobileOrientationPolicy());
       }
     });
+    _isAndroidTv = widget.initialAndroidTv || kAndroidTvBuild;
+    if (_isAndroidTv) {
+      lelegTvShellActive = true;
+      unawaited(_applyAndroidTvChrome());
+    } else if (Platform.isAndroid) {
+      unawaited(_bootstrapAndroidShell());
+    }
+    FocusManager.instance.addListener(_onGlobalFocusChanged);
     _restoreState();
+  }
+
+  Future<void> _bootstrapAndroidShell() async {
+    try {
+      final tvFlavor = await _storageChannel.invokeMethod<bool>('isTvFlavor');
+      if (tvFlavor == true) {
+        await _applyAndroidTvChrome();
+        return;
+      }
+      await _restoreAndroidFormFactor();
+    } catch (_) {
+      await _restoreAndroidFormFactor();
+    }
+  }
+
+  void _onGlobalFocusChanged() {
+    if (!_isAndroidTv || !mounted) return;
+    unawaited(_syncRemotePassthrough());
+  }
+
+  Future<void> _applyAndroidTvChrome() async {
+    if (!mounted) return;
+    setState(() => _isAndroidTv = true);
+    lelegTvShellActive = true;
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await _syncRemotePassthrough();
+  }
+
+  Future<void> _restoreAndroidFormFactor() async {
+    try {
+      final isTv = await _storageChannel.invokeMethod<bool>('isTelevision');
+      if (!mounted || isTv != true) return;
+      await _applyAndroidTvChrome();
+    } catch (_) {
+      // Keep the normal adaptive fallback if the native channel is unavailable.
+    }
   }
 
   @override
   void dispose() {
+    FocusManager.instance.removeListener(_onGlobalFocusChanged);
+    _storageChannel.setMethodCallHandler(null);
+    _fullscreenOverlayTimer?.cancel();
     _playbackProgressTimer?.cancel();
     unawaited(_flushPlaybackProgress());
-    _storageChannel.setMethodCallHandler(null);
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
@@ -405,6 +711,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     _passController.dispose();
     _searchController.dispose();
     _shellFocusNode.dispose();
+    _searchFocusNode.dispose();
     _contentFocusScopeNode.dispose();
     _settingsTitleFocusNode.dispose();
     _settingsServerFocusNode.dispose();
@@ -474,24 +781,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
-  Future<void> _initAndroidTelevisionMode() async {
-    try {
-      final isTv = await _storageChannel.invokeMethod<bool>('isTelevision');
-      if (!mounted || isTv != true) return;
-      setState(() => _remoteMenuMode = true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _shellFocusNode.requestFocus();
-      });
-    } catch (_) {}
-  }
-
   Future<void> _handleNativeStorageCall(MethodCall call) async {
     if (call.method == 'remoteKey') {
-      final args = Map<Object?, Object?>.from(call.arguments as Map);
-      final key = args['key']?.toString();
-      if (key != null) {
-        _handleAndroidRemoteKey(key);
-      }
+      final args = call.arguments is Map
+          ? Map<Object?, Object?>.from(call.arguments as Map)
+          : const <Object?, Object?>{};
+      final key = args['key']?.toString() ?? '';
+      _handleNativeRemoteKey(key);
       return;
     }
     if (call.method != 'downloadProgress') return;
@@ -509,6 +805,161 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
           ? 'Download in preparazione: ${current.movie.name}'
           : 'Download ${(progress * 100).clamp(0, 100).toStringAsFixed(0)}%: ${current.movie.name}';
     });
+  }
+
+  void _handleNativeRemoteKey(String key) {
+    if (!mounted) return;
+    if (_remotePassthroughActive || _tvSearchEditing || _isEditingText) return;
+    final logicalKey = switch (key) {
+      'up' => LogicalKeyboardKey.arrowUp,
+      'down' => LogicalKeyboardKey.arrowDown,
+      'left' => LogicalKeyboardKey.arrowLeft,
+      'right' => LogicalKeyboardKey.arrowRight,
+      'select' => LogicalKeyboardKey.select,
+      'back' => LogicalKeyboardKey.goBack,
+      _ => null,
+    };
+    if (logicalKey == null) return;
+    _traceTv(
+      'native remote key=$key section=$_section index=$_tvContentIndex '
+      'menuMode=$_remoteMenuMode count=$_tvContentItemCount',
+    );
+    if (_playerFocusMode) {
+      _handleFullscreenPlayerKey(logicalKey);
+      return;
+    }
+    if (_remoteMenuMode) {
+      _handleRemoteMenuLogicalKey(logicalKey);
+    } else {
+      _handleContentKey(logicalKey);
+    }
+  }
+
+  KeyEventResult _handleRemoteMenuLogicalKey(LogicalKeyboardKey key) {
+    // Campo di testo aperto: intercetta tutto tranne escape/back che chiude
+    if (_remoteSearchSelected) {
+      if (key == LogicalKeyboardKey.arrowDown ||
+          key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.browserBack) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        _shellFocusNode.requestFocus();
+        unawaited(_exitTvSearchEditing());
+        setState(() {
+          _remoteSearchSelected = false;
+          _remoteSearchIconFocused = false;
+          _status = 'Menu: ${_sectionLabel(_remoteSection)}';
+        });
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+    // Icona cerca evidenziata (ma campo non ancora aperto)
+    if (_remoteSearchIconFocused) {
+      if (key == LogicalKeyboardKey.select ||
+          key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.numpadEnter) {
+        unawaited(_enterTvSearchEditing());
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
+        // → dai cerca → impostazioni
+        unawaited(_changeSection(AppSection.settings));
+        setState(() {
+          _remoteSearchIconFocused = false;
+          _status = 'Impostazioni';
+        });
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        // ← da cerca → torna all'ultimo item menu
+        setState(() {
+          _remoteSearchIconFocused = false;
+          _remoteSection = _remoteSections.last;
+          _status = 'Menu: ${_sectionLabel(_remoteSection)}';
+        });
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowDown ||
+          key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.browserBack) {
+        setState(() {
+          _remoteSearchIconFocused = false;
+          _status = 'Menu: ${_sectionLabel(_remoteSection)}';
+        });
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
+    if (_isAndroidTv) {
+      if (key == LogicalKeyboardKey.arrowUp) {
+        if (_remoteSection == _remoteSections.first) {
+          setState(() {
+            _remoteSearchSelected = true;
+            _status = 'Cerca selezionata: premi OK per digitare.';
+          });
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        unawaited(_changeSection(_remoteSection));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _moveRemoteSelection(-1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
+        final atLast = _remoteSection == _remoteSections.last;
+        if (atLast) {
+          // Ultimo item menu → evidenzia l'icona cerca (NON apre il campo)
+          setState(() {
+            _remoteSearchIconFocused = true;
+            _status = 'Cerca — premi OK per digitare';
+          });
+        } else {
+          _moveRemoteSelection(1);
+        }
+        return KeyEventResult.handled;
+      }
+    } else {
+      if (key == LogicalKeyboardKey.arrowUp) {
+        _moveRemoteSelection(-1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        _moveRemoteSelection(1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _moveRemoteSelection(-1);
+        return KeyEventResult.handled;
+      }
+    }
+    if (key == LogicalKeyboardKey.arrowRight && !_isAndroidTv) {
+      unawaited(_changeSection(_remoteSection));
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.browserBack) {
+      if (_playerFocusMode) {
+        _togglePlayerFocusMode();
+      } else if (_section != AppSection.home) {
+        unawaited(_changeSection(AppSection.home));
+      }
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space) {
+      unawaited(_changeSection(_remoteSection));
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _restoreState() async {
@@ -544,6 +995,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       });
       await _loadUserLists(profile);
       await _loadCatalog(profile: profile);
+      unawaited(_syncRemotePassthrough());
     } catch (error) {
       if (mounted) {
         setState(() => _status = 'Profilo salvato non valido: $error');
@@ -632,8 +1084,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     setState(() {
       _profiles = profiles;
       _profile = profile;
+      _titleController.clear();
+      _serverController.clear();
+      _userController.clear();
+      _passController.clear();
     });
-    _resetSettingsForm();
     await _loadUserLists(profile);
     await _loadCatalog(profile: profile, forceRefresh: forceRefresh);
   }
@@ -642,10 +1097,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_activeProfileIdKey, profile.id);
     await prefs.setString(_profileKey, jsonEncode(profile.toJson()));
-    _titleController.text = profile.title;
-    _serverController.text = profile.serverUrl;
-    _userController.text = profile.username;
-    _passController.text = profile.password;
+    _resetSettingsForm();
     setState(() {
       _profile = profile;
       _resetProfileScopedState();
@@ -680,18 +1132,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 
   Future<void> _changeSection(AppSection section) async {
+    if (section == AppSection.settings) {
+      _resetSettingsForm();
+    }
     if (section == _section) {
       _enterContentMode();
-      if (section == AppSection.settings) {
-        _resetSettingsForm();
-      }
       if (section == AppSection.epg) {
         unawaited(_loadEpgPage(force: true));
       }
       return;
-    }
-    if (section == AppSection.settings) {
-      _resetSettingsForm();
     }
     await _endPlaybackTracking();
     final mediaPlayer = _player;
@@ -714,6 +1163,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _tvContentIndex = 0;
       _selectedMovie = null;
       _selectedMovieDescription = '';
+      _browseHeroDescription = '';
+      _browseHeroLoading = false;
+      _browseHeroItemId = null;
+      _browseHeroActionSelected = false;
       if (section != AppSection.series) {
         _selectedSeries = null;
         _selectedSeriesDescription = '';
@@ -724,21 +1177,594 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (section == AppSection.epg) {
       unawaited(_loadEpgPage());
     }
+    if (section == AppSection.live) {
+      _previewLiveChannelAt(0);
+    } else if (section == AppSection.epg) {
+      _previewEpgChannelAt(0);
+    } else if (_isAndroidTv && section == AppSection.movies) {
+      unawaited(_enterMovieBrowse());
+    } else if (_isAndroidTv && section == AppSection.series) {
+      unawaited(_enterSeriesBrowse());
+    } else if (_isAndroidTv && section == AppSection.favorites) {
+      unawaited(_enterMovieBrowse());
+    }
     _focusFirstContentControl();
+    unawaited(_syncRemotePassthrough());
+  }
+
+  Future<void> _saveLastMovieId(int id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastMovieIdKey, id);
+  }
+
+  Future<void> _saveLastSeriesId(int id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_lastSeriesIdKey, id);
+  }
+
+  String _recentLiveChannelsKey(XtreamProfile profile) =>
+      '$_recentLiveChannelsPrefix${profile.id}';
+
+  String _recentMoviesHistoryKey(XtreamProfile profile) =>
+      '$_recentMoviesHistoryPrefix${profile.id}';
+
+  String _recentSeriesHistoryKey(XtreamProfile profile) =>
+      '$_recentSeriesHistoryPrefix${profile.id}';
+
+  List<int> _readRecentIds(SharedPreferences prefs, String key) {
+    return prefs
+            .getStringList(key)
+            ?.map(int.tryParse)
+            .whereType<int>()
+            .take(_recentHistoryMax)
+            .toList() ??
+        const [];
+  }
+
+  Future<void> _persistRecentIds(String key, List<int> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      key,
+      ids.map((id) => id.toString()).toList(),
+    );
+  }
+
+  List<int> _dedupeRecentId(List<int> current, int id) {
+    return [id, ...current.where((item) => item != id)]
+        .take(_recentHistoryMax)
+        .toList();
+  }
+
+  Future<void> _recordRecentLiveChannel(int id) async {
+    final profile = _profile;
+    if (profile == null) return;
+    final next = _dedupeRecentId(_recentLiveChannelIds, id);
+    if (!mounted) return;
+    setState(() => _recentLiveChannelIds = next);
+    await _persistRecentIds(_recentLiveChannelsKey(profile), next);
+  }
+
+  Future<void> _recordRecentMovie(int id) async {
+    final profile = _profile;
+    if (profile == null) return;
+    final next = _dedupeRecentId(_recentMovieHistoryIds, id);
+    if (!mounted) return;
+    setState(() => _recentMovieHistoryIds = next);
+    await _persistRecentIds(_recentMoviesHistoryKey(profile), next);
+  }
+
+  Future<void> _recordRecentSeries(int id) async {
+    final profile = _profile;
+    if (profile == null) return;
+    final next = _dedupeRecentId(_recentSeriesHistoryIds, id);
+    if (!mounted) return;
+    setState(() => _recentSeriesHistoryIds = next);
+    await _persistRecentIds(_recentSeriesHistoryKey(profile), next);
+  }
+
+  String _movieProgressKey(XtreamProfile profile) =>
+      '$_movieProgressPrefix${profile.id}';
+
+  String _episodeProgressKey(XtreamProfile profile) =>
+      '$_episodeProgressPrefix${profile.id}';
+
+  String _lastVodPlayKey(XtreamProfile profile) =>
+      '$_lastVodPlayPrefix${profile.id}';
+
+  Map<int, PlaybackProgress> _readProgressMap(
+    SharedPreferences prefs,
+    String key,
+  ) {
+    final raw = prefs.getString(key);
+    if (raw == null || raw.trim().isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      final result = <int, PlaybackProgress>{};
+      for (final entry in decoded.entries) {
+        final id = int.tryParse(entry.key.toString());
+        if (id == null || entry.value is! Map) continue;
+        result[id] = PlaybackProgress.fromJson(
+          (entry.value as Map).map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+        );
+      }
+      return result;
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  Future<void> _persistProgressMap(
+    String key,
+    Map<int, PlaybackProgress> values,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = values.map(
+      (id, progress) => MapEntry(id.toString(), progress.toJson()),
+    );
+    await prefs.setString(key, jsonEncode(encoded));
+  }
+
+  _LastVodPlay? _readLastVodPlay(SharedPreferences prefs, String key) {
+    final raw = prefs.getString(key);
+    if (raw == null || raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return _LastVodPlay.fromJson(
+        decoded.map((key, value) => MapEntry(key.toString(), value)),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _persistLastVodPlay(_LastVodPlay value) async {
+    final profile = _profile;
+    if (profile == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastVodPlayKey(profile), jsonEncode(value.toJson()));
+  }
+
+  bool _movieCanResume(int id) => _movieProgress[id]?.canResume ?? false;
+
+  int get _movieDetailTvActionCount =>
+      _selectedMovie != null && _isAndroidTv && _movieCanResume(_selectedMovie!.id)
+      ? 4
+      : 3;
+
+  List<String> get _movieDetailTvActionLabels {
+    if (_selectedMovie != null && _movieCanResume(_selectedMovie!.id)) {
+      return const ['Riprendi', 'Ricomincia', 'Preferiti', 'Indietro'];
+    }
+    return const ['Riproduci', 'Preferiti', 'Indietro'];
+  }
+
+  Future<void> _setLastVodMovie(int movieId) async {
+    final value = _LastVodPlay(
+      type: 'movie',
+      movieId: movieId,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (!mounted) return;
+    setState(() => _lastVodPlay = value);
+    await _persistLastVodPlay(value);
+  }
+
+  Future<void> _setLastVodEpisode({
+    required int seriesId,
+    required int episodeId,
+  }) async {
+    final value = _LastVodPlay(
+      type: 'episode',
+      seriesId: seriesId,
+      episodeId: episodeId,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (!mounted) return;
+    setState(() => _lastVodPlay = value);
+    await _persistLastVodPlay(value);
+  }
+
+  Future<void> _saveMovieProgress(
+    XtreamProfile profile,
+    int movieId,
+    PlaybackProgress progress,
+  ) async {
+    final next = Map<int, PlaybackProgress>.from(_movieProgress)
+      ..[movieId] = progress;
+    if (!mounted) return;
+    setState(() => _movieProgress = next);
+    await _persistProgressMap(_movieProgressKey(profile), next);
+  }
+
+  Future<void> _saveEpisodeProgress(
+    XtreamProfile profile,
+    int episodeId,
+    PlaybackProgress progress,
+  ) async {
+    final next = Map<int, PlaybackProgress>.from(_episodeProgress)
+      ..[episodeId] = progress;
+    if (!mounted) return;
+    setState(() => _episodeProgress = next);
+    await _persistProgressMap(_episodeProgressKey(profile), next);
+  }
+
+  int _currentPlaybackPositionMs() {
+    final mediaPlayer = _player;
+    if (mediaPlayer != null) {
+      return mediaPlayer.state.position.inMilliseconds;
+    }
+    final apple = _appleVideoController?.value;
+    if (apple != null && apple.isInitialized) {
+      return apple.position.inMilliseconds;
+    }
+    final tizen = _tizenVideoController?.value;
+    if (tizen != null && tizen.isInitialized) {
+      return tizen.position.inMilliseconds;
+    }
+    return 0;
+  }
+
+  int _currentPlaybackDurationMs() {
+    final mediaPlayer = _player;
+    if (mediaPlayer != null) {
+      return mediaPlayer.state.duration.inMilliseconds;
+    }
+    final apple = _appleVideoController?.value;
+    if (apple != null && apple.isInitialized) {
+      return apple.duration.inMilliseconds;
+    }
+    final tizen = _tizenVideoController?.value;
+    if (tizen != null && tizen.isInitialized) {
+      return tizen.duration.end.inMilliseconds;
+    }
+    return 0;
+  }
+
+  Future<void> _flushPlaybackProgress() async {
+    final profile = _profile;
+    if (profile == null) return;
+    final durationMs = _currentPlaybackDurationMs();
+    if (durationMs <= 0) return;
+    final positionMs = _currentPlaybackPositionMs().clamp(0, durationMs);
+    final progress = PlaybackProgress(
+      positionMs: positionMs,
+      durationMs: durationMs,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (_activeMovieId != null) {
+      await _saveMovieProgress(profile, _activeMovieId!, progress);
+    }
+    if (_activeEpisodeId != null) {
+      await _saveEpisodeProgress(profile, _activeEpisodeId!, progress);
+    }
+  }
+
+  void _beginPlaybackTracking({int? movieId, int? episodeId}) {
+    _playbackProgressTimer?.cancel();
+    _activeMovieId = movieId;
+    _activeEpisodeId = episodeId;
+    _playbackProgressTimer = Timer.periodic(
+      const Duration(seconds: 12),
+      (_) => unawaited(_flushPlaybackProgress()),
+    );
+  }
+
+  Future<void> _endPlaybackTracking({bool save = true}) async {
+    _playbackProgressTimer?.cancel();
+    _playbackProgressTimer = null;
+    if (save) await _flushPlaybackProgress();
+    _activeMovieId = null;
+    _activeEpisodeId = null;
+  }
+
+  TvHomeHeroTarget? _buildTvHomeHeroTarget() {
+    final last = _lastVodPlay;
+    if (last != null) {
+      if (last.type == 'movie' && last.movieId != null) {
+        final byId = {for (final movie in _movies) movie.id: movie};
+        final movie = byId[last.movieId];
+        if (movie != null) {
+          final progress = _movieProgress[movie.id];
+          return TvHomeHeroTarget(
+            eyebrow: 'CONTINUA A GUARDARE',
+            title: movie.name,
+            imageUrl: movie.logo,
+            actionLabel: progress?.canResume == true ? 'Riprendi' : 'Riproduci',
+            progress: progress,
+            onAction: () => unawaited(_playMovie(movie)),
+          );
+        }
+      }
+      if (last.type == 'episode' && last.seriesId != null) {
+        final byId = {for (final show in _series) show.id: show};
+        final show = byId[last.seriesId];
+        if (show != null) {
+          final episodeId = last.episodeId;
+          final progress =
+              episodeId == null ? null : _episodeProgress[episodeId];
+          return TvHomeHeroTarget(
+            eyebrow: 'CONTINUA A GUARDARE',
+            title: show.name,
+            imageUrl: show.logo,
+            actionLabel:
+                progress?.canResume == true && episodeId != null
+                ? 'Continua'
+                : 'Apri serie',
+            progress: progress,
+            onAction: () {
+              if (progress?.canResume == true && episodeId != null) {
+                unawaited(_continueSeries(show, episodeId: episodeId));
+              } else {
+                unawaited(_changeSection(AppSection.series));
+                unawaited(_openSeries(show));
+              }
+            },
+          );
+        }
+      }
+    }
+    if (_recentMovieHistory.isNotEmpty) {
+      final movie = _recentMovieHistory.first;
+      final progress = _movieProgress[movie.id];
+      return TvHomeHeroTarget(
+        eyebrow: 'CONTINUA A GUARDARE',
+        title: movie.name,
+        imageUrl: movie.logo,
+        actionLabel: progress?.canResume == true ? 'Riprendi' : 'Riproduci',
+        progress: progress,
+        onAction: () => unawaited(_playMovie(movie)),
+      );
+    }
+    if (_recentSeriesHistory.isNotEmpty) {
+      final show = _recentSeriesHistory.first;
+      return TvHomeHeroTarget(
+        eyebrow: 'CONTINUA A GUARDARE',
+        title: show.name,
+        imageUrl: show.logo,
+        actionLabel: 'Apri serie',
+        onAction: () {
+          unawaited(_changeSection(AppSection.series));
+          unawaited(_openSeries(show));
+        },
+      );
+    }
+    return null;
+  }
+
+  Future<void> _continueSeries(
+    SeriesShow show, {
+    required int episodeId,
+  }) async {
+    await _changeSection(AppSection.series);
+    await _openSeries(show);
+    SeriesEpisode? episode;
+    for (final item in _seriesEpisodes) {
+      if (item.id == episodeId) {
+        episode = item;
+        break;
+      }
+    }
+    if (episode != null) {
+      await _playEpisode(episode);
+    }
+  }
+
+  List<LiveChannel> get _recentLiveChannels {
+    final byId = {for (final channel in _liveChannels) channel.id: channel};
+    return _recentLiveChannelIds
+        .map((id) => byId[id])
+        .whereType<LiveChannel>()
+        .toList();
+  }
+
+  List<VodMovie> get _recentMovieHistory {
+    final byId = {for (final movie in _movies) movie.id: movie};
+    return _recentMovieHistoryIds
+        .map((id) => byId[id])
+        .whereType<VodMovie>()
+        .toList();
+  }
+
+  List<SeriesShow> get _recentSeriesHistory {
+    final byId = {for (final show in _series) show.id: show};
+    return _recentSeriesHistoryIds
+        .map((id) => byId[id])
+        .whereType<SeriesShow>()
+        .toList();
+  }
+
+  List<VodMovie> get _currentMovieBrowseList {
+    return switch (_section) {
+      AppSection.favorites => _favoriteMovies,
+      AppSection.movies => _filteredMovies,
+      _ => _filteredMovies,
+    };
+  }
+
+  Future<void> _enterMovieBrowse() async {
+    final movies = _currentMovieBrowseList;
+    if (movies.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final lastId = prefs.getInt(_lastMovieIdKey);
+    var index = 0;
+    if (lastId != null && _section == AppSection.movies) {
+      final found = movies.indexWhere((movie) => movie.id == lastId);
+      if (found >= 0) index = found;
+    }
+    if (!mounted) return;
+    setState(() => _tvContentIndex = index.clamp(0, movies.length - 1));
+    await _previewMovieAt(_tvContentIndex);
+  }
+
+  Future<void> _enterSeriesBrowse() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastId = prefs.getInt(_lastSeriesIdKey);
+    var index = 0;
+    if (lastId != null) {
+      final found = _filteredSeries.indexWhere((show) => show.id == lastId);
+      if (found >= 0) index = found;
+    }
+    if (!mounted) return;
+    setState(() => _tvContentIndex = index);
+    await _previewSeriesAt(index);
+  }
+
+  Future<void> _previewMovieAt(int index) async {
+    final movies = _currentMovieBrowseList;
+    if (movies.isEmpty) return;
+    final movie = movies[index.clamp(0, movies.length - 1)];
+    final cached = _movieDescriptionCache[movie.id];
+    if (cached != null) {
+      setState(() {
+        _browseHeroItemId = movie.id;
+        _browseHeroDescription = cached;
+        _browseHeroLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _browseHeroItemId = movie.id;
+      _browseHeroDescription = '';
+      _browseHeroLoading = true;
+    });
+    final profile = _profile;
+    if (profile == null) {
+      if (mounted) setState(() => _browseHeroLoading = false);
+      return;
+    }
+    try {
+      final description = await XtreamClient(profile).vodDescription(movie);
+      _movieDescriptionCache[movie.id] = description;
+      if (!mounted || _browseHeroItemId != movie.id) return;
+      setState(() {
+        _browseHeroDescription = description;
+        _browseHeroLoading = false;
+      });
+    } catch (_) {
+      if (mounted && _browseHeroItemId == movie.id) {
+        setState(() => _browseHeroLoading = false);
+      }
+    }
+  }
+
+  Future<void> _previewSeriesAt(int index) async {
+    if (_filteredSeries.isEmpty) return;
+    final show = _filteredSeries[index.clamp(0, _filteredSeries.length - 1)];
+    final cached = _seriesDescriptionCache[show.id];
+    if (cached != null) {
+      setState(() {
+        _browseHeroItemId = show.id;
+        _browseHeroDescription = cached;
+        _browseHeroLoading = false;
+      });
+      return;
+    }
+    setState(() {
+      _browseHeroItemId = show.id;
+      _browseHeroDescription = '';
+      _browseHeroLoading = true;
+    });
+    final profile = _profile;
+    if (profile == null) {
+      if (mounted) setState(() => _browseHeroLoading = false);
+      return;
+    }
+    try {
+      final detail = await XtreamClient(profile).seriesDetail(show);
+      _seriesDescriptionCache[show.id] = detail.description;
+      if (!mounted || _browseHeroItemId != show.id) return;
+      setState(() {
+        _browseHeroDescription = detail.description;
+        _browseHeroLoading = false;
+      });
+    } catch (_) {
+      if (mounted && _browseHeroItemId == show.id) {
+        setState(() => _browseHeroLoading = false);
+      }
+    }
+  }
+
+  Future<void> _setRemoteKeyPassthrough(bool enabled) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _storageChannel.invokeMethod('setRemoteKeyPassthrough', {
+        'enabled': enabled,
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _syncRemotePassthrough() async {
+    if (!_isAndroidTv) return;
+    final enabled =
+        _tvSearchEditing || _isEditingText || !_remoteMenuMode;
+    if (enabled == _remotePassthroughActive) return;
+    _remotePassthroughActive = enabled;
+    await _setRemoteKeyPassthrough(enabled);
+  }
+
+  Future<void> _enterTvSearchEditing() async {
+    if (!_isAndroidTv) {
+      _searchFocusNode.requestFocus();
+      setState(() => _status = 'Cerca: inserisci testo e premi invio.');
+      return;
+    }
+    setState(() {
+      _tvSearchEditing = true;
+      _remoteSearchSelected = true;      // apre il campo TextField
+      _remoteSearchIconFocused = false;  // icona non più solo evidenziata
+      _status = 'Cerca: usa la tastiera del telecomando e premi invio.';
+    });
+    await _syncRemotePassthrough();
+    if (!mounted) return;
+    _searchFocusNode.requestFocus();
+  }
+
+  Future<void> _exitTvSearchEditing() async {
+    if (!_tvSearchEditing) return;
+    setState(() => _tvSearchEditing = false);
+    await _syncRemotePassthrough();
+    if (!mounted) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    _shellFocusNode.requestFocus();
   }
 
   void _requestShellFocus() {
+    unawaited(_exitTvSearchEditing());
     setState(() => _remoteMenuMode = true);
     FocusManager.instance.primaryFocus?.unfocus();
     _contentFocusScopeNode.unfocus();
     _shellFocusNode.requestFocus();
+    unawaited(_syncRemotePassthrough());
   }
 
   void _enterContentMode() {
     if (_remoteMenuMode) {
       setState(() => _remoteMenuMode = false);
     }
+    unawaited(_syncRemotePassthrough());
     _focusFirstContentControl();
+  }
+
+  void _handleAndroidBack() {
+    if (_query.trim().isNotEmpty) {
+      _clearSearchAndReturnHome();
+      return;
+    }
+    if (_playerFocusMode) {
+      _togglePlayerFocusMode();
+      return;
+    }
+    if (!_remoteMenuMode) {
+      _requestShellFocus();
+      return;
+    }
+    if (_section != AppSection.home) {
+      unawaited(_changeSection(AppSection.home));
+    }
   }
 
   void _focusFirstContentControl() {
@@ -756,28 +1782,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         context.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
-  void _handleAndroidRemoteKey(String key) {
-    final logicalKey = switch (key) {
-      'up' => LogicalKeyboardKey.arrowUp,
-      'down' => LogicalKeyboardKey.arrowDown,
-      'left' => LogicalKeyboardKey.arrowLeft,
-      'right' => LogicalKeyboardKey.arrowRight,
-      'select' => LogicalKeyboardKey.select,
-      'back' => LogicalKeyboardKey.escape,
-      _ => null,
-    };
-    if (logicalKey == null) return;
-    _handleShellLogicalKey(logicalKey);
-  }
-
   KeyEventResult _handleShellKey(KeyEvent event) {
     if (event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
-    return _handleShellLogicalKey(event.logicalKey);
-  }
-
-  KeyEventResult _handleShellLogicalKey(LogicalKeyboardKey key) {
+    final key = event.logicalKey;
     if (_isEditingText) {
       if (key == LogicalKeyboardKey.escape ||
           key == LogicalKeyboardKey.goBack ||
@@ -788,43 +1797,162 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       }
       return KeyEventResult.ignored;
     }
+    if (_playerFocusMode) {
+      return _handleFullscreenPlayerKey(key);
+    }
     if (!_remoteMenuMode) {
       return _handleContentKey(key);
     }
-    if (key == LogicalKeyboardKey.arrowUp) {
-      _moveRemoteSelection(-1);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowDown) {
-      _moveRemoteSelection(1);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowLeft) {
-      _moveRemoteSelection(-1);
-      return KeyEventResult.handled;
-    }
-    if (key == LogicalKeyboardKey.arrowRight) {
-      unawaited(_changeSection(_remoteSection));
-      return KeyEventResult.handled;
-    }
+    return _handleRemoteMenuLogicalKey(key);
+  }
+
+  KeyEventResult _handleFullscreenPlayerKey(LogicalKeyboardKey key) {
     if (key == LogicalKeyboardKey.escape ||
         key == LogicalKeyboardKey.goBack ||
         key == LogicalKeyboardKey.browserBack) {
-      if (_playerFocusMode) {
-        _togglePlayerFocusMode();
-      } else if (_section != AppSection.home) {
-        unawaited(_changeSection(AppSection.home));
+      _togglePlayerFocusMode();
+      return KeyEventResult.handled;
+    }
+    _revealFullscreenOverlay();
+    if (_livePlayerActive) {
+      if (key == LogicalKeyboardKey.arrowUp) {
+        unawaited(_playAdjacentLiveChannel(-1));
+        return KeyEventResult.handled;
       }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        unawaited(_playAdjacentLiveChannel(1));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _moveEpgProgrammeSelection(-1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
+        _moveEpgProgrammeSelection(1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.select ||
+          key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.numpadEnter ||
+          key == LogicalKeyboardKey.space) {
+        final channel = _selectedLiveChannel;
+        final programme = _selectedGuideProgrammeFor(channel);
+        if (channel != null && programme != null) {
+          unawaited(_playProgramme(channel, programme));
+        }
+        return KeyEventResult.handled;
+      }
+    } else {
+      if (_isAndroidTv && _vodToolbarIndex >= 0) {
+        return _handleVodToolbarKey(key);
+      }
+      if (key == LogicalKeyboardKey.arrowDown && _isAndroidTv) {
+        setState(() {
+          _vodToolbarIndex = 0;
+          _fullscreenOverlayVisible = true;
+          _status =
+              'Toolbar: ${_vodToolbarLabels[0]} — Sin/Des seleziona, OK attiva, Su esci';
+        });
+        _fullscreenOverlayTimer?.cancel();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        unawaited(_seekFullscreenRelative(const Duration(seconds: -10)));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
+        unawaited(_seekFullscreenRelative(const Duration(seconds: 10)));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp) {
+        unawaited(_cycleFullscreenAudioTrack(1));
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        unawaited(_cycleFullscreenSubtitleTrack(1));
+        return KeyEventResult.handled;
+      }
+    }
+    if (key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space) {
+      if (!_livePlayerActive && _isAndroidTv && _vodToolbarIndex < 0) {
+        unawaited(_toggleFullscreenPlayPause());
+        return KeyEventResult.handled;
+      }
+      _revealFullscreenOverlay();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _handleVodToolbarKey(LogicalKeyboardKey key) {
+    final maxIndex = _vodToolbarLabels.length - 1;
+    if (key == LogicalKeyboardKey.arrowUp) {
+      setState(() {
+        _vodToolbarIndex = -1;
+        _status = 'Video: Su/Giu audio/sottotitoli, Giù toolbar, OK play/pausa';
+      });
+      _scheduleFullscreenOverlayHide();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      final next = (_vodToolbarIndex - 1).clamp(0, maxIndex);
+      setState(() {
+        _vodToolbarIndex = next;
+        _status =
+            'Toolbar: ${_vodToolbarLabels[next]} — Sin/Des seleziona, OK attiva, Su esci';
+      });
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      final next = (_vodToolbarIndex + 1).clamp(0, maxIndex);
+      setState(() {
+        _vodToolbarIndex = next;
+        _status =
+            'Toolbar: ${_vodToolbarLabels[next]} — Sin/Des seleziona, OK attiva, Su esci';
+      });
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.select ||
         key == LogicalKeyboardKey.enter ||
         key == LogicalKeyboardKey.numpadEnter ||
         key == LogicalKeyboardKey.space) {
-      unawaited(_changeSection(_remoteSection));
+      unawaited(_activateVodToolbarControl(_vodToolbarIndex));
       return KeyEventResult.handled;
     }
-    return KeyEventResult.ignored;
+    return KeyEventResult.handled;
+  }
+
+  Future<void> _activateVodToolbarControl(int index) async {
+    switch (index) {
+      case 0:
+        await _toggleFullscreenPlayPause();
+      case 1:
+        await _seekFullscreenRelative(const Duration(seconds: -10));
+      case 2:
+        await _seekFullscreenRelative(const Duration(seconds: 10));
+      case 3:
+        await _cycleFullscreenAudioTrack(1);
+      case 4:
+        await _cycleFullscreenSubtitleTrack(1);
+      case 5:
+        _togglePlayerFocusMode();
+    }
+    _revealFullscreenOverlay();
+  }
+
+  Future<void> _toggleFullscreenPlayPause() async {
+    final mediaPlayer = _player;
+    if (mediaPlayer == null) return;
+    if (mediaPlayer.state.playing) {
+      await mediaPlayer.pause();
+      if (mounted) setState(() => _status = 'Pausa');
+    } else {
+      await mediaPlayer.play();
+      if (mounted) setState(() => _status = 'Riproduzione');
+    }
   }
 
   KeyEventResult _handleContentKey(LogicalKeyboardKey key) {
@@ -835,6 +1963,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (key == LogicalKeyboardKey.escape ||
         key == LogicalKeyboardKey.goBack ||
         key == LogicalKeyboardKey.browserBack) {
+      if (_query.trim().isNotEmpty) {
+        _clearSearchAndReturnHome();
+        return KeyEventResult.handled;
+      }
       if (_playerFocusMode) {
         _togglePlayerFocusMode();
       } else {
@@ -848,6 +1980,28 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         return KeyEventResult.handled;
       }
     }
+    if (_isAndroidTv &&
+        _selectedMovie == null &&
+        (_section == AppSection.movies || _section == AppSection.favorites)) {
+      final handled = _handleMovieBrowseContentKey(key);
+      if (handled) return KeyEventResult.handled;
+    }
+    if (_tvContentItemCount <= 0) {
+      if (key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.goBack ||
+          key == LogicalKeyboardKey.escape ||
+          key == LogicalKeyboardKey.browserBack) {
+        _requestShellFocus();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp ||
+          key == LogicalKeyboardKey.arrowDown ||
+          key == LogicalKeyboardKey.arrowRight) {
+        _requestShellFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.handled;
+    }
     if (_section == AppSection.settings) {
       final settingsStart = _profiles.length;
       final saveIndex = settingsStart + 4;
@@ -860,6 +2014,16 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       if (key == LogicalKeyboardKey.arrowLeft &&
           _tvContentIndex == reloadIndex) {
         _moveTvContentSelection(-1);
+        return KeyEventResult.handled;
+      }
+    }
+    if (_section == AppSection.epg) {
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        _moveEpgProgrammeSelection(-1);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
+        _moveEpgProgrammeSelection(1);
         return KeyEventResult.handled;
       }
     }
@@ -893,6 +2057,39 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return KeyEventResult.ignored;
   }
 
+  bool _handleMovieBrowseContentKey(LogicalKeyboardKey key) {
+    if (_browseHeroActionSelected) {
+      if (key == LogicalKeyboardKey.select ||
+          key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.numpadEnter ||
+          key == LogicalKeyboardKey.space) {
+        final movies = _currentMovieBrowseList;
+        if (movies.isNotEmpty) {
+          final movie =
+              movies[_tvContentIndex.clamp(0, movies.length - 1)];
+          _toggleFavoriteMovie(movie);
+        }
+        return true;
+      }
+      if (key == LogicalKeyboardKey.arrowDown) {
+        setState(() {
+          _browseHeroActionSelected = false;
+          _status = 'Selezionato: ${_tvContentSelectionLabel(_tvContentIndex)}';
+        });
+        return true;
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      setState(() {
+        _browseHeroActionSelected = true;
+        _status = 'Preferiti: premi OK per aggiungere o rimuovere.';
+      });
+      return true;
+    }
+    return false;
+  }
+
   bool _handleHomeContentKey(LogicalKeyboardKey key) {
     if (key != LogicalKeyboardKey.arrowLeft &&
         key != LogicalKeyboardKey.arrowRight &&
@@ -900,8 +2097,32 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         key != LogicalKeyboardKey.arrowDown) {
       return false;
     }
+    if (_isAndroidTv) {
+      if (_homeTargets.isEmpty) {
+        return false;
+      }
+      final maxIndex = (_homeTargets.length - 1).clamp(0, 3);
+      final current = _tvContentIndex.clamp(0, maxIndex);
+      int? next;
+      if (key == LogicalKeyboardKey.arrowLeft) {
+        next = current > 0 ? current - 1 : null;
+      } else if (key == LogicalKeyboardKey.arrowRight) {
+        next = current < maxIndex ? current + 1 : current;
+      } else if (key == LogicalKeyboardKey.arrowUp) {
+        next = null;
+      } else if (key == LogicalKeyboardKey.arrowDown) {
+        next = current;
+      }
+      if (next == null) {
+        _requestShellFocus();
+        return true;
+      }
+      _moveTvContentSelection(next - current);
+      return true;
+    }
     final compact = _isCompactHomeLayout;
-    final current = _tvContentIndex.clamp(0, 7);
+    final maxIndex = (_homeTargets.length - 1).clamp(0, 7);
+    final current = _tvContentIndex.clamp(0, maxIndex);
     int? next;
     if (compact) {
       next = switch (key) {
@@ -922,7 +2143,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
           1 => 2,
           2 => 3,
           3 || 4 => 5,
-          5 || 6 => 7,
+          5 || 6 => maxIndex,
           _ => current,
         },
         _ => current,
@@ -936,7 +2157,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         },
         LogicalKeyboardKey.arrowRight => switch (current) {
           0 => 1,
-          3 || 4 || 5 || 6 => current + 1,
+          3 || 4 || 5 || 6 => (current + 1).clamp(0, maxIndex),
           _ => current,
         },
         LogicalKeyboardKey.arrowUp => switch (current) {
@@ -960,6 +2181,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _requestShellFocus();
       return true;
     }
+    next = next.clamp(0, maxIndex).toInt();
     _moveTvContentSelection(next - current);
     return true;
   }
@@ -970,8 +2192,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return switch (_section) {
       AppSection.home => _isCompactHomeLayout ? 1 : 2,
       AppSection.live => 1,
-      AppSection.movies => _selectedMovie == null ? _catalogGridColumns : 1,
-      AppSection.series => _selectedSeries == null ? _catalogGridColumns : 1,
+      AppSection.movies => _selectedMovie == null
+          ? (_isAndroidTv ? 1 : _catalogGridColumns)
+          : 1,
+      AppSection.series => _selectedSeries == null
+          ? (_isAndroidTv ? 1 : _catalogGridColumns)
+          : 1,
       AppSection.favorites ||
       AppSection.watchLater ||
       AppSection.recentlyAdded ||
@@ -983,6 +2209,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   bool get _isCompactHomeLayout {
     final mediaQuery = MediaQuery.maybeOf(context);
+    if (_isAndroidTv) return false;
     return _useCompactAdaptiveLayout(mediaQuery?.size ?? const Size(1280, 720));
   }
 
@@ -1002,9 +2229,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   int get _tvContentItemCount {
     return switch (_section) {
-      AppSection.home => 8,
+      AppSection.home => _homeTargets.length,
       AppSection.live => _filteredLive.length,
-      AppSection.movies => _selectedMovie == null ? _filteredMovies.length : 3,
+      AppSection.movies => _selectedMovie == null
+          ? _filteredMovies.length
+          : (_isAndroidTv ? _movieDetailTvActionCount : 3),
       AppSection.series =>
         _selectedSeries == null
             ? _filteredSeries.length
@@ -1021,16 +2250,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   String _tvContentSelectionLabel(int index) {
     if (index < 0) return 'Contenuto';
     return switch (_section) {
-      AppSection.home => [
-        'Live TV',
-        'Film',
-        'Serie',
-        'Preferiti',
-        'Da vedere',
-        'Guida TV',
-        'Download',
-        'Impostazioni',
-      ][index.clamp(0, 7)],
+      AppSection.home => _homeTargets.isEmpty
+          ? 'Contenuto'
+          : _sectionLabel(
+              _homeTargets[index.clamp(0, _homeTargets.length - 1)],
+            ),
       AppSection.live =>
         _filteredLive.isEmpty
             ? 'Nessun canale'
@@ -1041,7 +2265,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                   ? 'Nessun film'
                   : _filteredMovies[index.clamp(0, _filteredMovies.length - 1)]
                         .name)
-            : ['Play', 'Download', 'Indietro'][index.clamp(0, 2)],
+            : (_isAndroidTv
+                  ? _movieDetailTvActionLabels[index.clamp(
+                      0,
+                      _movieDetailTvActionLabels.length - 1,
+                    )]
+                  : ['Play', 'Download', 'Indietro'][index.clamp(0, 2)]),
       AppSection.series =>
         _selectedSeries == null
             ? (_filteredSeries.isEmpty
@@ -1116,8 +2345,191 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     );
     setState(() {
       _tvContentIndex = next;
+      _browseHeroActionSelected = false;
       _status = 'Selezionato: ${_tvContentSelectionLabel(next)}';
     });
+    if (_section == AppSection.live) {
+      _previewLiveChannelAt(next);
+    } else if (_section == AppSection.epg) {
+      _previewEpgChannelAt(next);
+    } else if (_isAndroidTv &&
+        (_section == AppSection.movies || _section == AppSection.favorites) &&
+        _selectedMovie == null) {
+      unawaited(_previewMovieAt(next));
+    } else if (_isAndroidTv &&
+        _section == AppSection.series &&
+        _selectedSeries == null) {
+      unawaited(_previewSeriesAt(next));
+    }
+  }
+
+  void _setLiveCategory(String id) {
+    setState(() {
+      _liveCategoryId = id;
+      _tvContentIndex = 0;
+      _selectedLiveEpg = const [];
+    });
+    _previewLiveChannelAt(0);
+  }
+
+  void _setEpgCategory(String id) {
+    setState(() {
+      _liveCategoryId = id;
+      _tvContentIndex = 0;
+      _selectedLiveEpg = const [];
+    });
+    _previewEpgChannelAt(0);
+    unawaited(_loadEpgPage(force: true));
+  }
+
+  void _setMovieCategory(String id) {
+    setState(() {
+      _movieCategoryId = id;
+      _tvContentIndex = 0;
+    });
+    if (_isAndroidTv) unawaited(_previewMovieAt(0));
+  }
+
+  void _setSeriesCategory(String id) {
+    setState(() {
+      _seriesCategoryId = id;
+      _tvContentIndex = 0;
+    });
+    if (_isAndroidTv) unawaited(_previewSeriesAt(0));
+  }
+
+  void _previewLiveChannelAt(int index) {
+    if (_filteredLive.isEmpty) return;
+    final channel = _filteredLive[index.clamp(0, _filteredLive.length - 1)];
+    if (_selectedLiveChannel?.id == channel.id && _selectedLiveEpg.isNotEmpty) {
+      return;
+    }
+    setState(() {
+      _selectedLiveChannel = channel;
+      _playerTitle = channel.name;
+      _status = 'Canale selezionato: ${channel.name}';
+    });
+    unawaited(_recordRecentLiveChannel(channel.id));
+    unawaited(_loadShortEpg(channel));
+  }
+
+  void _previewEpgChannelAt(int index) {
+    if (_epgChannels.isEmpty) return;
+    final channel = _epgChannels[index.clamp(0, _epgChannels.length - 1)];
+    if (_selectedLiveChannel?.id == channel.id && _selectedLiveEpg.isNotEmpty) {
+      return;
+    }
+    setState(() {
+      _selectedLiveChannel = channel;
+      _epgProgrammeIndex = 0;
+      _status = 'Guida TV: ${channel.name}';
+    });
+    unawaited(_loadShortEpg(channel));
+  }
+
+  int _channelIndexOf(List<LiveChannel> channels, LiveChannel channel) {
+    final index = channels.indexWhere((item) => item.id == channel.id);
+    return index < 0 ? 0 : index;
+  }
+
+  void _moveEpgProgrammeSelection(int delta) {
+    final channel = _selectedLiveChannel;
+    if (channel == null) return;
+    final programmes = _fullscreenOverlayProgrammes(channel);
+    if (programmes.isEmpty) return;
+    final next = (_epgProgrammeIndex + delta)
+        .clamp(0, programmes.length - 1)
+        .toInt();
+    if (next == _epgProgrammeIndex) return;
+    setState(() {
+      _epgProgrammeIndex = next;
+      _status = 'Guida TV: ${channel.name} - ${programmes[next].title.trim()}';
+    });
+  }
+
+  List<EpgProgramme> _fullscreenOverlayProgrammes(LiveChannel channel) {
+    return _fullscreenOverlayProgrammesFrom(channel, _selectedLiveEpg);
+  }
+
+  List<EpgProgramme> _fullscreenOverlayProgrammesFrom(
+    LiveChannel channel,
+    List<EpgProgramme> source,
+  ) {
+    final now = DateTime.now();
+    final items = source
+        .where(
+          (programme) =>
+              _isLiveProgramme(programme) ||
+              _canReplayProgramme(channel, programme) ||
+              (programme.start?.isAfter(now) ?? false),
+        )
+        .toList();
+    items.sort((a, b) {
+      final aStart = a.start;
+      final bStart = b.start;
+      if (aStart == null && bStart == null) return 0;
+      if (aStart == null) return 1;
+      if (bStart == null) return -1;
+      return aStart.compareTo(bStart);
+    });
+    if (items.length <= 12) return items;
+    final liveIndex = items.indexWhere(_isLiveProgramme);
+    if (liveIndex < 0) return items.take(12).toList();
+    final start = (liveIndex - 4).clamp(0, items.length - 12).toInt();
+    return items.skip(start).take(12).toList();
+  }
+
+  List<EpgProgramme> _guideProgrammesFrom(
+    LiveChannel channel,
+    List<EpgProgramme> source,
+  ) {
+    final items = source
+        .where(
+          (programme) =>
+              _isLiveProgramme(programme) ||
+              _canReplayProgramme(channel, programme) ||
+              (programme.start?.isAfter(DateTime.now()) ?? false),
+        )
+        .toList();
+    items.sort((a, b) {
+      final aStart = a.start;
+      final bStart = b.start;
+      if (aStart == null && bStart == null) return 0;
+      if (aStart == null) return 1;
+      if (bStart == null) return -1;
+      return aStart.compareTo(bStart);
+    });
+    return items;
+  }
+
+  int _defaultProgrammeIndex(List<EpgProgramme> programmes) {
+    if (programmes.isEmpty) return 0;
+    final liveIndex = programmes.indexWhere(_isLiveProgramme);
+    if (liveIndex >= 0) return liveIndex;
+    final now = DateTime.now();
+    final nextIndex = programmes.indexWhere(
+      (programme) => programme.start?.isAfter(now) ?? false,
+    );
+    return nextIndex >= 0 ? nextIndex : programmes.length - 1;
+  }
+
+  EpgProgramme? _selectedGuideProgrammeFor(LiveChannel? channel) {
+    if (channel == null) return null;
+    final programmes = _fullscreenOverlayProgrammes(channel);
+    if (programmes.isEmpty) return null;
+    return programmes[_epgProgrammeIndex.clamp(0, programmes.length - 1)];
+  }
+
+  bool _isLiveProgramme(EpgProgramme programme) => _epgIsLiveNow(programme);
+
+  bool _canReplayProgramme(LiveChannel channel, EpgProgramme programme) {
+    final now = DateTime.now();
+    final start = programme.start;
+    final end = programme.end;
+    if (!channel.hasCatchup || start == null || end == null) return false;
+    if (end.isAfter(now) || !end.isAfter(start)) return false;
+    final days = channel.catchupDays > 0 ? channel.catchupDays : 7;
+    return start.isAfter(now.subtract(Duration(days: days)));
   }
 
   Future<void> _activateTvContentSelection() async {
@@ -1127,16 +2539,8 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     );
     switch (_section) {
       case AppSection.home:
-        final targets = [
-          AppSection.live,
-          AppSection.movies,
-          AppSection.series,
-          AppSection.favorites,
-          AppSection.watchLater,
-          AppSection.epg,
-          AppSection.downloads,
-          AppSection.settings,
-        ];
+        if (_homeTargets.isEmpty) return;
+        final targets = _homeTargets;
         await _changeSection(targets[index.clamp(0, targets.length - 1)]);
       case AppSection.live:
         if (_filteredLive.isNotEmpty) {
@@ -1151,15 +2555,33 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
               _filteredMovies[index.clamp(0, _filteredMovies.length - 1)],
             );
           }
+        } else if (_isAndroidTv && _movieCanResume(_selectedMovie!.id)) {
+          switch (index) {
+            case 0:
+              await _playMovie(_selectedMovie!);
+            case 1:
+              await _playMovie(_selectedMovie!, fromStart: true);
+            case 2:
+              _toggleFavoriteMovie(_selectedMovie!);
+            default:
+              setState(() {
+                _selectedMovie = null;
+                _tvContentIndex = 0;
+              });
+              unawaited(_previewMovieAt(_tvContentIndex));
+          }
         } else if (index == 0) {
-          await _playMovie(_selectedMovie!);
-        } else if (index == 1) {
+          await _playMovie(_selectedMovie!, fromStart: true);
+        } else if (index == 1 && _isAndroidTv) {
+          _toggleFavoriteMovie(_selectedMovie!);
+        } else if (index == 1 && !_isAndroidTv) {
           await _downloadMovie(_selectedMovie!);
         } else {
           setState(() {
             _selectedMovie = null;
             _tvContentIndex = 0;
           });
+          if (_isAndroidTv) unawaited(_previewMovieAt(_tvContentIndex));
         }
       case AppSection.series:
         if (_selectedSeries == null) {
@@ -1203,8 +2625,16 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
           final channel = _epgChannels[index.clamp(0, _epgChannels.length - 1)];
           setState(() => _selectedLiveChannel = channel);
           await _loadShortEpg(channel);
-          await _changeSection(AppSection.live);
-          await _playLive(channel);
+          final programme = _selectedGuideProgrammeFor(channel);
+          if (programme != null &&
+              (_isLiveProgramme(programme) ||
+                  _canReplayProgramme(channel, programme))) {
+            await _openLiveProgrammeFromGuide(channel, programme);
+          } else {
+            setState(() {
+              _status = 'Seleziona un evento LIVE o REC per ${channel.name}.';
+            });
+          }
         }
       case AppSection.settings:
         if (index < _profiles.length) {
@@ -1251,7 +2681,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     _traceTv(
       'move menu from=$_remoteSection to=${_remoteSections[nextIndex]} delta=$delta',
     );
-    setState(() => _remoteSection = _remoteSections[nextIndex]);
+    setState(() {
+      _remoteSearchSelected = false;
+      _remoteSearchIconFocused = false;
+      _remoteSection = _remoteSections[nextIndex];
+    });
   }
 
   Future<void> _loadCatalog({
@@ -1377,146 +2811,22 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _watchLaterMovieIds
         ..clear()
         ..addAll(watchLater ?? const {});
+      _recentLiveChannelIds = _readRecentIds(
+        prefs,
+        _recentLiveChannelsKey(profile),
+      );
+      _recentMovieHistoryIds = _readRecentIds(
+        prefs,
+        _recentMoviesHistoryKey(profile),
+      );
+      _recentSeriesHistoryIds = _readRecentIds(
+        prefs,
+        _recentSeriesHistoryKey(profile),
+      );
       _movieProgress = _readProgressMap(prefs, _movieProgressKey(profile));
       _episodeProgress = _readProgressMap(prefs, _episodeProgressKey(profile));
+      _lastVodPlay = _readLastVodPlay(prefs, _lastVodPlayKey(profile));
     });
-  }
-
-  String _movieProgressKey(XtreamProfile profile) =>
-      '$_movieProgressPrefix${profile.id}';
-
-  String _episodeProgressKey(XtreamProfile profile) =>
-      '$_episodeProgressPrefix${profile.id}';
-
-  Map<int, PlaybackProgress> _readProgressMap(
-    SharedPreferences prefs,
-    String key,
-  ) {
-    final raw = prefs.getString(key);
-    if (raw == null || raw.trim().isEmpty) return const {};
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return const {};
-      final result = <int, PlaybackProgress>{};
-      for (final entry in decoded.entries) {
-        final id = int.tryParse(entry.key.toString());
-        if (id == null || entry.value is! Map) continue;
-        result[id] = PlaybackProgress.fromJson(
-          (entry.value as Map).map(
-            (key, value) => MapEntry(key.toString(), value),
-          ),
-        );
-      }
-      return result;
-    } catch (_) {
-      return const {};
-    }
-  }
-
-  Future<void> _persistProgressMap(
-    String key,
-    Map<int, PlaybackProgress> values,
-  ) async {
-    final prefs = await SharedPreferences.getInstance();
-    final encoded = values.map(
-      (id, progress) => MapEntry(id.toString(), progress.toJson()),
-    );
-    await prefs.setString(key, jsonEncode(encoded));
-  }
-
-  bool _movieCanResume(int id) => _movieProgress[id]?.canResume ?? false;
-
-  Future<void> _saveMovieProgress(
-    XtreamProfile profile,
-    int movieId,
-    PlaybackProgress progress,
-  ) async {
-    final next = Map<int, PlaybackProgress>.from(_movieProgress)
-      ..[movieId] = progress;
-    if (!mounted) return;
-    setState(() => _movieProgress = next);
-    await _persistProgressMap(_movieProgressKey(profile), next);
-  }
-
-  Future<void> _saveEpisodeProgress(
-    XtreamProfile profile,
-    int episodeId,
-    PlaybackProgress progress,
-  ) async {
-    final next = Map<int, PlaybackProgress>.from(_episodeProgress)
-      ..[episodeId] = progress;
-    if (!mounted) return;
-    setState(() => _episodeProgress = next);
-    await _persistProgressMap(_episodeProgressKey(profile), next);
-  }
-
-  int _currentPlaybackPositionMs() {
-    final mediaPlayer = _player;
-    if (mediaPlayer != null) {
-      return mediaPlayer.state.position.inMilliseconds;
-    }
-    final apple = _appleVideoController?.value;
-    if (apple != null && apple.isInitialized) {
-      return apple.position.inMilliseconds;
-    }
-    final tizen = _tizenVideoController?.value;
-    if (tizen != null && tizen.isInitialized) {
-      return tizen.position.inMilliseconds;
-    }
-    return 0;
-  }
-
-  int _currentPlaybackDurationMs() {
-    final mediaPlayer = _player;
-    if (mediaPlayer != null) {
-      return mediaPlayer.state.duration.inMilliseconds;
-    }
-    final apple = _appleVideoController?.value;
-    if (apple != null && apple.isInitialized) {
-      return apple.duration.inMilliseconds;
-    }
-    final tizen = _tizenVideoController?.value;
-    if (tizen != null && tizen.isInitialized) {
-      return tizen.duration.end.inMilliseconds;
-    }
-    return 0;
-  }
-
-  Future<void> _flushPlaybackProgress() async {
-    final profile = _profile;
-    if (profile == null) return;
-    final durationMs = _currentPlaybackDurationMs();
-    if (durationMs <= 0) return;
-    final positionMs = _currentPlaybackPositionMs().clamp(0, durationMs);
-    final progress = PlaybackProgress(
-      positionMs: positionMs,
-      durationMs: durationMs,
-      updatedAt: DateTime.now().millisecondsSinceEpoch,
-    );
-    if (_activeMovieId != null) {
-      await _saveMovieProgress(profile, _activeMovieId!, progress);
-    }
-    if (_activeEpisodeId != null) {
-      await _saveEpisodeProgress(profile, _activeEpisodeId!, progress);
-    }
-  }
-
-  void _beginPlaybackTracking({int? movieId, int? episodeId}) {
-    _playbackProgressTimer?.cancel();
-    _activeMovieId = movieId;
-    _activeEpisodeId = episodeId;
-    _playbackProgressTimer = Timer.periodic(
-      const Duration(seconds: 12),
-      (_) => unawaited(_flushPlaybackProgress()),
-    );
-  }
-
-  Future<void> _endPlaybackTracking({bool save = true}) async {
-    _playbackProgressTimer?.cancel();
-    _playbackProgressTimer = null;
-    if (save) await _flushPlaybackProgress();
-    _activeMovieId = null;
-    _activeEpisodeId = null;
   }
 
   Future<void> _persistUserLists() async {
@@ -1538,8 +2848,21 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _favoriteMovieIds.contains(movie.id)
           ? _favoriteMovieIds.remove(movie.id)
           : _favoriteMovieIds.add(movie.id);
+      if (_isAndroidTv && _section == AppSection.favorites) {
+        final count = _favoriteMovies.length;
+        if (count == 0) {
+          _tvContentIndex = 0;
+        } else if (_tvContentIndex >= count) {
+          _tvContentIndex = count - 1;
+        }
+      }
     });
     unawaited(_persistUserLists());
+    if (_isAndroidTv &&
+        _selectedMovie == null &&
+        (_section == AppSection.movies || _section == AppSection.favorites)) {
+      unawaited(_previewMovieAt(_tvContentIndex));
+    }
   }
 
   void _toggleWatchLaterMovie(VodMovie movie) {
@@ -1683,7 +3006,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final profile = _profile;
     if (profile == null) return;
     _traceTv('play live channel=${channel.name} id=${channel.id}');
-    setState(() => _selectedLiveChannel = channel);
+    setState(() {
+      _selectedLiveChannel = channel;
+      _livePlayerActive = true;
+    });
     final candidates = <XtreamProfile>[];
     void addCandidate(XtreamProfile candidate) {
       if (candidates.any(
@@ -1727,6 +3053,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         break;
       }
     }
+    if (opened) {
+      unawaited(_recordRecentLiveChannel(channel.id));
+    }
     if (!opened && mounted) {
       setState(
         () => _status = 'Riproduzione live non riuscita: ${channel.name}',
@@ -1758,7 +3087,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       });
       return;
     }
-    setState(() => _selectedLiveChannel = channel);
+    setState(() {
+      _selectedLiveChannel = channel;
+      _livePlayerActive = true;
+    });
+    unawaited(_recordRecentLiveChannel(channel.id));
     final opened = await _openMedia(
       catchupUrl,
       '${channel.name} - ${programme.title}',
@@ -1784,18 +3117,21 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   Future<void> _playMovie(VodMovie movie, {bool fromStart = false}) async {
     final profile = _profile;
     if (profile == null) return;
+    setState(() => _livePlayerActive = false);
     final progress = fromStart ? null : _movieProgress[movie.id];
     final startAt = progress?.canResume == true
         ? Duration(milliseconds: progress!.positionMs)
         : null;
     _beginPlaybackTracking(movieId: movie.id);
-    var opened = false;
-    for (final url in _vodPlayUrls(profile, movie)) {
-      opened = await _openMedia(url, movie.name, startAt: startAt);
-      if (opened) break;
-    }
+    unawaited(_setLastVodMovie(movie.id));
+    final opened = await _openMedia(
+      XtreamClient(profile).vodUrl(movie),
+      movie.name,
+      startAt: startAt,
+    );
     if (opened) {
       _enterFullscreenOnPhonePlayback(force: Platform.isIOS);
+      unawaited(_recordRecentMovie(movie.id));
     } else {
       await _endPlaybackTracking();
     }
@@ -1994,7 +3330,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         'url': url,
         'filename': filename,
         'referer': referer,
-        'userAgent': _mediaUserAgentForUrl(url),
+        'userAgent': 'VLC/3.0.20 LibVLC/3.0.20',
       });
     } catch (error) {
       _traceTv('download enqueue android failed error="$error"');
@@ -2017,7 +3353,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       final request = await client.getUrl(Uri.parse(url));
       request.headers.set(
         HttpHeaders.userAgentHeader,
-        _mediaUserAgentForUrl(url),
+        'VLC/3.0.20 LibVLC/3.0.20',
       );
       request.headers.set(HttpHeaders.refererHeader, '${profile.baseUrl}/');
       request.headers.set(HttpHeaders.acceptHeader, '*/*');
@@ -2116,12 +3452,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 
   void _clearSearchAndReturnHome() {
+    unawaited(_exitTvSearchEditing());
     _searchController.clear();
     setState(() {
       _query = '';
       _section = AppSection.home;
       _remoteSection = AppSection.home;
       _remoteMenuMode = false;
+      _remoteSearchSelected = false;
+      _remoteSearchIconFocused = false;
       _tvContentIndex = 0;
       _status = 'Home';
     });
@@ -2144,19 +3483,20 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   Future<void> _openMovie(VodMovie movie) async {
     final profile = _profile;
+    if (_isAndroidTv) unawaited(_saveLastMovieId(movie.id));
     setState(() {
       _section = AppSection.movies;
       _selectedMovie = movie;
-      _selectedMovieDescription = '';
+      _selectedMovieDescription =
+          _movieDescriptionCache[movie.id] ?? _browseHeroDescription;
       _playerTitle = movie.name;
       _status = 'Dettaglio film: ${movie.name}';
     });
     if (profile == null) return;
-    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
-      unawaited(_playMovie(movie));
-    }
+    if (_selectedMovieDescription.trim().isNotEmpty) return;
     try {
       final description = await XtreamClient(profile).vodDescription(movie);
+      _movieDescriptionCache[movie.id] = description;
       if (!mounted || _selectedMovie?.id != movie.id) return;
       setState(() => _selectedMovieDescription = description);
     } catch (_) {
@@ -2167,15 +3507,19 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   Future<void> _openSeries(SeriesShow show) async {
     final profile = _profile;
     if (profile == null) return;
+    if (_isAndroidTv) unawaited(_saveLastSeriesId(show.id));
+    unawaited(_recordRecentSeries(show.id));
     setState(() {
       _selectedSeries = show;
-      _selectedSeriesDescription = '';
+      _selectedSeriesDescription =
+          _seriesDescriptionCache[show.id] ?? _browseHeroDescription;
       _seriesEpisodes = const [];
       _seriesDetailLoading = true;
       _status = 'Caricamento episodi: ${show.name}';
     });
     try {
       final detail = await XtreamClient(profile).seriesDetail(show);
+      _seriesDescriptionCache[show.id] = detail.description;
       if (!mounted) return;
       setState(() {
         _selectedSeriesDescription = detail.description;
@@ -2193,11 +3537,18 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final profile = _profile;
     final show = _selectedSeries;
     if (profile == null) return;
+    if (show != null) unawaited(_recordRecentSeries(show.id));
+    setState(() => _livePlayerActive = false);
     final progress = fromStart ? null : _episodeProgress[episode.id];
     final startAt = progress?.canResume == true
         ? Duration(milliseconds: progress!.positionMs)
         : null;
     _beginPlaybackTracking(episodeId: episode.id);
+    if (show != null) {
+      unawaited(
+        _setLastVodEpisode(seriesId: show.id, episodeId: episode.id),
+      );
+    }
     final opened = await _openMedia(
       XtreamClient(profile).episodeUrl(episode),
       show == null ? episode.title : '${show.name} - ${episode.title}',
@@ -2278,7 +3629,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final mediaPlayer = _player;
     if (mediaPlayer == null) return false;
     await mediaPlayer.open(
-      Media(url, httpHeaders: _mediaHttpHeaders(url, _profile)),
+      Media(
+        url,
+        httpHeaders: _profile == null
+            ? const {}
+            : {
+                'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+                'Referer': '${_profile!.baseUrl}/',
+              },
+      ),
       play: true,
     );
     if (startAt != null && startAt.inMilliseconds > 0) {
@@ -2308,7 +3667,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
     final controller = vp.VideoPlayerController.networkUrl(
       Uri.parse(url),
-      httpHeaders: _mediaHttpHeaders(url, _profile),
+      httpHeaders: _profile == null
+          ? const <String, String>{}
+          : {
+              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+              'Referer': '${_profile!.baseUrl}/',
+            },
       videoPlayerOptions: vp.VideoPlayerOptions(allowBackgroundPlayback: false),
     );
     controller.addListener(() {
@@ -2333,10 +3697,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       if (size.width <= 0 || size.height <= 0) {
         throw StateError('Player Apple inizializzato senza traccia video');
       }
-      await controller.play();
       if (startAt != null && startAt.inMilliseconds > 0) {
         await controller.seekTo(startAt);
       }
+      await controller.play();
       if (mounted) setState(() => _status = 'In riproduzione');
       return true;
     } catch (error) {
@@ -2366,17 +3730,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     await previous?.pause();
     await previous?.dispose();
 
-    final headers = _mediaHttpHeaders(url, _profile);
-    final userAgent = headers['User-Agent'] ?? _iptvUaHls;
+    final headers = _profile == null
+        ? const <String, String>{}
+        : {'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'};
     final controller = avplay.VideoPlayerController.network(
       url,
       httpHeaders: headers,
       formatHint: _tizenFormatHint(url),
-      streamingProperty: {
-        avplay_platform.StreamingPropertyType.userAgent: userAgent,
-        if (url.contains('/live/') || url.endsWith('.ts'))
-          avplay_platform.StreamingPropertyType.isLive: 'true',
-      },
     );
     controller.addListener(() {
       final value = controller.value;
@@ -2464,9 +3824,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         // Keep get_short_epg results: contextual EPG should still be usable.
       }
       if (!mounted) return;
+      final guideItems = _guideProgrammesFrom(channel, epg);
       setState(() {
         _selectedLiveEpg = epg;
         _epgByChannel[channel.id] = epg;
+        _epgProgrammeIndex = _defaultProgrammeIndex(guideItems);
         if (epg.isEmpty && shortEpgError != null) {
           _status = 'EPG non caricato: $shortEpgError';
         }
@@ -2629,6 +3991,69 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (mounted) setState(() => _status = 'Sottotitoli: ${_trackLabel(track)}');
   }
 
+  Future<void> _seekFullscreenRelative(Duration delta) async {
+    final mediaPlayer = _player;
+    if (mediaPlayer == null) return;
+    final duration = mediaPlayer.state.duration;
+    final current = mediaPlayer.state.position;
+    final next = current + delta;
+    final clamped = duration > Duration.zero
+        ? Duration(
+            milliseconds: next.inMilliseconds.clamp(
+              0,
+              duration.inMilliseconds,
+            ),
+          )
+        : (next.isNegative ? Duration.zero : next);
+    await mediaPlayer.seek(clamped);
+    if (mounted) {
+      setState(() => _status = 'Posizione: ${_formatPlayerDuration(clamped)}');
+    }
+  }
+
+  Future<void> _cycleFullscreenAudioTrack(int delta) async {
+    final mediaPlayer = _player;
+    if (mediaPlayer == null) return;
+    final values = <AudioTrack>[
+      AudioTrack.auto(),
+      AudioTrack.no(),
+      ...mediaPlayer.state.tracks.audio,
+    ];
+    if (values.isEmpty) return;
+    final currentLabel = _trackLabel(mediaPlayer.state.track.audio);
+    final currentIndex = values.indexWhere(
+      (track) => _trackLabel(track) == currentLabel,
+    );
+    final base = currentIndex < 0 ? 0 : currentIndex;
+    final next = values[(base + delta) % values.length];
+    await _selectAudioTrack(next);
+  }
+
+  Future<void> _cycleFullscreenSubtitleTrack(int delta) async {
+    final mediaPlayer = _player;
+    if (mediaPlayer == null) return;
+    final values = <SubtitleTrack>[
+      SubtitleTrack.no(),
+      SubtitleTrack.auto(),
+      ...mediaPlayer.state.tracks.subtitle,
+    ];
+    if (values.isEmpty) return;
+    final currentLabel = _trackLabel(mediaPlayer.state.track.subtitle);
+    final currentIndex = values.indexWhere(
+      (track) => _trackLabel(track) == currentLabel,
+    );
+    final base = currentIndex < 0 ? 0 : currentIndex;
+    final next = values[(base + delta) % values.length];
+    await _selectSubtitleTrack(next);
+  }
+
+  String _formatPlayerDuration(Duration value) {
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
   Future<void> _setRate(double value) async {
     final mediaPlayer = _player;
     if (!isTizenRuntime && mediaPlayer != null) {
@@ -2651,7 +4076,16 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   void _setPlayerFocusMode(bool next) {
     if (_playerFocusMode == next) return;
-    setState(() => _playerFocusMode = next);
+    setState(() {
+      _playerFocusMode = next;
+      _fullscreenOverlayVisible = next;
+      _vodToolbarIndex = -1;
+    });
+    if (next) {
+      _scheduleFullscreenOverlayHide();
+    } else {
+      _fullscreenOverlayTimer?.cancel();
+    }
     if (Platform.isAndroid || Platform.isIOS) {
       unawaited(
         _applyMobileOrientationPolicy(fullscreen: next).catchError((error) {
@@ -2673,8 +4107,43 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
   }
 
+  void _revealFullscreenOverlay() {
+    if (!_playerFocusMode) return;
+    _fullscreenOverlayTimer?.cancel();
+    if (!_fullscreenOverlayVisible && mounted) {
+      setState(() => _fullscreenOverlayVisible = true);
+    }
+    _scheduleFullscreenOverlayHide();
+  }
+
+  void _scheduleFullscreenOverlayHide() {
+    _fullscreenOverlayTimer?.cancel();
+    if (_vodToolbarIndex >= 0) return;
+    _fullscreenOverlayTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted && _playerFocusMode && _vodToolbarIndex < 0) {
+        setState(() => _fullscreenOverlayVisible = false);
+      }
+    });
+  }
+
+  Future<void> _playAdjacentLiveChannel(int direction) async {
+    final current = _selectedLiveChannel;
+    if (current == null) return;
+    final channels = _filteredLive.isNotEmpty
+        ? _filteredLive
+        : _playableLiveChannels;
+    if (channels.isEmpty) return;
+    final currentIndex = channels.indexWhere((item) => item.id == current.id);
+    final base = currentIndex < 0 ? 0 : currentIndex;
+    final nextIndex = (base + direction).clamp(0, channels.length - 1).toInt();
+    if (nextIndex == base && currentIndex >= 0) return;
+    final next = channels[nextIndex];
+    _traceTv('fullscreen channel switch ${current.name} -> ${next.name}');
+    await _playLive(next);
+    _revealFullscreenOverlay();
+  }
+
   Future<void> _closePlayer() async {
-    await _endPlaybackTracking();
     final mediaPlayer = _player;
     if (mediaPlayer != null && mediaPlayer.state.playlist.medias.isNotEmpty) {
       await mediaPlayer.stop();
@@ -2696,6 +4165,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     setState(() {
       _playerTitle = 'Scegli qualcosa da guardare.';
       _status = 'Riproduzione chiusa';
+      _livePlayerActive = false;
     });
   }
 
@@ -2722,9 +4192,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final q = _query.trim().toLowerCase();
     final activeCategoryId = _validLiveCategoryId;
     final byCategory = activeCategoryId.isEmpty
-        ? _liveChannels
+        ? _playableLiveChannels
         : _liveChannels
-              .where((item) => item.categoryId == activeCategoryId)
+              .where(
+                (item) =>
+                    _isPlayableLiveChannel(item) &&
+                    item.categoryId == activeCategoryId,
+              )
               .toList();
     final source = q.isEmpty
         ? byCategory
@@ -2737,11 +4211,26 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   List<LiveChannel> get _epgChannels {
     final activeCategoryId = _validLiveCategoryId;
     final byCategory = activeCategoryId.isEmpty
-        ? _liveChannels
+        ? _playableLiveChannels
         : _liveChannels
-              .where((item) => item.categoryId == activeCategoryId)
+              .where(
+                (item) =>
+                    _isPlayableLiveChannel(item) &&
+                    item.categoryId == activeCategoryId,
+              )
               .toList();
     return byCategory;
+  }
+
+  List<LiveChannel> get _playableLiveChannels =>
+      _liveChannels.where(_isPlayableLiveChannel).toList();
+
+  bool _isPlayableLiveChannel(LiveChannel channel) {
+    final name = channel.name.trim();
+    if (channel.id <= 0) return false;
+    if (RegExp(r'^[-\s]+[^-\s].*[-\s]+$').hasMatch(name)) return false;
+    if (RegExp(r'^[-_=]{3,}.*[-_=]{3,}$').hasMatch(name)) return false;
+    return true;
   }
 
   String get _validLiveCategoryId {
@@ -2808,11 +4297,24 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return 'Categoria $id';
   }
 
+  Widget _tvPopScope(Widget child) {
+    if (!_isAndroidTv) return child;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _handleAndroidBack();
+      },
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final compactLayout = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final compactLayout = !(_isAndroidTv || lelegTvShellActive) &&
+        _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     if (_playerFocusMode) {
-      return Focus(
+      return _tvPopScope(
+        Focus(
         focusNode: _shellFocusNode,
         autofocus: true,
         onKeyEvent: (_, event) => _handleShellKey(event),
@@ -2835,10 +4337,61 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                     onSubtitleChanged: _selectSubtitleTrack,
                     onRateChanged: _setRate,
                     focusMode: true,
+                    pinControlsOnFocus: _isAndroidTv,
                     onToggleFocusMode: _togglePlayerFocusMode,
                     onPictureInPicture: _showPictureInPictureUnavailable,
                   ),
                 ),
+                if (_isAndroidTv && !_livePlayerActive)
+                  Positioned(
+                    left: 24,
+                    right: 24,
+                    bottom: 24,
+                    child: AnimatedOpacity(
+                      opacity: (_fullscreenOverlayVisible || _vodToolbarIndex >= 0)
+                          ? 1
+                          : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: IgnorePointer(
+                        ignoring:
+                            !(_fullscreenOverlayVisible || _vodToolbarIndex >= 0),
+                        child: _TvVodToolbar(
+                          focusIndex: _vodToolbarIndex,
+                          playing: _player?.state.playing ?? false,
+                          audioLabel: _player == null
+                              ? 'Auto'
+                              : _trackLabel(_player!.state.track.audio),
+                          subtitleLabel: _player == null
+                              ? 'Off'
+                              : _trackLabel(_player!.state.track.subtitle),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_livePlayerActive)
+                  Positioned(
+                    left: 32,
+                    right: 32,
+                    bottom: 32,
+                    child: AnimatedOpacity(
+                      opacity: _fullscreenOverlayVisible ? 1 : 0,
+                      duration: const Duration(milliseconds: 180),
+                      child: IgnorePointer(
+                        ignoring: !_fullscreenOverlayVisible,
+                        child: _FullscreenLiveOverlay(
+                          channel: _selectedLiveChannel,
+                          programmes: _selectedLiveEpg,
+                          loading: _epgLoading,
+                          selectedIndex: _epgProgrammeIndex,
+                          onPreviousChannel: () =>
+                              unawaited(_playAdjacentLiveChannel(-1)),
+                          onNextChannel: () =>
+                              unawaited(_playAdjacentLiveChannel(1)),
+                          onWatchProgramme: _playProgramme,
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   top: 20,
                   right: 20,
@@ -2856,9 +4409,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
             ),
           ),
         ),
+      ),
       );
     }
-    return Focus(
+    return _tvPopScope(
+      Focus(
       focusNode: _shellFocusNode,
       autofocus: true,
       onKeyEvent: (_, event) => _handleShellKey(event),
@@ -2869,6 +4424,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 child: SafeArea(
                   child: LelegSidebar(
                     compact: true,
+                    showDownloads: !_isAndroidTv,
+                    searchFocusNode: _searchFocusNode,
+                    remoteSearchSelected: _remoteSearchSelected,
                     section: _section,
                     remoteSection: _remoteMenuMode ? _remoteSection : null,
                     queryController: _searchController,
@@ -2926,10 +4484,60 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 ),
               ),
             )
+          : (_isAndroidTv || lelegTvShellActive)
+          ? Scaffold(
+              backgroundColor: LelegColors.bg,
+              body: _TvUiScope(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _TvTopNavigation(
+                        section: _section,
+                        remoteSection:
+                            _remoteMenuMode ? _remoteSection : null,
+                        remoteSearchSelected: _remoteSearchSelected,
+                        remoteSearchIconFocused: _remoteSearchIconFocused,
+                        sections: _remoteSections,
+                        sectionLabel: _sectionLabel,
+                        queryController: _searchController,
+                        searchFocusNode: _searchFocusNode,
+                        profile: _profile,
+                        status: _status,
+                        loading: _loading ||
+                            _epgLoading ||
+                            _seriesDetailLoading,
+                        onQueryChanged: (value) =>
+                            setState(() => _query = value),
+                        onResetSearch: _clearSearchAndReturnHome,
+                        onSectionChanged: (section) =>
+                            unawaited(_changeSection(section)),
+                        onOpenSettings: () => unawaited(
+                          _changeSection(AppSection.settings),
+                        ),
+                        onOpenSearch: () =>
+                            unawaited(_enterTvSearchEditing()),
+                      ),
+                      Expanded(
+                        child: FocusTraversalGroup(
+                          policy: ReadingOrderTraversalPolicy(),
+                          child: FocusScope(
+                            node: _contentFocusScopeNode,
+                            descendantsAreFocusable: !_remoteMenuMode,
+                            child: _buildSection(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            )
           : Scaffold(
               body: Row(
                 children: [
                   LelegSidebar(
+                    showDownloads: !_isAndroidTv,
+                    searchFocusNode: _searchFocusNode,
+                    remoteSearchSelected: _remoteSearchSelected,
                     section: _section,
                     remoteSection: _remoteMenuMode ? _remoteSection : null,
                     queryController: _searchController,
@@ -2955,7 +4563,24 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 ],
               ),
             ),
+    ),
     );
+  }
+
+  String _movieBrowseMeta(VodMovie movie) {
+    return [
+      if (movie.rating.trim().isNotEmpty) movie.rating.trim(),
+      _categoryName(_movieCategories, movie.categoryId),
+      movie.containerExtension.toUpperCase(),
+    ].where((part) => part.isNotEmpty).join(' · ');
+  }
+
+  String _seriesBrowseMeta(SeriesShow show) {
+    return [
+      if (show.rating.trim().isNotEmpty) show.rating.trim(),
+      if (show.year.trim().isNotEmpty) show.year.trim(),
+      _categoryName(_seriesCategories, show.categoryId),
+    ].where((part) => part.isNotEmpty).join(' · ');
   }
 
   Widget _buildSection() {
@@ -2992,6 +4617,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         recentMovies: _movies.take(12).toList(),
         favoriteMovies: _favoriteMovies.take(12).toList(),
         watchLaterMovies: _watchLaterMovies.take(12).toList(),
+        recentLiveChannels: _recentLiveChannels.take(16).toList(),
+        recentMovieHistory: _recentMovieHistory.take(16).toList(),
+        recentSeriesHistory: _recentSeriesHistory.take(16).toList(),
+        heroTarget: _buildTvHomeHeroTarget(),
         favoriteCount: _favoriteMovieIds.length,
         watchLaterCount: _watchLaterMovieIds.length,
         onOpenLive: () => unawaited(_changeSection(AppSection.live)),
@@ -3003,7 +4632,17 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         onOpenEpg: () => unawaited(_changeSection(AppSection.epg)),
         onOpenDownloads: () => unawaited(_changeSection(AppSection.downloads)),
         onOpenSettings: () => unawaited(_changeSection(AppSection.settings)),
+        showDownloads: !_isAndroidTv,
+        isTv: _isAndroidTv,
         onPlayMovie: _openMovie,
+        onPlayLiveChannel: (channel) async {
+          await _changeSection(AppSection.live);
+          await _playLive(channel);
+        },
+        onOpenSeriesShow: (show) async {
+          await _changeSection(AppSection.series);
+          await _openSeries(show);
+        },
       ),
       AppSection.live => LiveScreen(
         tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
@@ -3023,42 +4662,76 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         onAudioChanged: _selectAudioTrack,
         onSubtitleChanged: _selectSubtitleTrack,
         onRateChanged: _setRate,
-        onCategoryChanged: (id) => setState(() => _liveCategoryId = id),
+        onCategoryChanged: _setLiveCategory,
+        preferTvLayout: _isAndroidTv,
         onToggleFocusMode: _togglePlayerFocusMode,
         onPictureInPicture: _showPictureInPictureUnavailable,
-        epg: _selectedLiveEpg,
+        epg: _selectedLiveChannel == null
+            ? const <EpgProgramme>[]
+            : _guideProgrammesFrom(_selectedLiveChannel!, _selectedLiveEpg),
         epgLoading: _epgLoading,
         selectedChannel: _selectedLiveChannel,
-        onSelectChannel: (channel) {
-          setState(() {
-            _selectedLiveChannel = channel;
-            _playerTitle = channel.name;
-            _status = 'Canale selezionato: ${channel.name}';
-          });
-          unawaited(_loadShortEpg(channel));
-        },
+        onSelectChannel: (channel) =>
+            _previewLiveChannelAt(_channelIndexOf(_filteredLive, channel)),
         onWatchProgramme: _playProgramme,
       ),
       AppSection.movies =>
         _selectedMovie == null
-            ? MoviesScreen(
-                tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
-                movies: _filteredMovies,
-                allCount: _movies.length,
-                categories: _movieCategories,
-                selectedCategoryId: _movieCategoryId,
-                sort: _movieSort,
-                categoryName: (id) => _categoryName(_movieCategories, id),
-                onCategoryChanged: (id) =>
-                    setState(() => _movieCategoryId = id),
-                onSortChanged: (sort) => setState(() => _movieSort = sort),
-                onPlay: _openMovie,
-                onFavorite: _toggleFavoriteMovie,
-                onWatchLater: _toggleWatchLaterMovie,
-                onDownload: _downloadMovie,
-                favorites: _favoriteMovieIds,
-                watchLater: _watchLaterMovieIds,
-              )
+            ? (_isAndroidTv
+                  ? TvFeaturedBrowseScreen<VodMovie>(
+                      kindLabel: 'FILM',
+                      rowTitle: _movieCategoryId.isEmpty
+                          ? 'Catalogo film'
+                          : _categoryName(
+                              _movieCategories,
+                              _movieCategoryId,
+                            ),
+                      items: _filteredMovies,
+                      selectedIndex: _remoteMenuMode ? null : _tvContentIndex,
+                      imageUrl: (movie) => movie.logo,
+                      titleFor: (movie) => movie.name,
+                      metaFor: (movie) => _movieBrowseMeta(movie),
+                      description: _browseHeroDescription,
+                      descriptionLoading: _browseHeroLoading,
+                      categories: _movieCategories,
+                      selectedCategoryId: _movieCategoryId,
+                      categoryName: (id) => _categoryName(_movieCategories, id),
+                      onCategoryChanged: _setMovieCategory,
+                      onOpen: _openMovie,
+                      isFavorite: (movie) =>
+                          _favoriteMovieIds.contains(movie.id),
+                      onToggleFavorite: _toggleFavoriteMovie,
+                      heroActionSelected: _browseHeroActionSelected,
+                    )
+                  : (_movieCategoryId.isEmpty
+                        ? CatalogCategoryRowsScreen(
+                            title: 'Film',
+                            categories: _movieCategories,
+                            items: _movies,
+                            categoryName: (id) =>
+                                _categoryName(_movieCategories, id),
+                            onPlay: _openMovie,
+                          )
+                        : MoviesScreen(
+                            tvSelectedIndex:
+                                _remoteMenuMode ? null : _tvContentIndex,
+                            movies: _filteredMovies,
+                            allCount: _movies.length,
+                            categories: _movieCategories,
+                            selectedCategoryId: _movieCategoryId,
+                            sort: _movieSort,
+                            categoryName: (id) =>
+                                _categoryName(_movieCategories, id),
+                            onCategoryChanged: _setMovieCategory,
+                            onSortChanged: (sort) =>
+                                setState(() => _movieSort = sort),
+                            onPlay: _openMovie,
+                            onFavorite: _toggleFavoriteMovie,
+                            onWatchLater: _toggleWatchLaterMovie,
+                            onDownload: _isAndroidTv ? null : _downloadMovie,
+                            favorites: _favoriteMovieIds,
+                            watchLater: _watchLaterMovieIds,
+                          )))
             : MovieDetailScreen(
                 movie: _selectedMovie!,
                 description: _selectedMovieDescription,
@@ -3066,6 +4739,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                   _movieCategories,
                   _selectedMovie!.categoryId,
                 ),
+                isFavorite: _favoriteMovieIds.contains(_selectedMovie!.id),
+                onToggleFavorite: () =>
+                    _toggleFavoriteMovie(_selectedMovie!),
+                tvActionIndex: _isAndroidTv && !_remoteMenuMode
+                    ? _tvContentIndex
+                    : null,
                 controller: _videoController,
                 player: _player,
                 appleController: _appleVideoController,
@@ -3073,27 +4752,50 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 playerTitle: _playerTitle,
                 rate: _rate,
                 labelFor: _trackLabel,
-                onBack: () => setState(() => _selectedMovie = null),
+                onBack: () {
+                  setState(() => _selectedMovie = null);
+                  if (_isAndroidTv) {
+                    unawaited(_previewMovieAt(_tvContentIndex));
+                  }
+                },
                 onPlay: () => _playMovie(_selectedMovie!, fromStart: true),
                 onResume: () => _playMovie(_selectedMovie!),
                 onRestart: () => _playMovie(_selectedMovie!, fromStart: true),
                 canResume: _movieCanResume(_selectedMovie!.id),
                 watchProgress: _movieProgress[_selectedMovie!.id],
-                onDownload: () => _downloadMovie(_selectedMovie!),
+                onDownload: _isAndroidTv
+                    ? null
+                    : () => _downloadMovie(_selectedMovie!),
                 onAudioChanged: _selectAudioTrack,
                 onSubtitleChanged: _selectSubtitleTrack,
                 onRateChanged: _setRate,
                 onToggleFocusMode: _togglePlayerFocusMode,
                 onPictureInPicture: _showPictureInPictureUnavailable,
               ),
-      AppSection.favorites => MoviesScreen(
+      AppSection.favorites => _isAndroidTv
+          ? TvFeaturedBrowseScreen<VodMovie>(
+              kindLabel: 'PREFERITI',
+              rowTitle: 'I tuoi preferiti',
+              items: _favoriteMovies,
+              selectedIndex: _remoteMenuMode ? null : _tvContentIndex,
+              imageUrl: (movie) => movie.logo,
+              titleFor: (movie) => movie.name,
+              metaFor: (movie) => _movieBrowseMeta(movie),
+              description: _browseHeroDescription,
+              descriptionLoading: _browseHeroLoading,
+              onOpen: _openMovie,
+              isFavorite: (movie) => _favoriteMovieIds.contains(movie.id),
+              onToggleFavorite: _toggleFavoriteMovie,
+              heroActionSelected: _browseHeroActionSelected,
+            )
+          : MoviesScreen(
         tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
         title: 'Preferiti',
         movies: _favoriteMovies,
         onPlay: _openMovie,
         onFavorite: _toggleFavoriteMovie,
         onWatchLater: _toggleWatchLaterMovie,
-        onDownload: _downloadMovie,
+        onDownload: _isAndroidTv ? null : _downloadMovie,
         favorites: _favoriteMovieIds,
         watchLater: _watchLaterMovieIds,
       ),
@@ -3104,7 +4806,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         onPlay: _openMovie,
         onFavorite: _toggleFavoriteMovie,
         onWatchLater: _toggleWatchLaterMovie,
-        onDownload: _downloadMovie,
+        onDownload: _isAndroidTv ? null : _downloadMovie,
         favorites: _favoriteMovieIds,
         watchLater: _watchLaterMovieIds,
       ),
@@ -3115,7 +4817,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         onPlay: _openMovie,
         onFavorite: _toggleFavoriteMovie,
         onWatchLater: _toggleWatchLaterMovie,
-        onDownload: _downloadMovie,
+        onDownload: _isAndroidTv ? null : _downloadMovie,
         favorites: _favoriteMovieIds,
         watchLater: _watchLaterMovieIds,
       ),
@@ -3143,25 +4845,61 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       ),
       AppSection.series =>
         _selectedSeries == null
-            ? SeriesScreen(
-                tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
-                shows: _filteredSeries,
-                allCount: _series.length,
-                categories: _seriesCategories,
-                selectedCategoryId: _seriesCategoryId,
-                sort: _seriesSort,
-                categoryName: (id) => _categoryName(_seriesCategories, id),
-                onCategoryChanged: (id) =>
-                    setState(() => _seriesCategoryId = id),
-                onSortChanged: (sort) => setState(() => _seriesSort = sort),
-                onOpen: _openSeries,
-              )
+            ? (_isAndroidTv
+                  ? TvFeaturedBrowseScreen<SeriesShow>(
+                      kindLabel: 'SERIE',
+                      rowTitle: _seriesCategoryId.isEmpty
+                          ? 'Catalogo serie'
+                          : _categoryName(
+                              _seriesCategories,
+                              _seriesCategoryId,
+                            ),
+                      items: _filteredSeries,
+                      selectedIndex: _remoteMenuMode ? null : _tvContentIndex,
+                      imageUrl: (show) => show.logo,
+                      titleFor: (show) => show.name,
+                      metaFor: (show) => _seriesBrowseMeta(show),
+                      description: _browseHeroDescription,
+                      descriptionLoading: _browseHeroLoading,
+                      categories: _seriesCategories,
+                      selectedCategoryId: _seriesCategoryId,
+                      categoryName: (id) =>
+                          _categoryName(_seriesCategories, id),
+                      onCategoryChanged: _setSeriesCategory,
+                      onOpen: _openSeries,
+                    )
+                  : (_seriesCategoryId.isEmpty
+                        ? SeriesCategoryRowsScreen(
+                            title: 'Serie',
+                            categories: _seriesCategories,
+                            items: _series,
+                            categoryName: (id) =>
+                                _categoryName(_seriesCategories, id),
+                            onOpen: _openSeries,
+                          )
+                        : SeriesScreen(
+                            tvSelectedIndex:
+                                _remoteMenuMode ? null : _tvContentIndex,
+                            shows: _filteredSeries,
+                            allCount: _series.length,
+                            categories: _seriesCategories,
+                            selectedCategoryId: _seriesCategoryId,
+                            sort: _seriesSort,
+                            categoryName: (id) =>
+                                _categoryName(_seriesCategories, id),
+                            onCategoryChanged: _setSeriesCategory,
+                            onSortChanged: (sort) =>
+                                setState(() => _seriesSort = sort),
+                            onOpen: _openSeries,
+                          )))
             : SeriesDetailScreen(
                 show: _selectedSeries!,
                 description: _selectedSeriesDescription,
                 episodes: _seriesEpisodes,
-                episodeProgress: _episodeProgress,
                 loading: _seriesDetailLoading,
+                tvActionIndex: _isAndroidTv && !_remoteMenuMode
+                    ? _tvContentIndex
+                    : null,
                 controller: _videoController,
                 player: _player,
                 appleController: _appleVideoController,
@@ -3169,12 +4907,17 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 playerTitle: _playerTitle,
                 rate: _rate,
                 labelFor: _trackLabel,
-                onBack: () => setState(() {
-                  _selectedSeries = null;
-                  _seriesEpisodes = const [];
-                }),
-                onPlay: (episode) => _playEpisode(episode),
-                onRestart: (episode) => _playEpisode(episode, fromStart: true),
+                onBack: () {
+                  setState(() {
+                    _selectedSeries = null;
+                    _seriesEpisodes = const [];
+                  });
+                  if (_isAndroidTv) {
+                    unawaited(_previewSeriesAt(_tvContentIndex));
+                  }
+                },
+                onPlay: _playEpisode,
+                episodeProgress: _episodeProgress,
                 onAudioChanged: _selectAudioTrack,
                 onSubtitleChanged: _selectSubtitleTrack,
                 onRateChanged: _setRate,
@@ -3183,6 +4926,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
               ),
       AppSection.epg => EpgScreen(
         tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
+        selectedProgrammeIndex: _remoteMenuMode ? null : _epgProgrammeIndex,
+        selectedProgramme: _selectedLiveChannel == null
+            ? null
+            : _selectedGuideProgrammeFor(_selectedLiveChannel!),
         channels: _epgChannels,
         categories: _liveCategories,
         selectedCategoryId: _liveCategoryId,
@@ -3190,15 +4937,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         selectedChannel: _selectedLiveChannel,
         epgByChannel: _epgByChannel,
         loading: _epgLoading,
-        onCategoryChanged: (id) {
-          setState(() => _liveCategoryId = id);
-          unawaited(_loadEpgPage(force: true));
-        },
+        onCategoryChanged: _setEpgCategory,
         onRefresh: () => unawaited(_loadEpgPage(force: true)),
-        onSelectChannel: (channel) {
-          setState(() => _selectedLiveChannel = channel);
-          unawaited(_loadShortEpg(channel));
-        },
+        onSelectChannel: (channel) =>
+            _previewEpgChannelAt(_channelIndexOf(_epgChannels, channel)),
         onWatchProgramme: _openLiveProgrammeFromGuide,
       ),
       AppSection.downloads => DownloadsScreen(
@@ -3217,6 +4959,239 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 }
 
+class _TvTopNavigation extends StatelessWidget {
+  const _TvTopNavigation({
+    required this.section,
+    required this.remoteSection,
+    required this.remoteSearchSelected,
+    required this.remoteSearchIconFocused,
+    required this.sections,
+    required this.sectionLabel,
+    required this.queryController,
+    required this.searchFocusNode,
+    required this.profile,
+    required this.status,
+    required this.loading,
+    required this.onQueryChanged,
+    required this.onResetSearch,
+    required this.onSectionChanged,
+    required this.onOpenSettings,
+    required this.onOpenSearch,
+  });
+
+  final AppSection section;
+  final AppSection? remoteSection;
+  final bool remoteSearchSelected;
+  final bool remoteSearchIconFocused;
+  final List<AppSection> sections;
+  final String Function(AppSection section) sectionLabel;
+  final TextEditingController queryController;
+  final FocusNode searchFocusNode;
+  final XtreamProfile? profile;
+  final String status;
+  final bool loading;
+  final ValueChanged<String> onQueryChanged;
+  final VoidCallback onResetSearch;
+  final ValueChanged<AppSection> onSectionChanged;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onOpenSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: LelegColors.sidebar.withValues(alpha: 0.96),
+        border: const Border(bottom: BorderSide(color: LelegColors.line)),
+      ),
+      padding: const EdgeInsets.fromLTRB(TvUi.contentPadding, 0, TvUi.contentPadding, 0),
+      height: TvUi.navHeight,
+      child: Row(
+        children: [
+          const _Brand(compact: true),
+          const SizedBox(width: 20),
+          Expanded(
+            child: Center(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (final item in sections) ...[
+                      _TvTopNavItem(
+                        label: sectionLabel(item),
+                        selected: remoteSection == item,
+                        active: section == item,
+                        onTap: () => onSectionChanged(item),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (remoteSearchSelected)
+            SizedBox(
+              width: 200,
+              child: TextField(
+                controller: queryController,
+                focusNode: searchFocusNode,
+                autofocus: true,
+                style: const TextStyle(fontSize: TvUi.body),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'Cerca titoli, canali…',
+                  hintStyle: const TextStyle(fontSize: TvUi.body),
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  suffixIcon: queryController.text.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close, size: 16),
+                          onPressed: onResetSearch,
+                        ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                ),
+                onChanged: onQueryChanged,
+                onSubmitted: onQueryChanged,
+              ),
+            )
+          else
+            // Cerca: evidenziata solo con remoteSearchIconFocused, si apre solo con OK
+            _TvHeaderIconButton(
+              tooltip: 'Cerca (OK per aprire)',
+              icon: Icons.search,
+              selected: remoteSearchIconFocused,
+              onTap: onOpenSearch,
+            ),
+          const SizedBox(width: 4),
+          _TvHeaderIconButton(
+            tooltip: 'Impostazioni',
+            icon: Icons.settings_outlined,
+            selected: section == AppSection.settings,
+            onTap: onOpenSettings,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TvTopNavItem extends StatelessWidget {
+  const _TvTopNavItem({
+    required this.label,
+    required this.selected,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlighted = selected || active;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: SizedBox(
+          height: TvUi.navHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: TvUi.navLabel,
+                    fontWeight: highlighted ? FontWeight.w700 : FontWeight.w500,
+                    color: highlighted ? LelegColors.fg : LelegColors.muted,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  height: 2.5,
+                  width: selected ? 22 : (active ? 22 : 0),
+                  decoration: BoxDecoration(
+                    color: selected ? LelegColors.accent : LelegColors.accent.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottone icona nell'header TV con focus gestito via telecomando (non apre al solo focus).
+class _TvHeaderIconButton extends StatefulWidget {
+  const _TvHeaderIconButton({
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    this.tooltip = '',
+  });
+
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  final String tooltip;
+
+  @override
+  State<_TvHeaderIconButton> createState() => _TvHeaderIconButtonState();
+}
+
+class _TvHeaderIconButtonState extends State<_TvHeaderIconButton> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.selected
+        ? LelegColors.accent
+        : (_focused ? LelegColors.fg : LelegColors.muted);
+    return Focus(
+      onFocusChange: (v) => setState(() => _focused = v),
+      onKeyEvent: (_, event) {
+        if (event is KeyDownEvent &&
+            (event.logicalKey == LogicalKeyboardKey.select ||
+                event.logicalKey == LogicalKeyboardKey.enter ||
+                event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+          widget.onTap();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: Tooltip(
+        message: widget.tooltip,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: _focused
+                  ? LelegColors.accent.withValues(alpha: 0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(widget.icon, size: 20, color: color),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class LelegSidebar extends StatelessWidget {
   const LelegSidebar({
     required this.section,
@@ -3230,6 +5205,9 @@ class LelegSidebar extends StatelessWidget {
     required this.onResetSearch,
     required this.onSectionChanged,
     this.compact = false,
+    this.showDownloads = true,
+    this.searchFocusNode,
+    this.remoteSearchSelected = false,
     super.key,
   });
 
@@ -3241,6 +5219,9 @@ class LelegSidebar extends StatelessWidget {
   final String status;
   final bool loading;
   final bool compact;
+  final bool showDownloads;
+  final FocusNode? searchFocusNode;
+  final bool remoteSearchSelected;
   final ValueChanged<String> onQueryChanged;
   final VoidCallback onResetSearch;
   final ValueChanged<AppSection> onSectionChanged;
@@ -3270,40 +5251,56 @@ class LelegSidebar extends StatelessWidget {
             ),
             const SizedBox(height: 8),
           ],
-          TextField(
-            controller: queryController,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              labelText: 'Cerca',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: queryController.text.trim().isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.only(right: 10),
-                      child: Center(
-                        widthFactor: 1,
-                        child: Text(
-                          'Ctrl K',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: LelegColors.muted,
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: remoteSearchSelected
+                    ? LelegColors.accent
+                    : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: TextField(
+              controller: queryController,
+              focusNode: searchFocusNode,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                labelText: 'Cerca',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: queryController.text.trim().isEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: Center(
+                          widthFactor: 1,
+                          child: Text(
+                            searchFocusNode == null ? 'Ctrl K' : 'Su + OK',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: LelegColors.muted,
+                            ),
                           ),
                         ),
+                      )
+                    : IconButton(
+                        tooltip: 'Pulisci ricerca',
+                        onPressed: onResetSearch,
+                        icon: const Icon(Icons.close),
                       ),
-                    )
-                  : IconButton(
-                      tooltip: 'Pulisci ricerca',
-                      onPressed: onResetSearch,
-                      icon: const Icon(Icons.close),
-                    ),
+              ),
+              onChanged: onQueryChanged,
+              onSubmitted: (_) {
+                onQueryChanged(queryController.text);
+                FocusScope.of(context).unfocus();
+                if (compact) {
+                  Navigator.of(context).maybePop();
+                }
+              },
+              onEditingComplete: () {
+                onQueryChanged(queryController.text);
+              },
             ),
-            onChanged: onQueryChanged,
-            onSubmitted: (_) {
-              onQueryChanged(queryController.text);
-              FocusScope.of(context).unfocus();
-              if (compact) {
-                Navigator.of(context).maybePop();
-              }
-            },
           ),
           const SizedBox(height: 18),
           Expanded(
@@ -3373,14 +5370,15 @@ class LelegSidebar extends StatelessWidget {
                   remoteSection,
                   onSectionChanged,
                 ),
-                _NavItem(
-                  Icons.download_outlined,
-                  'Download',
-                  AppSection.downloads,
-                  section,
-                  remoteSection,
-                  onSectionChanged,
-                ),
+                if (showDownloads)
+                  _NavItem(
+                    Icons.download_outlined,
+                    'Download',
+                    AppSection.downloads,
+                    section,
+                    remoteSection,
+                    onSectionChanged,
+                  ),
               ],
             ),
           ),
@@ -3439,8 +5437,8 @@ class _Brand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fontSize = compact ? 16.0 : 18.0;
-    final iconSize = compact ? 34.0 : 42.0;
+    final fontSize = compact ? TvUi.brandLabel : 18.0;
+    final iconSize = compact ? TvUi.brandIcon : 42.0;
     return Row(
       children: [
         Icon(Icons.all_inclusive, color: LelegColors.accent, size: iconSize),
@@ -3637,6 +5635,163 @@ class _SidebarStatus extends StatelessWidget {
   }
 }
 
+class _TvHomeHero extends StatelessWidget {
+  const _TvHomeHero({required this.target});
+
+  final TvHomeHeroTarget? target;
+
+  @override
+  Widget build(BuildContext context) {
+    if (target == null) {
+      return const SizedBox.shrink();
+    }
+    final hero = target!;
+    final heroHeight = TvUi.heroHeight(context);
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return SizedBox(
+      width: double.infinity,
+      height: heroHeight,
+      child: ClipRect(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            const ColoredBox(color: LelegColors.bg),
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: screenWidth * 0.62,
+              child: ClipRect(
+                child: _BackdropImage(
+                  url: hero.imageUrl,
+                  alignment: Alignment.center,
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    LelegColors.bg,
+                    LelegColors.bg.withValues(alpha: 0.96),
+                    LelegColors.bg.withValues(alpha: 0.72),
+                    Colors.transparent,
+                  ],
+                  stops: const [0, 0.34, 0.58, 0.9],
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    LelegColors.bg,
+                    LelegColors.bg.withValues(alpha: 0.5),
+                    Colors.transparent,
+                  ],
+                  stops: const [0, 0.28, 0.62],
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                TvUi.contentPadding,
+                10,
+                TvUi.contentPadding,
+                18,
+              ),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        hero.eyebrow,
+                        style: TextStyle(
+                          color: LelegColors.muted,
+                          letterSpacing: 1.2,
+                          fontWeight: FontWeight.w800,
+                          fontSize: TvUi.eyebrow,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        hero.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: TvUi.heroTitle,
+                          fontWeight: FontWeight.w900,
+                          height: 1.08,
+                        ),
+                      ),
+                      if (hero.progress != null &&
+                          hero.progress!.fraction > 0) ...[
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            minHeight: 4,
+                            value: hero.progress!.isCompleted
+                                ? 1
+                                : hero.progress!.fraction,
+                            backgroundColor: LelegColors.line,
+                            color: LelegColors.accent,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          hero.progress!.isCompleted
+                              ? 'Visto'
+                              : '${(hero.progress!.fraction * 100).round()}% visto',
+                          style: const TextStyle(
+                            color: LelegColors.muted,
+                            fontSize: TvUi.caption,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      FilledButton.icon(
+                        onPressed: hero.onAction,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          minimumSize: const Size(0, 32),
+                          textStyle: const TextStyle(
+                            fontSize: TvUi.body,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        icon: Icon(
+                          hero.progress?.canResume == true
+                              ? Icons.play_circle_outline
+                              : Icons.play_arrow,
+                          size: 16,
+                        ),
+                        label: Text(hero.actionLabel),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     required this.tvSelectedIndex,
@@ -3648,6 +5803,10 @@ class HomeScreen extends StatelessWidget {
     required this.recentMovies,
     required this.favoriteMovies,
     required this.watchLaterMovies,
+    required this.recentLiveChannels,
+    required this.recentMovieHistory,
+    required this.recentSeriesHistory,
+    this.heroTarget,
     required this.favoriteCount,
     required this.watchLaterCount,
     required this.onOpenLive,
@@ -3659,6 +5818,10 @@ class HomeScreen extends StatelessWidget {
     required this.onOpenDownloads,
     required this.onOpenSettings,
     required this.onPlayMovie,
+    required this.onPlayLiveChannel,
+    required this.onOpenSeriesShow,
+    this.isTv = false,
+    this.showDownloads = true,
     super.key,
   });
 
@@ -3671,8 +5834,14 @@ class HomeScreen extends StatelessWidget {
   final List<VodMovie> recentMovies;
   final List<VodMovie> favoriteMovies;
   final List<VodMovie> watchLaterMovies;
+  final List<LiveChannel> recentLiveChannels;
+  final List<VodMovie> recentMovieHistory;
+  final List<SeriesShow> recentSeriesHistory;
+  final TvHomeHeroTarget? heroTarget;
   final int favoriteCount;
   final int watchLaterCount;
+  final bool isTv;
+  final bool showDownloads;
   final VoidCallback onOpenLive;
   final VoidCallback onOpenMovies;
   final VoidCallback onOpenSeries;
@@ -3682,10 +5851,76 @@ class HomeScreen extends StatelessWidget {
   final VoidCallback onOpenDownloads;
   final VoidCallback onOpenSettings;
   final ValueChanged<VodMovie> onPlayMovie;
+  final ValueChanged<LiveChannel> onPlayLiveChannel;
+  final ValueChanged<SeriesShow> onOpenSeriesShow;
 
   @override
   Widget build(BuildContext context) {
-    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final mobile = !isTv && _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    if (isTv) {
+      return _PageScaffold(
+        title: 'Home',
+        hideHeader: true,
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            _TvHomeHero(target: heroTarget),
+            if (loading)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: _LoadingBand(status: status),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                TvUi.contentPadding,
+                12,
+                TvUi.contentPadding,
+                20,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _HomeMovieStrip(
+                    title: 'Preferiti',
+                    empty: 'Nessun preferito salvato.',
+                    movies: favoriteMovies,
+                    onPlayMovie: onPlayMovie,
+                  ),
+                  const SizedBox(height: TvUi.rowGap),
+                  _HomeChannelStrip(
+                    title: 'Ultimi canali visti',
+                    empty: 'Nessun canale visto di recente.',
+                    channels: recentLiveChannels,
+                    onPlayChannel: onPlayLiveChannel,
+                  ),
+                  const SizedBox(height: TvUi.rowGap),
+                  _HomeMovieStrip(
+                    title: 'Ultimi film visti',
+                    empty: 'Nessun film visto di recente.',
+                    movies: recentMovieHistory,
+                    onPlayMovie: onPlayMovie,
+                  ),
+                  const SizedBox(height: TvUi.rowGap),
+                  _HomeSeriesStrip(
+                    title: 'Ultime serie viste',
+                    empty: 'Nessuna serie vista di recente.',
+                    series: recentSeriesHistory,
+                    onOpenSeries: onOpenSeriesShow,
+                  ),
+                  const SizedBox(height: TvUi.rowGap),
+                  _HomeMovieStrip(
+                    title: 'Nuovi arrivi',
+                    empty: 'Carica una playlist in Impostazioni.',
+                    movies: recentMovies,
+                    onPlayMovie: onPlayMovie,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return _PageScaffold(
       eyebrow: _greeting(),
       title: 'Leleg IPTV',
@@ -3714,7 +5949,7 @@ class HomeScreen extends StatelessWidget {
           _HomeQuickActions(
             selectedIndex: tvSelectedIndex == null
                 ? null
-                : tvSelectedIndex! - 3,
+                : (tvSelectedIndex! - 3),
             favoriteCount: favoriteCount,
             watchLaterCount: watchLaterCount,
             onOpenFavorites: onOpenFavorites,
@@ -3722,6 +5957,7 @@ class HomeScreen extends StatelessWidget {
             onOpenEpg: onOpenEpg,
             onOpenDownloads: onOpenDownloads,
             onOpenSettings: onOpenSettings,
+            showDownloads: showDownloads,
           ),
           const SizedBox(height: 28),
           _HomeMovieStrip(
@@ -3980,11 +6216,13 @@ class _HomeQuickActions extends StatelessWidget {
     required this.onOpenEpg,
     required this.onOpenDownloads,
     required this.onOpenSettings,
+    this.showDownloads = true,
   });
 
   final int? selectedIndex;
   final int favoriteCount;
   final int watchLaterCount;
+  final bool showDownloads;
   final VoidCallback onOpenFavorites;
   final VoidCallback onOpenWatchLater;
   final VoidCallback onOpenEpg;
@@ -4013,12 +6251,13 @@ class _HomeQuickActions extends StatelessWidget {
         'Timeline e archivio',
         onOpenEpg,
       ),
-      _QuickActionData(
-        Icons.download,
-        'Download',
-        'Offline e coda',
-        onOpenDownloads,
-      ),
+      if (showDownloads)
+        _QuickActionData(
+          Icons.download,
+          'Download',
+          'Offline e coda',
+          onOpenDownloads,
+        ),
       _QuickActionData(
         Icons.settings,
         'Impostazioni',
@@ -4133,28 +6372,134 @@ class _HomeMovieStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final tv = TvUi.isActive(context);
+    final cardHeight = tv ? (TvUi.cardWidth * 9 / 16) : (mobile ? 240.0 : 290.0);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
           style: TextStyle(
-            fontSize: mobile ? 18 : 22,
-            fontWeight: FontWeight.w900,
+            fontSize: tv ? TvUi.sectionTitle : (mobile ? 18 : 22),
+            fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 14),
+        SizedBox(height: tv ? 6 : 14),
         if (movies.isEmpty)
-          _InlineEmptyStrip(message: empty)
+          _InlineEmptyStrip(message: empty, compact: tv)
         else
           SizedBox(
-            height: mobile ? 240 : 290,
+            height: cardHeight,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: movies.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
-              itemBuilder: (_, index) =>
-                  _MoviePosterCard(movie: movies[index], onPlay: onPlayMovie),
+              separatorBuilder: (_, _) => SizedBox(width: tv ? 8 : 14),
+              itemBuilder: (_, index) => tv
+                  ? _TvLandscapeCard(
+                      title: movies[index].name,
+                      image: movies[index].logo,
+                      onTap: () => onPlayMovie(movies[index]),
+                    )
+                  : _MoviePosterCard(
+                      movie: movies[index],
+                      onPlay: onPlayMovie,
+                    ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _HomeChannelStrip extends StatelessWidget {
+  const _HomeChannelStrip({
+    required this.title,
+    required this.empty,
+    required this.channels,
+    required this.onPlayChannel,
+  });
+
+  final String title;
+  final String empty;
+  final List<LiveChannel> channels;
+  final ValueChanged<LiveChannel> onPlayChannel;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardHeight = TvUi.cardWidth * 9 / 16;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: TvUi.sectionTitle,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (channels.isEmpty)
+          _InlineEmptyStrip(message: empty, compact: true)
+        else
+          SizedBox(
+            height: cardHeight,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: channels.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, index) => _TvLandscapeCard(
+                title: channels[index].name,
+                image: channels[index].logo,
+                onTap: () => onPlayChannel(channels[index]),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _HomeSeriesStrip extends StatelessWidget {
+  const _HomeSeriesStrip({
+    required this.title,
+    required this.empty,
+    required this.series,
+    required this.onOpenSeries,
+  });
+
+  final String title;
+  final String empty;
+  final List<SeriesShow> series;
+  final ValueChanged<SeriesShow> onOpenSeries;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardHeight = TvUi.cardWidth * 9 / 16;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: TvUi.sectionTitle,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 6),
+        if (series.isEmpty)
+          _InlineEmptyStrip(message: empty, compact: true)
+        else
+          SizedBox(
+            height: cardHeight,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: series.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (_, index) => _TvLandscapeCard(
+                title: series[index].name,
+                image: series[index].logo,
+                onTap: () => onOpenSeries(series[index]),
+              ),
             ),
           ),
       ],
@@ -4163,12 +6508,22 @@ class _HomeMovieStrip extends StatelessWidget {
 }
 
 class _InlineEmptyStrip extends StatelessWidget {
-  const _InlineEmptyStrip({required this.message});
+  const _InlineEmptyStrip({required this.message, this.compact = false});
 
   final String message;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.only(left: 2, bottom: 2),
+        child: Text(
+          message,
+          style: const TextStyle(color: LelegColors.muted, fontSize: TvUi.body),
+        ),
+      );
+    }
     return Container(
       height: 96,
       alignment: Alignment.centerLeft,
@@ -4203,6 +6558,7 @@ class LiveScreen extends StatelessWidget {
     required this.onSubtitleChanged,
     required this.onRateChanged,
     required this.onCategoryChanged,
+    required this.preferTvLayout,
     required this.onToggleFocusMode,
     required this.onPictureInPicture,
     required this.epg,
@@ -4231,6 +6587,7 @@ class LiveScreen extends StatelessWidget {
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
   final ValueChanged<double> onRateChanged;
   final ValueChanged<String> onCategoryChanged;
+  final bool preferTvLayout;
   final VoidCallback onToggleFocusMode;
   final VoidCallback onPictureInPicture;
   final List<EpgProgramme> epg;
@@ -4245,35 +6602,37 @@ class LiveScreen extends StatelessWidget {
     return _PageScaffold(
       title: 'Live TV',
       eyebrow: '${channels.length} di $allCount canali',
+      hideHeader: preferTvLayout,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final mobile = _useCompactAdaptiveConstraints(constraints);
+          final mobile =
+              !preferTvLayout && _useCompactAdaptiveConstraints(constraints);
           final channelList = channels.isEmpty
               ? const _EmptyState(message: 'Nessun canale caricato.')
               : ListView.separated(
                   padding: EdgeInsets.fromLTRB(
-                    mobile ? 16 : 20,
+                    preferTvLayout ? 8 : (mobile ? 16 : 20),
                     0,
-                    mobile ? 16 : 20,
-                    mobile ? 16 : 20,
+                    preferTvLayout ? 8 : (mobile ? 16 : 20),
+                    preferTvLayout ? 8 : (mobile ? 16 : 20),
                   ),
                   itemCount: channels.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  separatorBuilder: (_, _) =>
+                      SizedBox(height: preferTvLayout ? 4 : 8),
                   itemBuilder: (_, index) {
                     final channel = channels[index];
                     return _ChannelTile(
                       channel: channel,
-                      onOpen: mobile ? onSelectChannel : onPlay,
+                      onOpen: onSelectChannel,
                       onPlay: onPlay,
                       category: categoryName(channel.categoryId),
-                      selected:
-                          selectedChannel?.id == channel.id ||
-                          tvSelectedIndex == index,
+                      selected: tvSelectedIndex == index,
+                      compact: preferTvLayout,
                     );
                   },
                 );
           final playerPane = Padding(
-            padding: EdgeInsets.all(mobile ? 16 : 24),
+            padding: EdgeInsets.all(preferTvLayout ? 10 : (mobile ? 16 : 24)),
             child: mobile
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
@@ -4444,6 +6803,25 @@ class LiveScreen extends StatelessWidget {
               ],
             );
           }
+          if (preferTvLayout) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  width: TvUi.liveCategoryWidth,
+                  child: _TvCategorySidebar(
+                    categories: categories,
+                    selectedCategoryId: selectedCategoryId,
+                    onCategoryChanged: onCategoryChanged,
+                  ),
+                ),
+                const VerticalDivider(width: 1, color: LelegColors.line),
+                SizedBox(width: TvUi.liveChannelWidth, child: channelList),
+                const VerticalDivider(width: 1, color: LelegColors.line),
+                Expanded(child: playerPane),
+              ],
+            );
+          }
           return Row(
             children: [
               SizedBox(
@@ -4456,6 +6834,12 @@ class LiveScreen extends StatelessWidget {
                       categoryName: categoryName,
                       onCategoryChanged: onCategoryChanged,
                     ),
+                    if (categories.isNotEmpty)
+                      _QuickCategoryStrip(
+                        categories: categories,
+                        selectedCategoryId: selectedCategoryId,
+                        onCategoryChanged: onCategoryChanged,
+                      ),
                     Expanded(child: channelList),
                   ],
                 ),
@@ -4493,6 +6877,53 @@ class SearchResultsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = liveChannels.length + movies.length + series.length;
+    final tv = TvUi.isActive(context);
+    if (tv) {
+      return _PageScaffold(
+        title: '',
+        hideHeader: true,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            TvUi.contentPadding,
+            8,
+            TvUi.contentPadding,
+            20,
+          ),
+          children: [
+            Text(
+              '$total risultati per "$query"',
+              style: const TextStyle(
+                color: LelegColors.muted,
+                fontSize: TvUi.eyebrow,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _HomeChannelStrip(
+              title: 'Live TV',
+              empty: 'Nessun canale trovato.',
+              channels: liveChannels,
+              onPlayChannel: onOpenLive,
+            ),
+            const SizedBox(height: TvUi.rowGap),
+            _HomeMovieStrip(
+              title: 'Film',
+              empty: 'Nessun film trovato.',
+              movies: movies,
+              onPlayMovie: onOpenMovie,
+            ),
+            const SizedBox(height: TvUi.rowGap),
+            _HomeSeriesStrip(
+              title: 'Serie',
+              empty: 'Nessuna serie trovata.',
+              series: series,
+              onOpenSeries: onOpenSeries,
+            ),
+          ],
+        ),
+      );
+    }
     return _PageScaffold(
       title: 'Cerca',
       eyebrow: '$total risultati per "$query"',
@@ -4609,6 +7040,553 @@ class _SearchMediaTile extends StatelessWidget {
   }
 }
 
+class TvFeaturedBrowseScreen<T> extends StatelessWidget {
+  const TvFeaturedBrowseScreen({
+    required this.kindLabel,
+    required this.rowTitle,
+    required this.items,
+    required this.selectedIndex,
+    required this.imageUrl,
+    required this.titleFor,
+    required this.metaFor,
+    required this.description,
+    required this.descriptionLoading,
+    required this.onOpen,
+    this.categories = const [],
+    this.selectedCategoryId = '',
+    this.categoryName,
+    this.onCategoryChanged,
+    this.isFavorite,
+    this.onToggleFavorite,
+    this.heroActionSelected = false,
+    super.key,
+  });
+
+  final String kindLabel;
+  final String rowTitle;
+  final List<T> items;
+  final int? selectedIndex;
+  final String Function(T item) imageUrl;
+  final String Function(T item) titleFor;
+  final String Function(T item) metaFor;
+  final String description;
+  final bool descriptionLoading;
+  final ValueChanged<T> onOpen;
+  final List<XtreamCategory> categories;
+  final String selectedCategoryId;
+  final String Function(String id)? categoryName;
+  final ValueChanged<String>? onCategoryChanged;
+  final bool Function(T item)? isFavorite;
+  final ValueChanged<T>? onToggleFavorite;
+  final bool heroActionSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) {
+      return const _PageScaffold(
+        title: '',
+        hideHeader: true,
+        child: _EmptyState(message: 'Nessun titolo da mostrare.'),
+      );
+    }
+    final index = ((selectedIndex ?? 0).clamp(0, items.length - 1)).toInt();
+    final selected = items[index];
+    return _PageScaffold(
+      title: '',
+      hideHeader: true,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final heroHeight = constraints.maxHeight * TvUi.browseHeroFraction;
+          final rowHeight = constraints.maxHeight - heroHeight;
+          return Column(
+            children: [
+              SizedBox(
+                height: heroHeight,
+                child: _TvBrowseHeroPanel(
+                  kindLabel: kindLabel,
+                  title: titleFor(selected),
+                  imageUrl: imageUrl(selected),
+                  metaLine: metaFor(selected),
+                  description: description,
+                  loading: descriptionLoading,
+                  isFavorite: isFavorite == null
+                      ? null
+                      : isFavorite!(selected),
+                  onToggleFavorite: onToggleFavorite == null
+                      ? null
+                      : () => onToggleFavorite!(selected),
+                  favoriteActionSelected: heroActionSelected,
+                ),
+              ),
+              SizedBox(
+                height: rowHeight,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (onCategoryChanged != null &&
+                        categoryName != null &&
+                        categories.isNotEmpty)
+                      _QuickCategoryStrip(
+                        categories: categories,
+                        selectedCategoryId: selectedCategoryId,
+                        onCategoryChanged: onCategoryChanged!,
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        TvUi.contentPadding,
+                        8,
+                        TvUi.contentPadding,
+                        0,
+                      ),
+                      child: Text(
+                        rowTitle,
+                        style: const TextStyle(
+                          fontSize: TvUi.sectionTitle,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(
+                          TvUi.contentPadding,
+                          10,
+                          TvUi.contentPadding,
+                          14,
+                        ),
+                        scrollDirection: Axis.horizontal,
+                        itemCount: items.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 10),
+                        itemBuilder: (_, itemIndex) {
+                          final item = items[itemIndex];
+                          return _EnsureVisibleWhenSelected(
+                            selected: selectedIndex == itemIndex,
+                            child: _TvBrowseThumbnail(
+                              title: titleFor(item),
+                              imageUrl: imageUrl(item),
+                              selected: selectedIndex == itemIndex,
+                              onTap: () => onOpen(item),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _TvBrowseHeroPanel extends StatelessWidget {
+  const _TvBrowseHeroPanel({
+    required this.kindLabel,
+    required this.title,
+    required this.imageUrl,
+    required this.metaLine,
+    required this.description,
+    required this.loading,
+    this.isFavorite,
+    this.onToggleFavorite,
+    this.favoriteActionSelected = false,
+  });
+
+  final String kindLabel;
+  final String title;
+  final String imageUrl;
+  final String metaLine;
+  final String description;
+  final bool loading;
+  final bool? isFavorite;
+  final VoidCallback? onToggleFavorite;
+  final bool favoriteActionSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _BackdropImage(
+            key: ValueKey(imageUrl),
+            url: imageUrl,
+            alignment: const Alignment(0.55, -0.1),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  LelegColors.bg,
+                  LelegColors.bg.withValues(alpha: 0.94),
+                  LelegColors.bg.withValues(alpha: 0.55),
+                  Colors.transparent,
+                ],
+                stops: const [0, 0.34, 0.58, 0.92],
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.bottomCenter,
+                end: Alignment.topCenter,
+                colors: [
+                  LelegColors.bg,
+                  LelegColors.bg.withValues(alpha: 0.72),
+                  Colors.transparent,
+                ],
+                stops: const [0, 0.32, 0.72],
+              ),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              TvUi.contentPadding,
+              14,
+              TvUi.contentPadding,
+              18,
+            ),
+            child: Align(
+              alignment: Alignment.bottomLeft,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      kindLabel,
+                      style: TextStyle(
+                        color: LelegColors.muted,
+                        letterSpacing: 1.2,
+                        fontWeight: FontWeight.w800,
+                        fontSize: TvUi.eyebrow,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: TvUi.heroTitle,
+                        fontWeight: FontWeight.w900,
+                        height: 1.05,
+                      ),
+                    ),
+                    if (metaLine.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        metaLine,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: LelegColors.muted,
+                          fontWeight: FontWeight.w700,
+                          fontSize: TvUi.body,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    if (loading)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else if (description.trim().isNotEmpty)
+                      Text(
+                        description.trim(),
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: LelegColors.fg.withValues(alpha: 0.88),
+                          fontSize: TvUi.body,
+                          height: 1.35,
+                        ),
+                      )
+                    else
+                      Text(
+                        'Nessuna descrizione disponibile.',
+                        style: TextStyle(
+                          color: LelegColors.muted,
+                          fontSize: TvUi.body,
+                        ),
+                      ),
+                    if (onToggleFavorite != null) ...[
+                      const SizedBox(height: 14),
+                      OutlinedButton.icon(
+                        onPressed: onToggleFavorite,
+                        icon: Icon(
+                          isFavorite == true ? Icons.star : Icons.star_border,
+                          color: isFavorite == true
+                              ? LelegColors.accent
+                              : null,
+                        ),
+                        label: Text(
+                          isFavorite == true
+                              ? 'Nei preferiti'
+                              : 'Aggiungi ai preferiti',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: favoriteActionSelected
+                                ? LelegColors.accent
+                                : (isFavorite == true
+                                    ? LelegColors.accent
+                                    : LelegColors.line),
+                            width: favoriteActionSelected ? 2 : 1,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TvBrowseThumbnail extends StatelessWidget {
+  const _TvBrowseThumbnail({
+    required this.title,
+    required this.imageUrl,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String imageUrl;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _RemoteActivate(
+      onActivate: onTap,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: TvUi.thumbnailWidth,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(
+              color: selected ? Colors.white : Colors.transparent,
+              width: selected ? 3 : 0,
+            ),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _BackdropImage(url: imageUrl, alignment: Alignment.center),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.82),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 10, 8, 6),
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: TvUi.font(11),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CatalogCategoryRowsScreen extends StatelessWidget {
+  const CatalogCategoryRowsScreen({
+    required this.title,
+    required this.categories,
+    required this.items,
+    required this.categoryName,
+    required this.onPlay,
+    super.key,
+  });
+
+  final String title;
+  final List<XtreamCategory> categories;
+  final List<VodMovie> items;
+  final String Function(String id) categoryName;
+  final ValueChanged<VodMovie> onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <(String, List<VodMovie>)>[];
+    for (final category in categories.take(12)) {
+      final rowItems = items
+          .where((item) => item.categoryId == category.id)
+          .take(16)
+          .toList();
+      if (rowItems.isNotEmpty) {
+        rows.add((categoryName(category.id), rowItems));
+      }
+    }
+    if (rows.isEmpty && items.isNotEmpty) {
+      rows.add(('Catalogo', items.take(16).toList()));
+    }
+    return _PageScaffold(
+      title: title,
+      eyebrow: '${items.length} titoli · scorri per categoria',
+      hideHeader: TvUi.isActive(context),
+      child: rows.isEmpty
+          ? const _EmptyState(message: 'Nessun titolo caricato.')
+          : ListView.separated(
+              padding: EdgeInsets.fromLTRB(
+                TvUi.isActive(context) ? TvUi.contentPadding : 24,
+                TvUi.isActive(context) ? 16 : 8,
+                TvUi.isActive(context) ? TvUi.contentPadding : 24,
+                24,
+              ),
+              itemCount: rows.length,
+              separatorBuilder: (_, _) => SizedBox(
+                height: TvUi.isActive(context) ? TvUi.rowGap : 24,
+              ),
+              itemBuilder: (_, index) {
+                final row = rows[index];
+                return _HomeMovieStrip(
+                  title: row.$1,
+                  empty: 'Nessun titolo in questa categoria.',
+                  movies: row.$2,
+                  onPlayMovie: onPlay,
+                );
+              },
+            ),
+    );
+  }
+}
+
+class SeriesCategoryRowsScreen extends StatelessWidget {
+  const SeriesCategoryRowsScreen({
+    required this.title,
+    required this.categories,
+    required this.items,
+    required this.categoryName,
+    required this.onOpen,
+    super.key,
+  });
+
+  final String title;
+  final List<XtreamCategory> categories;
+  final List<SeriesShow> items;
+  final String Function(String id) categoryName;
+  final ValueChanged<SeriesShow> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <(String, List<SeriesShow>)>[];
+    for (final category in categories.take(12)) {
+      final rowItems = items
+          .where((item) => item.categoryId == category.id)
+          .take(16)
+          .toList();
+      if (rowItems.isNotEmpty) {
+        rows.add((categoryName(category.id), rowItems));
+      }
+    }
+    if (rows.isEmpty && items.isNotEmpty) {
+      rows.add(('Catalogo', items.take(16).toList()));
+    }
+    return _PageScaffold(
+      title: title,
+      eyebrow: '${items.length} serie · scorri per categoria',
+      hideHeader: TvUi.isActive(context),
+      child: rows.isEmpty
+          ? const _EmptyState(message: 'Nessuna serie caricata.')
+          : ListView.separated(
+              padding: EdgeInsets.fromLTRB(
+                TvUi.isActive(context) ? TvUi.contentPadding : 24,
+                TvUi.isActive(context) ? 16 : 8,
+                TvUi.isActive(context) ? TvUi.contentPadding : 24,
+                24,
+              ),
+              itemCount: rows.length,
+              separatorBuilder: (_, _) => SizedBox(
+                height: TvUi.isActive(context) ? TvUi.rowGap : 24,
+              ),
+              itemBuilder: (_, index) {
+                final row = rows[index];
+                final tv = TvUi.isActive(context);
+                final cardHeight = tv ? (TvUi.cardWidth * 9 / 16) : 290.0;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      row.$1,
+                      style: TextStyle(
+                        fontSize: tv ? 13 : 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    SizedBox(height: tv ? 8 : 14),
+                    SizedBox(
+                      height: cardHeight,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: row.$2.length,
+                        separatorBuilder: (_, _) =>
+                            SizedBox(width: tv ? 8 : 14),
+                        itemBuilder: (_, itemIndex) {
+                          final show = row.$2[itemIndex];
+                          if (TvUi.isActive(context)) {
+                            return _TvLandscapeCard(
+                              title: show.name,
+                              image: show.logo,
+                              onTap: () => onOpen(show),
+                            );
+                          }
+                          return _SeriesPosterCard(
+                            show: show,
+                            category: categoryName(show.categoryId),
+                            onOpen: onOpen,
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+    );
+  }
+}
+
 class MoviesScreen extends StatelessWidget {
   const MoviesScreen({
     required this.tvSelectedIndex,
@@ -4666,6 +7644,12 @@ class MoviesScreen extends StatelessWidget {
               sort: sort,
               onSortChanged: onSortChanged,
             ),
+          if (onCategoryChanged != null && categories.isNotEmpty)
+            _QuickCategoryStrip(
+              categories: categories,
+              selectedCategoryId: selectedCategoryId,
+              onCategoryChanged: onCategoryChanged!,
+            ),
           Expanded(
             child: movies.isEmpty
                 ? const _EmptyState(message: 'Nessun titolo da mostrare.')
@@ -4718,7 +7702,10 @@ class MovieDetailScreen extends StatelessWidget {
     this.onRestart,
     this.canResume = false,
     this.watchProgress,
-    required this.onDownload,
+    this.onDownload,
+    this.isFavorite = false,
+    this.onToggleFavorite,
+    this.tvActionIndex,
     required this.onAudioChanged,
     required this.onSubtitleChanged,
     required this.onRateChanged,
@@ -4743,7 +7730,10 @@ class MovieDetailScreen extends StatelessWidget {
   final VoidCallback? onRestart;
   final bool canResume;
   final PlaybackProgress? watchProgress;
-  final VoidCallback onDownload;
+  final VoidCallback? onDownload;
+  final bool isFavorite;
+  final VoidCallback? onToggleFavorite;
+  final int? tvActionIndex;
   final ValueChanged<AudioTrack> onAudioChanged;
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
   final ValueChanged<double> onRateChanged;
@@ -4752,6 +7742,226 @@ class MovieDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tv = TvUi.isActive(context);
+    if (tv) {
+      final meta = [
+        if (category.isNotEmpty) category,
+        if (movie.rating.isNotEmpty) '★ ${movie.rating}',
+        movie.containerExtension.toUpperCase(),
+      ].join(' · ');
+      return _PageScaffold(
+        title: '',
+        hideHeader: true,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _BackdropImage(
+              key: ValueKey(movie.logo),
+              url: movie.logo,
+              alignment: const Alignment(0.55, -0.15),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    LelegColors.bg,
+                    LelegColors.bg.withValues(alpha: 0.95),
+                    LelegColors.bg.withValues(alpha: 0.55),
+                    Colors.transparent,
+                  ],
+                  stops: const [0, 0.34, 0.58, 0.92],
+                ),
+              ),
+            ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    LelegColors.bg,
+                    LelegColors.bg.withValues(alpha: 0.72),
+                    Colors.transparent,
+                  ],
+                  stops: const [0, 0.28, 0.68],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                TvUi.contentPadding,
+                16,
+                TvUi.contentPadding,
+                24,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: onBack,
+                        icon: const Icon(Icons.arrow_back, size: 18),
+                        label: const Text('Film'),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(
+                            color: tvActionIndex ==
+                                    (canResume ? 3 : 2)
+                                ? LelegColors.accent
+                                : LelegColors.line,
+                            width: tvActionIndex == (canResume ? 3 : 2)
+                                ? 2
+                                : 1,
+                          ),
+                        ),
+                      ),
+                      if (canResume && onResume != null && onRestart != null) ...[
+                        FilledButton.icon(
+                          onPressed: onResume,
+                          icon: const Icon(Icons.play_circle_outline, size: 20),
+                          label: const Text('Riprendi'),
+                          style: FilledButton.styleFrom(
+                            side: tvActionIndex == 0
+                                ? const BorderSide(
+                                    color: Colors.white,
+                                    width: 2,
+                                  )
+                                : null,
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: onRestart,
+                          icon: const Icon(Icons.restart_alt, size: 18),
+                          label: const Text('Ricomincia'),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: tvActionIndex == 1
+                                  ? LelegColors.accent
+                                  : LelegColors.line,
+                              width: tvActionIndex == 1 ? 2 : 1,
+                            ),
+                          ),
+                        ),
+                      ] else
+                        FilledButton.icon(
+                          onPressed: onPlay,
+                          icon: const Icon(Icons.play_arrow, size: 20),
+                          label: const Text('Riproduci'),
+                          style: FilledButton.styleFrom(
+                            side: tvActionIndex == 0
+                                ? const BorderSide(
+                                    color: Colors.white,
+                                    width: 2,
+                                  )
+                                : null,
+                          ),
+                        ),
+                      if (onToggleFavorite != null)
+                        OutlinedButton.icon(
+                          onPressed: onToggleFavorite,
+                          icon: Icon(
+                            isFavorite ? Icons.star : Icons.star_border,
+                            color: isFavorite ? LelegColors.accent : null,
+                          ),
+                          label: Text(
+                            isFavorite ? 'Preferito' : 'Preferiti',
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: tvActionIndex == (canResume ? 2 : 1)
+                                  ? LelegColors.accent
+                                  : LelegColors.line,
+                              width: tvActionIndex == (canResume ? 2 : 1)
+                                  ? 2
+                                  : 1,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const Spacer(),
+                  Text(
+                    'FILM',
+                    style: TextStyle(
+                      color: LelegColors.muted,
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.w800,
+                      fontSize: TvUi.eyebrow,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    movie.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: TvUi.heroTitle,
+                      fontWeight: FontWeight.w900,
+                      height: 1.05,
+                    ),
+                  ),
+                  if (meta.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      meta,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: LelegColors.muted,
+                        fontWeight: FontWeight.w700,
+                        fontSize: TvUi.body,
+                      ),
+                    ),
+                  ],
+                  if (watchProgress != null && watchProgress!.fraction > 0) ...[
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        minHeight: 4,
+                        value: watchProgress!.isCompleted
+                            ? 1
+                            : watchProgress!.fraction,
+                        backgroundColor: LelegColors.line,
+                        color: LelegColors.accent,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      watchProgress!.isCompleted
+                          ? 'Visto'
+                          : '${(watchProgress!.fraction * 100).round()}% visto',
+                      style: const TextStyle(
+                        color: LelegColors.muted,
+                        fontSize: TvUi.caption,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Text(
+                    description.trim().isNotEmpty
+                        ? description.trim()
+                        : 'Nessuna descrizione disponibile dal provider.',
+                    maxLines: 5,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: LelegColors.fg.withValues(alpha: 0.88),
+                      fontSize: 12,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: movie.name,
@@ -4778,70 +7988,37 @@ class MovieDetailScreen extends StatelessWidget {
                   icon: const Icon(Icons.arrow_back),
                   label: const Text('Film'),
                 ),
-                if (canResume && onResume != null && onRestart != null) ...[
-                  FilledButton.icon(
-                    onPressed: onResume,
-                    icon: const Icon(Icons.play_circle_outline),
-                    label: const Text('Riprendi'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onRestart,
-                    icon: const Icon(Icons.restart_alt),
-                    label: const Text('Ricomincia'),
-                  ),
-                ] else
-                  FilledButton.icon(
-                    onPressed: onPlay,
-                    icon: const Icon(Icons.play_arrow),
-                    label: const Text('Riproduci'),
-                  ),
-                OutlinedButton.icon(
-                  onPressed: onDownload,
-                  icon: const Icon(Icons.download),
-                  label: const Text('Download'),
+                FilledButton.icon(
+                  onPressed: onPlay,
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Play'),
                 ),
+                if (onDownload != null)
+                  OutlinedButton.icon(
+                    onPressed: onDownload,
+                    icon: const Icon(Icons.download),
+                    label: const Text('Download'),
+                  ),
               ],
             ),
-            if (watchProgress != null && watchProgress!.fraction > 0) ...[
-              const SizedBox(height: 12),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  minHeight: 5,
-                  value: watchProgress!.isCompleted ? 1 : watchProgress!.fraction,
-                  backgroundColor: LelegColors.line,
-                  color: LelegColors.accent,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                watchProgress!.isCompleted
-                    ? 'Visto'
-                    : '${(watchProgress!.fraction * 100).round()}% visto',
-                style: const TextStyle(
-                  color: LelegColors.muted,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
             const SizedBox(height: 18),
             Expanded(
               child: mobile
                   ? ListView(
                       children: [
                         SizedBox(
-                          height: 360,
+                          height: 280,
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(18),
                             child: _Poster(url: movie.logo),
                           ),
                         ),
                         const SizedBox(height: 16),
                         Container(
-                          padding: const EdgeInsets.all(18),
+                          padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
                             color: LelegColors.surface2,
-                            borderRadius: BorderRadius.circular(20),
+                            borderRadius: BorderRadius.circular(18),
                             border: Border.all(color: LelegColors.line),
                           ),
                           child: Column(
@@ -4868,17 +8045,24 @@ class MovieDetailScreen extends StatelessWidget {
                                 ],
                               ),
                               const SizedBox(height: 14),
-                              Text(
-                                description.trim().isNotEmpty
-                                    ? description.trim()
-                                    : 'Nessuna descrizione disponibile dal provider.',
-                                style: const TextStyle(
-                                  color: LelegColors.fg,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.55,
+                              if (description.trim().isNotEmpty)
+                                Text(
+                                  description.trim(),
+                                  style: const TextStyle(
+                                    color: LelegColors.muted,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.45,
+                                  ),
+                                )
+                              else
+                                const Text(
+                                  'Nessuna descrizione disponibile dal provider.',
+                                  style: TextStyle(
+                                    color: LelegColors.muted,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.45,
+                                  ),
                                 ),
-                              ),
                             ],
                           ),
                         ),
@@ -4888,29 +8072,13 @@ class MovieDetailScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         SizedBox(
-                          width: 380,
-                          child: _DetailHeroPanel(
-                            imageUrl: movie.logo,
-                            description: description,
-                            posterHeight: 480,
-                            badges: [
-                              _MetaBadge(
-                                icon: Icons.movie_outlined,
-                                label: category.isEmpty ? 'Film' : category,
-                              ),
-                              if (movie.rating.isNotEmpty)
-                                _MetaBadge(
-                                  icon: Icons.star_outline,
-                                  label: movie.rating,
-                                ),
-                              _MetaBadge(
-                                icon: Icons.video_file_outlined,
-                                label: movie.containerExtension.toUpperCase(),
-                              ),
-                            ],
+                          width: 260,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: _Poster(url: movie.logo),
                           ),
                         ),
-                        const SizedBox(width: 24),
+                        const SizedBox(width: 22),
                         Expanded(
                           child: PlayerCard(
                             title: playerTitle,
@@ -4979,6 +8147,12 @@ class SeriesScreen extends StatelessWidget {
             sort: sort,
             onSortChanged: onSortChanged,
           ),
+          if (categories.isNotEmpty)
+            _QuickCategoryStrip(
+              categories: categories,
+              selectedCategoryId: selectedCategoryId,
+              onCategoryChanged: onCategoryChanged,
+            ),
           Expanded(
             child: shows.isEmpty
                 ? const _EmptyState(message: 'Nessuna serie da mostrare.')
@@ -5010,7 +8184,6 @@ class SeriesDetailScreen extends StatelessWidget {
     required this.show,
     required this.description,
     required this.episodes,
-    required this.episodeProgress,
     required this.loading,
     required this.controller,
     required this.player,
@@ -5021,7 +8194,8 @@ class SeriesDetailScreen extends StatelessWidget {
     required this.labelFor,
     required this.onBack,
     required this.onPlay,
-    required this.onRestart,
+    this.episodeProgress = const {},
+    this.tvActionIndex,
     required this.onAudioChanged,
     required this.onSubtitleChanged,
     required this.onRateChanged,
@@ -5033,7 +8207,6 @@ class SeriesDetailScreen extends StatelessWidget {
   final SeriesShow show;
   final String description;
   final List<SeriesEpisode> episodes;
-  final Map<int, PlaybackProgress> episodeProgress;
   final bool loading;
   final VideoController? controller;
   final Player? player;
@@ -5044,7 +8217,8 @@ class SeriesDetailScreen extends StatelessWidget {
   final String Function(dynamic value) labelFor;
   final VoidCallback onBack;
   final ValueChanged<SeriesEpisode> onPlay;
-  final ValueChanged<SeriesEpisode> onRestart;
+  final Map<int, PlaybackProgress> episodeProgress;
+  final int? tvActionIndex;
   final ValueChanged<AudioTrack> onAudioChanged;
   final ValueChanged<SubtitleTrack> onSubtitleChanged;
   final ValueChanged<double> onRateChanged;
@@ -5053,6 +8227,147 @@ class SeriesDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tv = TvUi.isActive(context);
+    if (tv) {
+      final meta = [
+        if (show.rating.isNotEmpty) '★ ${show.rating}',
+        if (show.year.isNotEmpty) show.year,
+        '${episodes.length} episodi',
+      ].join(' · ');
+      final episodeIndex = tvActionIndex == null || tvActionIndex! <= 0
+          ? null
+          : tvActionIndex! - 1;
+      return _PageScaffold(
+        title: '',
+        hideHeader: true,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              height: MediaQuery.sizeOf(context).height * TvUi.seriesHeroFraction,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _BackdropImage(
+                    key: ValueKey(show.logo),
+                    url: show.logo,
+                    alignment: const Alignment(0.55, -0.1),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          LelegColors.bg,
+                          LelegColors.bg.withValues(alpha: 0.94),
+                          LelegColors.bg.withValues(alpha: 0.5),
+                          Colors.transparent,
+                        ],
+                        stops: const [0, 0.34, 0.58, 0.92],
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      TvUi.contentPadding,
+                      14,
+                      TvUi.contentPadding,
+                      16,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: onBack,
+                          icon: const Icon(Icons.arrow_back, size: 18),
+                          label: const Text('Serie'),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: tvActionIndex == 0
+                                  ? LelegColors.accent
+                                  : LelegColors.line,
+                              width: tvActionIndex == 0 ? 2 : 1,
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'SERIE',
+                          style: TextStyle(
+                            color: LelegColors.muted,
+                            letterSpacing: 1.2,
+                            fontWeight: FontWeight.w800,
+                            fontSize: TvUi.eyebrow,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          show.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: TvUi.heroTitle,
+                            fontWeight: FontWeight.w900,
+                            height: 1.05,
+                          ),
+                        ),
+                        if (meta.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            meta,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: LelegColors.muted,
+                              fontWeight: FontWeight.w700,
+                              fontSize: TvUi.body,
+                            ),
+                          ),
+                        ],
+                        if (loading)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 8),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        else if (description.trim().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: Text(
+                              description.trim(),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: LelegColors.fg.withValues(alpha: 0.88),
+                                fontSize: 12,
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: episodes.isEmpty
+                  ? const _EmptyState(message: 'Nessun episodio caricato.')
+                  : _SeriesSeasonList(
+                      episodes: episodes,
+                      episodeProgress: episodeProgress,
+                      selectedEpisodeIndex: episodeIndex,
+                      onPlay: onPlay,
+                    ),
+            ),
+          ],
+        ),
+      );
+    }
     final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: show.name,
@@ -5081,22 +8396,11 @@ class SeriesDetailScreen extends StatelessWidget {
                 ),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: SizedBox(
-                      height: 360,
-                      child: _Poster(url: show.logo),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Container(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: LelegColors.surface2,
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(18),
                       border: Border.all(color: LelegColors.line),
                     ),
                     child: Text(
@@ -5104,10 +8408,9 @@ class SeriesDetailScreen extends StatelessWidget {
                           ? description.trim()
                           : 'Nessuna descrizione disponibile dal provider.',
                       style: const TextStyle(
-                        color: LelegColors.fg,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        height: 1.55,
+                        color: LelegColors.muted,
+                        fontWeight: FontWeight.w700,
+                        height: 1.45,
                       ),
                     ),
                   ),
@@ -5116,33 +8419,21 @@ class SeriesDetailScreen extends StatelessWidget {
                 if (episodes.isEmpty)
                   const _EmptyState(message: 'Nessun episodio caricato.')
                 else
-                  _SeriesSeasonList(
-                    episodes: episodes,
-                    episodeProgress: episodeProgress,
-                    onPlay: onPlay,
-                    onRestart: onRestart,
+                  ListView.separated(
                     shrinkWrap: true,
-                    horizontalPadding: 16,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                    itemCount: episodes.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (_, index) =>
+                        _EpisodeTile(episode: episodes[index], onPlay: onPlay),
                   ),
               ],
             )
           : Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 SizedBox(
-                  width: 380,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 12, 20),
-                    child: _DetailHeroPanel(
-                      imageUrl: show.logo,
-                      description: description,
-                      posterHeight: 480,
-                    ),
-                  ),
-                ),
-                const VerticalDivider(width: 1, color: LelegColors.line),
-                SizedBox(
-                  width: 440,
+                  width: 430,
                   child: Column(
                     children: [
                       Padding(
@@ -5171,12 +8462,20 @@ class SeriesDetailScreen extends StatelessWidget {
                             ? const _EmptyState(
                                 message: 'Nessun episodio caricato.',
                               )
-                            : _SeriesSeasonList(
-                                episodes: episodes,
-                                episodeProgress: episodeProgress,
-                                onPlay: onPlay,
-                                onRestart: onRestart,
-                                horizontalPadding: 20,
+                            : ListView.separated(
+                                padding: const EdgeInsets.fromLTRB(
+                                  20,
+                                  0,
+                                  20,
+                                  20,
+                                ),
+                                itemCount: episodes.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (_, index) => _EpisodeTile(
+                                  episode: episodes[index],
+                                  onPlay: onPlay,
+                                ),
                               ),
                       ),
                     ],
@@ -5211,6 +8510,8 @@ class SeriesDetailScreen extends StatelessWidget {
 class EpgScreen extends StatelessWidget {
   const EpgScreen({
     required this.tvSelectedIndex,
+    required this.selectedProgrammeIndex,
+    required this.selectedProgramme,
     required this.channels,
     required this.categories,
     required this.selectedCategoryId,
@@ -5226,6 +8527,8 @@ class EpgScreen extends StatelessWidget {
   });
 
   final int? tvSelectedIndex;
+  final int? selectedProgrammeIndex;
+  final EpgProgramme? selectedProgramme;
   final List<LiveChannel> channels;
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
@@ -5287,6 +8590,8 @@ class EpgScreen extends StatelessWidget {
                     onWatchProgramme: onWatchProgramme,
                     loading: loading,
                     selectedIndex: tvSelectedIndex,
+                    selectedProgrammeIndex: selectedProgrammeIndex,
+                    selectedProgramme: selectedProgramme,
                   ),
           ),
         ],
@@ -5304,6 +8609,8 @@ class _EpgGrid extends StatefulWidget {
     required this.onWatchProgramme,
     required this.loading,
     required this.selectedIndex,
+    required this.selectedProgrammeIndex,
+    required this.selectedProgramme,
   });
 
   final List<LiveChannel> channels;
@@ -5314,6 +8621,8 @@ class _EpgGrid extends StatefulWidget {
   onWatchProgramme;
   final bool loading;
   final int? selectedIndex;
+  final int? selectedProgrammeIndex;
+  final EpgProgramme? selectedProgramme;
 
   @override
   State<_EpgGrid> createState() => _EpgGridState();
@@ -5404,6 +8713,12 @@ class _EpgGridState extends State<_EpgGrid> {
                     active:
                         widget.selectedChannel?.id == channel.id ||
                         widget.selectedIndex == channelIndex,
+                    selectedProgrammeIndex: widget.selectedIndex == channelIndex
+                        ? widget.selectedProgrammeIndex
+                        : null,
+                    selectedProgramme: widget.selectedIndex == channelIndex
+                        ? widget.selectedProgramme
+                        : null,
                     viewStart: _viewStart,
                     channelWidth: channelWidth,
                     hourWidth: hourWidth,
@@ -5517,6 +8832,8 @@ class _EpgTimelineRow extends StatelessWidget {
     required this.channel,
     required this.programmes,
     required this.active,
+    required this.selectedProgrammeIndex,
+    required this.selectedProgramme,
     required this.viewStart,
     required this.channelWidth,
     required this.hourWidth,
@@ -5530,6 +8847,8 @@ class _EpgTimelineRow extends StatelessWidget {
   final LiveChannel channel;
   final List<EpgProgramme> programmes;
   final bool active;
+  final int? selectedProgrammeIndex;
+  final EpgProgramme? selectedProgramme;
   final DateTime viewStart;
   final double channelWidth;
   final double hourWidth;
@@ -5648,10 +8967,17 @@ class _EpgTimelineRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                for (final programme in visibleProgrammes)
+                for (var i = 0; i < visibleProgrammes.length; i++)
                   _TimelineProgrammeCell(
                     channel: channel,
-                    programme: programme,
+                    programme: visibleProgrammes[i],
+                    selected:
+                        active &&
+                        (_sameProgramme(
+                              visibleProgrammes[i],
+                              selectedProgramme,
+                            ) ||
+                            selectedProgrammeIndex == i),
                     viewStart: viewStart,
                     hourWidth: hourWidth,
                     visibleHours: visibleHours,
@@ -5694,6 +9020,13 @@ class _EpgTimelineRow extends StatelessWidget {
     return result;
   }
 
+  bool _sameProgramme(EpgProgramme programme, EpgProgramme? selected) {
+    if (selected == null) return false;
+    return programme.title == selected.title &&
+        programme.start == selected.start &&
+        programme.end == selected.end;
+  }
+
   String _cleanTitle(String value) {
     final title = value.trim();
     if (title.isEmpty) return '';
@@ -5727,6 +9060,7 @@ class _TimelineProgrammeCell extends StatelessWidget {
   const _TimelineProgrammeCell({
     required this.channel,
     required this.programme,
+    required this.selected,
     required this.viewStart,
     required this.hourWidth,
     required this.visibleHours,
@@ -5735,6 +9069,7 @@ class _TimelineProgrammeCell extends StatelessWidget {
 
   final LiveChannel channel;
   final EpgProgramme programme;
+  final bool selected;
   final DateTime viewStart;
   final double hourWidth;
   final int visibleHours;
@@ -5755,7 +9090,9 @@ class _TimelineProgrammeCell extends StatelessWidget {
     final color = live || replayable
         ? LelegColors.accent.withValues(alpha: 0.18)
         : LelegColors.bg;
-    final borderColor = live || replayable
+    final borderColor = selected
+        ? Colors.white.withValues(alpha: 0.92)
+        : live || replayable
         ? LelegColors.accent.withValues(alpha: 0.55)
         : LelegColors.line;
     return Positioned(
@@ -5809,7 +9146,7 @@ class _TimelineProgrammeCell extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: borderColor),
+                border: Border.all(color: borderColor, width: selected ? 2 : 1),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -5959,225 +9296,251 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final tv = TvUi.isActive(context);
+    final mobile = !tv && _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     final titleSelected = tvSelectedIndex == profiles.length;
     final serverSelected = tvSelectedIndex == profiles.length + 1;
     final userSelected = tvSelectedIndex == profiles.length + 2;
     final passSelected = tvSelectedIndex == profiles.length + 3;
     final saveSelected = tvSelectedIndex == profiles.length + 4;
     final reloadSelected = tvSelectedIndex == profiles.length + 5;
+
+    InputDecoration settingsFieldDecoration({
+      required String label,
+      required bool selected,
+      String? hint,
+    }) {
+      final borderRadius = BorderRadius.circular(tv ? 10 : 14);
+      return InputDecoration(
+        isDense: tv,
+        labelText: label,
+        hintText: hint,
+        labelStyle: tv ? const TextStyle(fontSize: TvUi.body) : null,
+        hintStyle: tv ? const TextStyle(fontSize: TvUi.caption) : null,
+        contentPadding: tv
+            ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10)
+            : null,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: borderRadius,
+          borderSide: BorderSide(
+            color: selected ? LelegColors.accent : LelegColors.line,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: borderRadius,
+          borderSide: const BorderSide(color: LelegColors.accent, width: 2),
+        ),
+      );
+    }
+
+    final libraryBand = _SettingsBand(
+      title: 'Stato libreria',
+      compact: tv,
+      child: Wrap(
+        spacing: tv ? 8 : 12,
+        runSpacing: tv ? 8 : 12,
+        children: [
+          _MetricPill(label: 'Live TV', value: liveCount.toString(), compact: tv),
+          _MetricPill(label: 'Film', value: movieCount.toString(), compact: tv),
+          _MetricPill(label: 'Serie', value: seriesCount.toString(), compact: tv),
+          _MetricPill(
+            label: 'Preferiti',
+            value: favoriteCount.toString(),
+            compact: tv,
+          ),
+          _MetricPill(
+            label: 'Da vedere',
+            value: watchLaterCount.toString(),
+            compact: tv,
+          ),
+          const _MetricPill(label: 'Cache', value: '24h', compact: true),
+          const _MetricPill(label: 'Player', value: 'media_kit', compact: true),
+        ],
+      ),
+    );
+
+    final fieldGap = tv ? 8.0 : 12.0;
+    final formBand = _SettingsBand(
+      title: 'Nuova lista IPTV',
+      compact: tv,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (profiles.isNotEmpty) ...[
+            ...profiles.map(
+              (profile) => _ProfileTile(
+                profile: profile,
+                active: activeProfile?.id == profile.id,
+                selected:
+                    tvSelectedIndex != null &&
+                    profiles.indexOf(profile) == tvSelectedIndex,
+                compact: tv,
+                onSelect: () => onSelectProfile(profile),
+                onDelete: () => onDeleteProfile(profile),
+              ),
+            ),
+            SizedBox(height: tv ? 10 : 18),
+          ] else
+            _InlineNotice(
+              text: tv
+                  ? 'Nessuna lista salvata. Compila i campi sotto e premi Salva e carica.'
+                  : 'Nessuna lista salvata. Inserisci un profilo Xtream e premi Salva e carica.',
+            ),
+          _EnsureVisibleWhenSelected(
+            selected: titleSelected,
+            child: TextField(
+              focusNode: titleFocusNode,
+              controller: titleController,
+              style: tv ? const TextStyle(fontSize: TvUi.body) : null,
+              decoration: settingsFieldDecoration(
+                label: 'Nome lista',
+                selected: titleSelected,
+                hint: tv ? 'Es. Casa, Sport…' : 'Es. Casa, Sport, Provider principale',
+              ),
+              onSubmitted: (_) => onSave(),
+            ),
+          ),
+          SizedBox(height: fieldGap),
+          _EnsureVisibleWhenSelected(
+            selected: serverSelected,
+            child: TextField(
+              focusNode: serverFocusNode,
+              controller: serverController,
+              style: tv ? const TextStyle(fontSize: TvUi.body) : null,
+              decoration: settingsFieldDecoration(
+                label: 'Server URL',
+                selected: serverSelected,
+              ),
+              onSubmitted: (_) => onSave(),
+            ),
+          ),
+          SizedBox(height: fieldGap),
+          _EnsureVisibleWhenSelected(
+            selected: userSelected,
+            child: TextField(
+              focusNode: userFocusNode,
+              controller: userController,
+              style: tv ? const TextStyle(fontSize: TvUi.body) : null,
+              decoration: settingsFieldDecoration(
+                label: 'Username',
+                selected: userSelected,
+              ),
+              onSubmitted: (_) => onSave(),
+            ),
+          ),
+          SizedBox(height: fieldGap),
+          _EnsureVisibleWhenSelected(
+            selected: passSelected,
+            child: TextField(
+              focusNode: passFocusNode,
+              controller: passController,
+              style: tv ? const TextStyle(fontSize: TvUi.body) : null,
+              decoration: settingsFieldDecoration(
+                label: 'Password',
+                selected: passSelected,
+              ),
+              obscureText: true,
+              onSubmitted: (_) => onSave(),
+            ),
+          ),
+          SizedBox(height: tv ? 10 : 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _EnsureVisibleWhenSelected(
+                selected: saveSelected,
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    padding: tv
+                        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
+                        : null,
+                    minimumSize: tv ? const Size(0, 32) : null,
+                    textStyle: tv
+                        ? const TextStyle(
+                            fontSize: TvUi.body,
+                            fontWeight: FontWeight.w700,
+                          )
+                        : null,
+                    side: saveSelected
+                        ? const BorderSide(color: LelegColors.fg, width: 2)
+                        : null,
+                  ),
+                  onPressed: onSave,
+                  icon: Icon(Icons.cloud_sync, size: tv ? 16 : 24),
+                  label: const Text('Salva e carica'),
+                ),
+              ),
+              _EnsureVisibleWhenSelected(
+                selected: reloadSelected,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: tv
+                        ? const EdgeInsets.symmetric(horizontal: 12, vertical: 8)
+                        : null,
+                    minimumSize: tv ? const Size(0, 32) : null,
+                    textStyle: tv
+                        ? const TextStyle(
+                            fontSize: TvUi.body,
+                            fontWeight: FontWeight.w700,
+                          )
+                        : null,
+                    side: BorderSide(
+                      color: reloadSelected ? LelegColors.accent : LelegColors.line,
+                      width: reloadSelected ? 2 : 1,
+                    ),
+                  ),
+                  onPressed: onReload,
+                  icon: Icon(Icons.refresh, size: tv ? 16 : 24),
+                  label: Text(tv ? 'Ricarica' : 'Ricarica dal provider'),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: tv ? 6 : 10),
+          Text(
+            tv
+                ? 'Cache catalogo 24h. Ricarica forza un nuovo download.'
+                : 'Il catalogo viene riusato dalla cache per 24 ore. Ricarica dal provider forza un nuovo download.',
+            style: TextStyle(
+              color: LelegColors.muted,
+              fontSize: tv ? TvUi.caption : 12,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (tv) {
+      return _PageScaffold(
+        title: '',
+        hideHeader: true,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            TvUi.contentPadding,
+            8,
+            TvUi.contentPadding,
+            20,
+          ),
+          children: [
+            libraryBand,
+            const SizedBox(height: TvUi.rowGap),
+            formBand,
+          ],
+        ),
+      );
+    }
+
     return _PageScaffold(
       title: 'Impostazioni',
       eyebrow: 'Provider',
       child: ListView(
         padding: EdgeInsets.all(mobile ? 16 : 28),
         children: [
-          _SettingsBand(
-            title: 'Liste IPTV',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (profiles.isEmpty)
-                  const _InlineNotice(
-                    text:
-                        'Nessuna lista salvata. Inserisci un profilo Xtream e premi Salva e carica.',
-                  )
-                else
-                  ...profiles.map(
-                    (profile) => _ProfileTile(
-                      profile: profile,
-                      active: activeProfile?.id == profile.id,
-                      selected:
-                          tvSelectedIndex != null &&
-                          profiles.indexOf(profile) == tvSelectedIndex,
-                      onSelect: () => onSelectProfile(profile),
-                      onDelete: () => onDeleteProfile(profile),
-                    ),
-                  ),
-                if (profiles.isNotEmpty) const SizedBox(height: 18),
-                _EnsureVisibleWhenSelected(
-                  selected: titleSelected,
-                  child: TextField(
-                    focusNode: titleFocusNode,
-                    controller: titleController,
-                    decoration: InputDecoration(
-                      labelText: 'Nome lista',
-                      hintText: 'Es. Casa, Sport, Provider principale',
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: titleSelected
-                              ? LelegColors.accent
-                              : LelegColors.line,
-                          width: titleSelected ? 2 : 1,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(
-                          color: LelegColors.accent,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    onSubmitted: (_) => onSave(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _EnsureVisibleWhenSelected(
-                  selected: serverSelected,
-                  child: TextField(
-                    focusNode: serverFocusNode,
-                    controller: serverController,
-                    decoration: InputDecoration(
-                      labelText: 'Server URL',
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: serverSelected
-                              ? LelegColors.accent
-                              : LelegColors.line,
-                          width: serverSelected ? 2 : 1,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(
-                          color: LelegColors.accent,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    onSubmitted: (_) => onSave(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _EnsureVisibleWhenSelected(
-                  selected: userSelected,
-                  child: TextField(
-                    focusNode: userFocusNode,
-                    controller: userController,
-                    decoration: InputDecoration(
-                      labelText: 'Username',
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: userSelected
-                              ? LelegColors.accent
-                              : LelegColors.line,
-                          width: userSelected ? 2 : 1,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(
-                          color: LelegColors.accent,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    onSubmitted: (_) => onSave(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _EnsureVisibleWhenSelected(
-                  selected: passSelected,
-                  child: TextField(
-                    focusNode: passFocusNode,
-                    controller: passController,
-                    decoration: InputDecoration(
-                      labelText: 'Password',
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: passSelected
-                              ? LelegColors.accent
-                              : LelegColors.line,
-                          width: passSelected ? 2 : 1,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(
-                          color: LelegColors.accent,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    obscureText: true,
-                    onSubmitted: (_) => onSave(),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _EnsureVisibleWhenSelected(
-                      selected: saveSelected,
-                      child: FilledButton.icon(
-                        style: FilledButton.styleFrom(
-                          side: saveSelected
-                              ? const BorderSide(
-                                  color: LelegColors.fg,
-                                  width: 2,
-                                )
-                              : null,
-                        ),
-                        onPressed: onSave,
-                        icon: const Icon(Icons.cloud_sync),
-                        label: const Text('Salva e carica'),
-                      ),
-                    ),
-                    _EnsureVisibleWhenSelected(
-                      selected: reloadSelected,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: reloadSelected
-                                ? LelegColors.accent
-                                : LelegColors.line,
-                            width: reloadSelected ? 2 : 1,
-                          ),
-                        ),
-                        onPressed: onReload,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Ricarica dal provider'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Il catalogo viene riusato dalla cache per 24 ore. Ricarica dal provider forza un nuovo download.',
-                  style: TextStyle(color: LelegColors.muted, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
+          formBand,
           const SizedBox(height: 18),
-          _SettingsBand(
-            title: 'Stato libreria',
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                _MetricPill(label: 'Live TV', value: liveCount.toString()),
-                _MetricPill(label: 'Film', value: movieCount.toString()),
-                _MetricPill(label: 'Serie', value: seriesCount.toString()),
-                _MetricPill(
-                  label: 'Preferiti',
-                  value: favoriteCount.toString(),
-                ),
-                _MetricPill(
-                  label: 'Da vedere',
-                  value: watchLaterCount.toString(),
-                ),
-                const _MetricPill(label: 'Cache', value: '24h'),
-                const _MetricPill(label: 'Player', value: 'media_kit'),
-              ],
-            ),
-          ),
+          libraryBand,
         ],
       ),
     );
@@ -6418,6 +9781,7 @@ class _ProfileTile extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.onDelete,
+    this.compact = false,
   });
 
   final XtreamProfile profile;
@@ -6425,14 +9789,15 @@ class _ProfileTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onSelect;
   final VoidCallback onDelete;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return _EnsureVisibleWhenSelected(
       selected: selected,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
+        margin: EdgeInsets.only(bottom: compact ? 6 : 10),
+        padding: EdgeInsets.all(compact ? 10 : 14),
         decoration: BoxDecoration(
           color: active || selected ? LelegColors.surface3 : LelegColors.bg,
           borderRadius: BorderRadius.circular(14),
@@ -6449,11 +9814,12 @@ class _ProfileTile extends StatelessWidget {
           children: [
             Icon(
               active ? Icons.check_circle : Icons.playlist_play,
+              size: compact ? 18 : 24,
               color: active || selected
                   ? LelegColors.accent
                   : LelegColors.muted,
             ),
-            const SizedBox(width: 12),
+            SizedBox(width: compact ? 8 : 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -6462,23 +9828,39 @@ class _ProfileTile extends StatelessWidget {
                     profile.displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w900),
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: compact ? TvUi.body : null,
+                    ),
                   ),
                   Text(
                     '${profile.baseUrl.replaceFirst(RegExp(r'^https?://'), '')} · ${profile.username}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: LelegColors.muted),
+                    style: TextStyle(
+                      color: LelegColors.muted,
+                      fontSize: compact ? TvUi.caption : null,
+                    ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 10),
+            SizedBox(width: compact ? 6 : 10),
             OutlinedButton(
+              style: compact
+                  ? OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      minimumSize: const Size(0, 28),
+                      textStyle: const TextStyle(fontSize: TvUi.caption),
+                    )
+                  : null,
               onPressed: active ? null : onSelect,
               child: Text(active ? 'Attiva' : 'Usa'),
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: compact ? 4 : 8),
             IconButton(
               onPressed: onDelete,
               tooltip: 'Rimuovi lista',
@@ -6520,18 +9902,26 @@ class _InlineNotice extends StatelessWidget {
 }
 
 class _MetricPill extends StatelessWidget {
-  const _MetricPill({required this.label, required this.value});
+  const _MetricPill({
+    required this.label,
+    required this.value,
+    this.compact = false,
+  });
 
   final String label;
   final String value;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 14,
+        vertical: compact ? 8 : 12,
+      ),
       decoration: BoxDecoration(
         color: LelegColors.bg,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(compact ? 10 : 14),
         border: Border.all(color: LelegColors.line),
       ),
       child: Column(
@@ -6540,18 +9930,18 @@ class _MetricPill extends StatelessWidget {
         children: [
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               color: LelegColors.accent,
-              fontSize: 18,
+              fontSize: compact ? 14 : 18,
               fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(height: 2),
+          SizedBox(height: compact ? 1 : 2),
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               color: LelegColors.muted,
-              fontSize: 12,
+              fontSize: compact ? TvUi.caption : 12,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -6595,60 +9985,73 @@ class _MetaBadge extends StatelessWidget {
 }
 
 class _PageScaffold extends StatelessWidget {
-  const _PageScaffold({required this.title, required this.child, this.eyebrow});
+  const _PageScaffold({
+    required this.title,
+    required this.child,
+    this.eyebrow,
+    this.hideHeader = false,
+  });
 
   final String title;
   final String? eyebrow;
   final Widget child;
+  final bool hideHeader;
 
   @override
   Widget build(BuildContext context) {
+    final tv = TvUi.isActive(context);
     final mobile = MediaQuery.sizeOf(context).width < 760;
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: RadialGradient(
-          center: Alignment.topLeft,
-          radius: 1.1,
-          colors: [Color(0xFF0D2A34), LelegColors.bg],
-        ),
+      decoration: BoxDecoration(
+        color: tv ? LelegColors.bg : null,
+        gradient: tv
+            ? null
+            : const RadialGradient(
+                center: Alignment.topLeft,
+                radius: 1.1,
+                colors: [Color(0xFF0D2A34), LelegColors.bg],
+              ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(
-              mobile ? 16 : 28,
-              mobile ? 14 : 24,
-              mobile ? 16 : 28,
-              mobile ? 8 : 10,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: hideHeader
+          ? child
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (eyebrow != null)
-                  Text(
-                    eyebrow!.toUpperCase(),
-                    style: const TextStyle(
-                      color: LelegColors.muted,
-                      letterSpacing: 2,
-                      fontWeight: FontWeight.w800,
-                    ),
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    tv ? TvUi.contentPadding : (mobile ? 16 : 28),
+                    tv ? 8 : (mobile ? 14 : 24),
+                    tv ? TvUi.contentPadding : (mobile ? 16 : 28),
+                    tv ? 2 : (mobile ? 8 : 10),
                   ),
-                const SizedBox(height: 6),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: mobile ? 38 : 54,
-                    fontWeight: FontWeight.w900,
-                    height: 0.95,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (eyebrow != null)
+                        Text(
+                          eyebrow!.toUpperCase(),
+                          style: TextStyle(
+                            color: LelegColors.muted,
+                            letterSpacing: tv ? 1.1 : 2,
+                            fontWeight: FontWeight.w800,
+                            fontSize: tv ? TvUi.eyebrow : null,
+                          ),
+                        ),
+                      if (eyebrow != null) SizedBox(height: tv ? 3 : 6),
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontSize: tv ? TvUi.sectionTitle : (mobile ? 38 : 54),
+                          fontWeight: FontWeight.w900,
+                          height: 0.95,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                Expanded(child: child),
               ],
             ),
-          ),
-          Expanded(child: child),
-        ],
-      ),
     );
   }
 }
@@ -6704,6 +10107,7 @@ class PlayerCard extends StatefulWidget {
     required this.onToggleFocusMode,
     required this.onPictureInPicture,
     this.focusMode = false,
+    this.pinControlsOnFocus = false,
     super.key,
   });
 
@@ -6720,6 +10124,7 @@ class PlayerCard extends StatefulWidget {
   final VoidCallback onToggleFocusMode;
   final VoidCallback onPictureInPicture;
   final bool focusMode;
+  final bool pinControlsOnFocus;
 
   @override
   State<PlayerCard> createState() => _PlayerCardState();
@@ -6730,7 +10135,9 @@ class _PlayerCardState extends State<PlayerCard> {
   Timer? _hideControlsTimer;
 
   bool get _pinControlsInFocusMode {
-    return widget.focusMode && !(Platform.isAndroid || Platform.isIOS);
+    if (!widget.focusMode) return false;
+    if (widget.pinControlsOnFocus) return true;
+    return !(Platform.isAndroid || Platform.isIOS);
   }
 
   @override
@@ -8078,7 +11485,7 @@ class _CategoryChipButton extends StatelessWidget {
   }
 }
 
-class _CompactEpgRail extends StatelessWidget {
+class _CompactEpgRail extends StatefulWidget {
   const _CompactEpgRail({
     required this.programmes,
     required this.loading,
@@ -8092,8 +11499,85 @@ class _CompactEpgRail extends StatelessWidget {
   final void Function(LiveChannel channel, EpgProgramme programme) onWatch;
 
   @override
+  State<_CompactEpgRail> createState() => _CompactEpgRailState();
+}
+
+class _CompactEpgRailState extends State<_CompactEpgRail> {
+  static const _chipWidth = 190.0;
+  static const _separator = 10.0;
+
+  final ScrollController _controller = ScrollController();
+  int? _lastScrollTarget;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLive());
+  }
+
+  @override
+  void didUpdateWidget(covariant _CompactEpgRail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.programmes != widget.programmes ||
+        oldWidget.channel?.id != widget.channel?.id ||
+        (oldWidget.loading && !widget.loading)) {
+      _lastScrollTarget = null;
+      _scrollToLive();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _scrollToLive() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLiveAttempt(0));
+  }
+
+  void _scrollToLiveAttempt(int attempt) {
+    if (!mounted || attempt > 10) return;
+    final items = _sortedProgrammes();
+    final liveIndex = items.indexWhere(_programmeIsLive);
+    if (liveIndex < 0) return;
+    if (_lastScrollTarget == liveIndex && attempt > 0) return;
+
+    if (!_controller.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToLiveAttempt(attempt + 1),
+      );
+      return;
+    }
+
+    _lastScrollTarget = liveIndex;
+    final viewport = _controller.position.viewportDimension;
+    final target =
+        (liveIndex * (_chipWidth + _separator)) -
+        ((viewport - _chipWidth) / 2);
+    _controller.animateTo(
+      target.clamp(0.0, _controller.position.maxScrollExtent).toDouble(),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  List<EpgProgramme> _sortedProgrammes() {
+    final items = [...widget.programmes]
+      ..sort((a, b) {
+        final aStart = a.start;
+        final bStart = b.start;
+        if (aStart == null && bStart == null) return 0;
+        if (aStart == null) return 1;
+        if (bStart == null) return -1;
+        return aStart.compareTo(bStart);
+      });
+    return items;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (loading) {
+    if (widget.loading) {
       return const Center(
         child: SizedBox(
           width: 18,
@@ -8102,7 +11586,7 @@ class _CompactEpgRail extends StatelessWidget {
         ),
       );
     }
-    if (channel == null || programmes.isEmpty) {
+    if (widget.channel == null || widget.programmes.isEmpty) {
       return const Align(
         alignment: Alignment.centerLeft,
         child: Text(
@@ -8114,28 +11598,23 @@ class _CompactEpgRail extends StatelessWidget {
         ),
       );
     }
-    final items = [...programmes]
-      ..sort((a, b) {
-        final aStart = a.start;
-        final bStart = b.start;
-        if (aStart == null && bStart == null) return 0;
-        if (aStart == null) return 1;
-        if (bStart == null) return -1;
-        return aStart.compareTo(bStart);
-      });
+    final items = _sortedProgrammes();
     return ListView.separated(
+      controller: _controller,
       scrollDirection: Axis.horizontal,
       itemCount: items.length,
       separatorBuilder: (_, _) => const SizedBox(width: 10),
       itemBuilder: (_, index) {
         final programme = items[index];
         final live = _programmeIsLive(programme);
-        final replay = _programmeCanReplay(channel!, programme);
+        final replay = _programmeCanReplay(widget.channel!, programme);
         return InkWell(
           borderRadius: BorderRadius.circular(14),
-          onTap: (live || replay) ? () => onWatch(channel!, programme) : null,
+          onTap: (live || replay)
+              ? () => widget.onWatch(widget.channel!, programme)
+              : null,
           child: Container(
-            width: 190,
+            width: _chipWidth,
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: live ? LelegColors.surface3 : LelegColors.bg,
@@ -8191,15 +11670,7 @@ class _CompactEpgRail extends StatelessWidget {
     );
   }
 
-  bool _programmeIsLive(EpgProgramme programme) {
-    final now = DateTime.now();
-    final start = programme.start;
-    final end = programme.end;
-    return start != null &&
-        end != null &&
-        start.isBefore(now) &&
-        end.isAfter(now);
-  }
+  bool _programmeIsLive(EpgProgramme programme) => _epgIsLiveNow(programme);
 
   bool _programmeCanReplay(LiveChannel channel, EpgProgramme programme) {
     final now = DateTime.now();
@@ -8292,6 +11763,150 @@ class _RateMenu extends StatelessWidget {
   }
 }
 
+class _TvCategorySidebar extends StatelessWidget {
+  const _TvCategorySidebar({
+    required this.categories,
+    required this.selectedCategoryId,
+    required this.onCategoryChanged,
+  });
+
+  final List<XtreamCategory> categories;
+  final String selectedCategoryId;
+  final ValueChanged<String> onCategoryChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      children: [
+        _TvCategoryItem(
+          label: 'Tutte',
+          selected: selectedCategoryId.isEmpty,
+          onTap: () => onCategoryChanged(''),
+        ),
+        for (final category in categories)
+          _TvCategoryItem(
+            label: category.name,
+            selected: selectedCategoryId == category.id,
+            onTap: () => onCategoryChanged(category.id),
+          ),
+      ],
+    );
+  }
+}
+
+class _TvCategoryItem extends StatelessWidget {
+  const _TvCategoryItem({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? LelegColors.surface3 : Colors.transparent,
+      child: _RemoteActivate(
+        onActivate: onTap,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: selected ? LelegColors.accent : Colors.transparent,
+                  width: 3,
+                ),
+              ),
+            ),
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: selected ? LelegColors.fg : LelegColors.muted,
+                fontSize: TvUi.body,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TvLandscapeCard extends StatelessWidget {
+  const _TvLandscapeCard({
+    required this.title,
+    required this.image,
+    required this.onTap,
+  });
+
+  final String title;
+  final String image;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _RemoteActivate(
+      onActivate: onTap,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          width: TvUi.cardWidth,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  _BackdropImage(url: image, alignment: Alignment.center),
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: 0.78),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 12, 8, 6),
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: TvUi.caption,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ChannelTile extends StatelessWidget {
   const _ChannelTile({
     required this.channel,
@@ -8299,6 +11914,7 @@ class _ChannelTile extends StatelessWidget {
     required this.onPlay,
     this.category,
     this.selected = false,
+    this.compact = false,
   });
 
   final LiveChannel channel;
@@ -8306,6 +11922,7 @@ class _ChannelTile extends StatelessWidget {
   final ValueChanged<LiveChannel> onPlay;
   final String? category;
   final bool selected;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -8325,22 +11942,40 @@ class _ChannelTile extends StatelessWidget {
               ),
             ),
             child: ListTile(
-              leading: _Logo(url: channel.logo, fallback: Icons.live_tv),
+              dense: compact,
+              visualDensity:
+                  compact ? VisualDensity.compact : VisualDensity.standard,
+              contentPadding: compact
+                  ? const EdgeInsets.symmetric(horizontal: 10, vertical: 0)
+                  : null,
+              leading: _Logo(
+                url: channel.logo,
+                fallback: Icons.live_tv,
+                size: compact ? 24 : 48,
+              ),
               title: Text(
                 channel.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: compact ? TvUi.body : null,
+                  fontWeight: compact ? FontWeight.w700 : null,
+                ),
               ),
-              subtitle: Text(
-                category == null || category!.isEmpty
-                    ? '#${channel.id}'
-                    : '$category · #${channel.id}',
-                style: const TextStyle(color: LelegColors.muted),
-              ),
-              trailing: IconButton.filledTonal(
-                onPressed: () => onPlay(channel),
-                icon: const Icon(Icons.play_arrow),
-              ),
+              subtitle: compact
+                  ? null
+                  : Text(
+                      category == null || category!.isEmpty
+                          ? '#${channel.id}'
+                          : '$category · #${channel.id}',
+                      style: const TextStyle(color: LelegColors.muted),
+                    ),
+              trailing: compact
+                  ? null
+                  : IconButton.filledTonal(
+                      onPressed: () => onPlay(channel),
+                      icon: const Icon(Icons.play_arrow),
+                    ),
               onTap: () => onOpen(channel),
             ),
           ),
@@ -8626,81 +12261,18 @@ class _SeriesPosterCard extends StatelessWidget {
   }
 }
 
-class _DetailHeroPanel extends StatelessWidget {
-  const _DetailHeroPanel({
-    required this.imageUrl,
-    required this.description,
-    this.badges = const [],
-    this.posterHeight = 400,
-  });
-
-  final String imageUrl;
-  final String description;
-  final List<Widget> badges;
-  final double posterHeight;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = description.trim().isNotEmpty
-        ? description.trim()
-        : 'Nessuna descrizione disponibile dal provider.';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: SizedBox(
-            height: posterHeight,
-            child: _Poster(url: imageUrl),
-          ),
-        ),
-        if (badges.isNotEmpty) ...[
-          const SizedBox(height: 14),
-          Wrap(spacing: 8, runSpacing: 8, children: badges),
-        ],
-        const SizedBox(height: 14),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: LelegColors.surface2,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: LelegColors.line),
-            ),
-            child: SingleChildScrollView(
-              child: Text(
-                text,
-                style: const TextStyle(
-                  color: LelegColors.fg,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  height: 1.6,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 class _SeriesSeasonList extends StatelessWidget {
   const _SeriesSeasonList({
     required this.episodes,
     required this.episodeProgress,
+    required this.selectedEpisodeIndex,
     required this.onPlay,
-    required this.onRestart,
-    this.shrinkWrap = false,
-    this.horizontalPadding = 20,
   });
 
   final List<SeriesEpisode> episodes;
   final Map<int, PlaybackProgress> episodeProgress;
+  final int? selectedEpisodeIndex;
   final ValueChanged<SeriesEpisode> onPlay;
-  final ValueChanged<SeriesEpisode> onRestart;
-  final bool shrinkWrap;
-  final double horizontalPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -8710,43 +12282,36 @@ class _SeriesSeasonList extends StatelessWidget {
       grouped.putIfAbsent(season, () => []).add(episode);
     }
     final seasons = grouped.keys.toList()..sort();
-    for (final season in seasons) {
-      grouped[season]!.sort((a, b) {
-        final left = a.episode > 0 ? a.episode : a.id;
-        final right = b.episode > 0 ? b.episode : b.id;
-        return left.compareTo(right);
-      });
-    }
+    var flatIndex = 0;
     return ListView(
-      shrinkWrap: shrinkWrap,
-      physics: shrinkWrap ? const NeverScrollableScrollPhysics() : null,
-      padding: EdgeInsets.fromLTRB(
-        horizontalPadding,
-        0,
-        horizontalPadding,
-        20,
+      padding: const EdgeInsets.fromLTRB(
+        TvUi.contentPadding,
+        8,
+        TvUi.contentPadding,
+        16,
       ),
       children: [
         for (final season in seasons) ...[
           Padding(
-            padding: const EdgeInsets.only(top: 12, bottom: 8),
+            padding: const EdgeInsets.only(top: 10, bottom: 6),
             child: Text(
               'Stagione $season',
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
+              style: TextStyle(
+                fontSize: TvUi.font(14),
+                fontWeight: FontWeight.w800,
                 letterSpacing: 0.2,
               ),
             ),
           ),
           for (final episode in grouped[season]!)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 4),
               child: _EpisodeTile(
                 episode: episode,
                 progress: episodeProgress[episode.id],
                 onPlay: onPlay,
-                onRestart: onRestart,
+                selected: selectedEpisodeIndex == flatIndex++,
+                compact: true,
               ),
             ),
         ],
@@ -8755,158 +12320,160 @@ class _SeriesSeasonList extends StatelessWidget {
   }
 }
 
-class _EpisodeBadge extends StatelessWidget {
-  const _EpisodeBadge({required this.season, required this.episode});
-
-  final int season;
-  final int episode;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 48,
-      height: 48,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: LelegColors.surface3,
-          shape: BoxShape.circle,
-          border: Border.all(color: LelegColors.line),
-        ),
-        child: Center(
-          child: episode > 0
-              ? Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      'S${season.toString().padLeft(2, '0')}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        height: 1.05,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                    Text(
-                      'E${episode.toString().padLeft(2, '0')}',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        height: 1.05,
-                        letterSpacing: 0.2,
-                      ),
-                    ),
-                  ],
-                )
-              : Text(
-                  'S${season.toString().padLeft(2, '0')}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-        ),
-      ),
-    );
-  }
-}
-
 class _EpisodeTile extends StatelessWidget {
   const _EpisodeTile({
     required this.episode,
     required this.onPlay,
-    required this.onRestart,
     this.progress,
+    this.selected = false,
+    this.compact = false,
   });
 
   final SeriesEpisode episode;
   final ValueChanged<SeriesEpisode> onPlay;
-  final ValueChanged<SeriesEpisode> onRestart;
   final PlaybackProgress? progress;
+  final bool selected;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final season = episode.season > 0 ? episode.season : 1;
-    final episodeNum = episode.episode > 0 ? episode.episode : 0;
+    final seasonCode = episode.season > 0
+        ? 'S${episode.season.toString().padLeft(2, '0')}'
+        : '';
+    final episodeCode = episode.episode > 0
+        ? 'E${episode.episode.toString().padLeft(2, '0')}'
+        : '';
+    final code = compact
+        ? [seasonCode, episodeCode].where((item) => item.isNotEmpty).join('\n')
+        : '$seasonCode$episodeCode';
+    final leadingSize = compact ? 36.0 : 48.0;
     final watched = progress != null && progress!.fraction > 0;
-    final canResume = progress?.canResume == true;
     final progressLabel = progress == null
         ? ''
         : progress!.isCompleted
         ? 'Visto'
         : '${(progress!.fraction * 100).round()}%';
-    return Material(
-      color: LelegColors.surface,
-      borderRadius: BorderRadius.circular(14),
-      child: _RemoteActivate(
-        onActivate: () => onPlay(episode),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  _EpisodeBadge(season: season, episode: episodeNum),
-                  if (progress?.isCompleted == true)
-                    const Positioned(
-                      right: -2,
-                      bottom: -2,
-                      child: Icon(
-                        Icons.check_circle,
+    return _EnsureVisibleWhenSelected(
+      selected: selected,
+      child: Material(
+        color: selected ? LelegColors.surface3 : LelegColors.surface,
+        borderRadius: BorderRadius.circular(compact ? 10 : 14),
+        child: _RemoteActivate(
+          onActivate: () => onPlay(episode),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(compact ? 10 : 14),
+              border: Border.all(
+                color: selected ? LelegColors.accent : Colors.transparent,
+                width: selected ? 2 : 1,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  dense: compact,
+                  visualDensity:
+                      compact ? VisualDensity.compact : VisualDensity.standard,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: compact ? 10 : 16,
+                    vertical: compact ? 2 : 0,
+                  ),
+                  minLeadingWidth: leadingSize,
+                  leading: SizedBox(
+                    width: leadingSize,
+                    height: leadingSize,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: LelegColors.surface3,
+                            shape: BoxShape.circle,
+                            border: watched
+                                ? Border.all(
+                                    color: progress!.isCompleted
+                                        ? LelegColors.accent
+                                        : LelegColors.line,
+                                    width: 2,
+                                  )
+                                : null,
+                          ),
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Padding(
+                                padding: const EdgeInsets.all(5),
+                                child: Text(
+                                  code.isEmpty ? 'EP' : code,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: compact ? 8 : 11,
+                                    height: compact ? 1.05 : 1.2,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (progress?.isCompleted == true)
+                          const Icon(
+                            Icons.check_circle,
+                            color: LelegColors.accent,
+                            size: 14,
+                          ),
+                      ],
+                    ),
+                  ),
+                  title: Text(
+                    episode.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 12 : null,
+                      fontWeight: compact ? FontWeight.w700 : null,
+                    ),
+                  ),
+                  subtitle: Text(
+                    [
+                      if (episode.duration.isNotEmpty) episode.duration,
+                      episode.containerExtension.toUpperCase(),
+                      if (progressLabel.isNotEmpty) progressLabel,
+                    ].join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: LelegColors.muted),
+                  ),
+                  trailing: compact
+                      ? null
+                      : IconButton.filledTonal(
+                          onPressed: () => onPlay(episode),
+                          icon: const Icon(Icons.play_arrow),
+                        ),
+                  onTap: () => onPlay(episode),
+                ),
+                if (watched && progress!.isCompleted != true)
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      compact ? 10 : 16,
+                      0,
+                      compact ? 10 : 16,
+                      compact ? 6 : 8,
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        minHeight: 3,
+                        value: progress!.fraction,
+                        backgroundColor: LelegColors.line,
                         color: LelegColors.accent,
-                        size: 16,
                       ),
                     ),
-                ],
-              ),
-              title: Text(
-                episode.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                [
-                  if (episode.duration.isNotEmpty) episode.duration,
-                  episode.containerExtension.toUpperCase(),
-                  if (progressLabel.isNotEmpty) progressLabel,
-                ].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: LelegColors.muted),
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (canResume)
-                    IconButton(
-                      tooltip: 'Ricomincia',
-                      onPressed: () => onRestart(episode),
-                      icon: const Icon(Icons.restart_alt),
-                    ),
-                  IconButton.filledTonal(
-                    tooltip: canResume ? 'Riprendi' : 'Riproduci',
-                    onPressed: () => onPlay(episode),
-                    icon: Icon(canResume ? Icons.play_circle_outline : Icons.play_arrow),
                   ),
-                ],
-              ),
-              onTap: () => onPlay(episode),
+              ],
             ),
-            if (watched && progress!.isCompleted != true)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    minHeight: 4,
-                    value: progress!.fraction,
-                    backgroundColor: LelegColors.line,
-                    color: LelegColors.accent,
-                  ),
-                ),
-              ),
-          ],
+          ),
         ),
       ),
     );
@@ -8932,19 +12499,509 @@ class _EpgProgrammeList extends StatefulWidget {
   State<_EpgProgrammeList> createState() => _EpgProgrammeListState();
 }
 
+class _TvVodToolbar extends StatelessWidget {
+  const _TvVodToolbar({
+    required this.focusIndex,
+    required this.playing,
+    required this.audioLabel,
+    required this.subtitleLabel,
+  });
+
+  final int focusIndex;
+  final bool playing;
+  final String audioLabel;
+  final String subtitleLabel;
+
+  static const _items = [
+    (Icons.play_arrow, 'Play'),
+    (Icons.replay_10, '-10s'),
+    (Icons.forward_10, '+10s'),
+    (Icons.audiotrack, 'Audio'),
+    (Icons.subtitles, 'Sottotitoli'),
+    (Icons.fullscreen_exit, 'Esci'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = [
+      playing ? 'Pausa' : 'Play',
+      '-10s',
+      '+10s',
+      audioLabel,
+      subtitleLabel,
+      'Esci',
+    ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: LelegColors.line),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              focusIndex >= 0
+                  ? 'Toolbar attiva — Sin/Des seleziona, OK attiva, Su esci'
+                  : 'Giù apre toolbar · OK play/pausa · Su/Giu audio/sottotitoli',
+              style: const TextStyle(
+                color: LelegColors.muted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (var index = 0; index < _items.length; index++) ...[
+                    if (index > 0) const SizedBox(width: 10),
+                    _TvToolbarChip(
+                      icon: index == 0 && playing
+                          ? Icons.pause
+                          : _items[index].$1,
+                      label: labels[index],
+                      selected: focusIndex == index,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TvToolbarChip extends StatelessWidget {
+  const _TvToolbarChip({
+    required this.icon,
+    required this.label,
+    required this.selected,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: selected
+            ? LelegColors.accent.withValues(alpha: 0.22)
+            : LelegColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: selected ? LelegColors.accent : LelegColors.line,
+          width: selected ? 2 : 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 20, color: selected ? LelegColors.accent : null),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: selected ? LelegColors.fg : LelegColors.muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FullscreenLiveOverlay extends StatefulWidget {
+  const _FullscreenLiveOverlay({
+    required this.channel,
+    required this.programmes,
+    required this.loading,
+    required this.selectedIndex,
+    required this.onPreviousChannel,
+    required this.onNextChannel,
+    required this.onWatchProgramme,
+  });
+
+  final LiveChannel? channel;
+  final List<EpgProgramme> programmes;
+  final bool loading;
+  final int selectedIndex;
+  final VoidCallback onPreviousChannel;
+  final VoidCallback onNextChannel;
+  final void Function(LiveChannel channel, EpgProgramme programme)
+  onWatchProgramme;
+
+  @override
+  State<_FullscreenLiveOverlay> createState() => _FullscreenLiveOverlayState();
+}
+
+class _FullscreenLiveOverlayState extends State<_FullscreenLiveOverlay> {
+  static const _chipWidth = 230.0;
+  static const _separator = 10.0;
+
+  final ScrollController _scrollController = ScrollController();
+  int? _lastScrollTarget;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+  }
+
+  @override
+  void didUpdateWidget(covariant _FullscreenLiveOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.programmes != widget.programmes ||
+        oldWidget.channel?.id != widget.channel?.id ||
+        oldWidget.selectedIndex != widget.selectedIndex) {
+      _lastScrollTarget = null;
+      _scrollToFocus();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocusAttempt(0));
+  }
+
+  void _scrollToFocusAttempt(int attempt) {
+    if (!mounted || attempt > 10) return;
+    final ordered = _orderedProgrammes(widget.channel);
+    if (ordered.isEmpty) return;
+    final liveIndex = ordered.indexWhere(_isLive);
+    final targetIndex = liveIndex >= 0 ? liveIndex : widget.selectedIndex;
+    final safeIndex = targetIndex.clamp(0, ordered.length - 1);
+    if (_lastScrollTarget == safeIndex && attempt > 0) return;
+
+    if (!_scrollController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusAttempt(attempt + 1),
+      );
+      return;
+    }
+
+    _lastScrollTarget = safeIndex;
+    final viewport = _scrollController.position.viewportDimension;
+    final target =
+        (safeIndex * (_chipWidth + _separator)) -
+        ((viewport - _chipWidth) / 2);
+    _scrollController.animateTo(
+      target.clamp(0.0, _scrollController.position.maxScrollExtent).toDouble(),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentChannel = widget.channel;
+    final ordered = _orderedProgrammes(currentChannel);
+    final liveProgramme = _firstWhereOrNull(ordered, _isLive);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: LelegColors.line),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.34),
+            blurRadius: 22,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton.filledTonal(
+                  tooltip: 'Canale precedente',
+                  onPressed: widget.onPreviousChannel,
+                  icon: const Icon(Icons.keyboard_arrow_up),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        currentChannel?.name ?? 'Live TV',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        liveProgramme == null
+                            ? 'Su/Giu canale · Sin/Des guida · OK riproduci'
+                            : '${_timeRange(liveProgramme)}  ${liveProgramme.title}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: LelegColors.muted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                IconButton.filledTonal(
+                  tooltip: 'Canale successivo',
+                  onPressed: widget.onNextChannel,
+                  icon: const Icon(Icons.keyboard_arrow_down),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (widget.loading)
+              const LinearProgressIndicator(minHeight: 3)
+            else if (currentChannel == null || ordered.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Guida non disponibile per questo canale.',
+                  style: TextStyle(
+                    color: LelegColors.muted,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                height: 106,
+                child: ListView.separated(
+                  controller: _scrollController,
+                  scrollDirection: Axis.horizontal,
+                  itemCount: ordered.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 10),
+                  itemBuilder: (_, index) {
+                    final programme = ordered[index];
+                    final live = _isLive(programme);
+                    final replay = _canReplay(currentChannel, programme);
+                    return _FullscreenEpgChip(
+                      programme: programme,
+                      live: live,
+                      replay: replay,
+                      selected: index == widget.selectedIndex,
+                      onTap: live || replay
+                          ? () =>
+                                widget.onWatchProgramme(currentChannel, programme)
+                          : null,
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<EpgProgramme> _orderedProgrammes(LiveChannel? currentChannel) {
+    if (currentChannel == null) return const [];
+    final now = DateTime.now();
+    final items = widget.programmes
+        .where(
+          (programme) =>
+              _isLive(programme) ||
+              _canReplay(currentChannel, programme) ||
+              (programme.start?.isAfter(now) ?? false),
+        )
+        .toList();
+    items.sort((a, b) {
+      final aStart = a.start;
+      final bStart = b.start;
+      if (aStart == null && bStart == null) return 0;
+      if (aStart == null) return 1;
+      if (bStart == null) return -1;
+      return aStart.compareTo(bStart);
+    });
+    if (items.length <= 12) return items;
+    final liveIndex = items.indexWhere(_isLive);
+    if (liveIndex < 0) return items.take(12).toList();
+    final start = (liveIndex - 4).clamp(0, items.length - 12).toInt();
+    return items.skip(start).take(12).toList();
+  }
+
+  EpgProgramme? _firstWhereOrNull(
+    List<EpgProgramme> source,
+    bool Function(EpgProgramme programme) test,
+  ) {
+    for (final programme in source) {
+      if (test(programme)) return programme;
+    }
+    return null;
+  }
+
+  bool _isLive(EpgProgramme programme) {
+    final now = DateTime.now();
+    final start = programme.start;
+    final end = programme.end;
+    return start != null &&
+        end != null &&
+        !start.isAfter(now) &&
+        end.isAfter(now);
+  }
+
+  bool _canReplay(LiveChannel channel, EpgProgramme programme) {
+    final now = DateTime.now();
+    final start = programme.start;
+    final end = programme.end;
+    if (!channel.hasCatchup || start == null || end == null) return false;
+    if (end.isAfter(now) || !end.isAfter(start)) return false;
+    final days = channel.catchupDays > 0 ? channel.catchupDays : 7;
+    return start.isAfter(now.subtract(Duration(days: days)));
+  }
+
+  String _timeRange(EpgProgramme programme) {
+    String fmt(DateTime? value) {
+      if (value == null) return '--:--';
+      return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+    }
+
+    return '${fmt(programme.start)} - ${fmt(programme.end)}';
+  }
+}
+
+class _FullscreenEpgChip extends StatelessWidget {
+  const _FullscreenEpgChip({
+    required this.programme,
+    required this.live,
+    required this.replay,
+    this.selected = false,
+    required this.onTap,
+  });
+
+  final EpgProgramme programme;
+  final bool live;
+  final bool replay;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = live || replay;
+    return Material(
+      color: live
+          ? LelegColors.accent.withValues(alpha: 0.22)
+          : LelegColors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: 230,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected
+                  ? LelegColors.fg
+                  : active
+                  ? LelegColors.accent.withValues(alpha: 0.72)
+                  : LelegColors.line,
+              width: selected ? 2.5 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                [
+                  if (live) 'LIVE',
+                  if (!live && replay) 'REC',
+                  _timeRange(programme),
+                ].join('  '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: active ? LelegColors.accent : LelegColors.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                programme.title.trim(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              if (programme.description.trim().isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  programme.description.trim(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: LelegColors.muted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _timeRange(EpgProgramme programme) {
+    String fmt(DateTime? value) {
+      if (value == null) return '--:--';
+      return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+    }
+
+    return '${fmt(programme.start)} - ${fmt(programme.end)}';
+  }
+}
+
 class _EpgProgrammeListState extends State<_EpgProgrammeList> {
   static const _rowExtent = 104.0;
 
   final ScrollController _controller = ScrollController();
-  int? _lastFocusedIndex;
+  final GlobalKey _liveTileKey = GlobalKey();
+  int? _scrolledToIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleScrollToLive();
+  }
 
   @override
   void didUpdateWidget(covariant _EpgProgrammeList oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.programmes != widget.programmes ||
-        oldWidget.channel?.id != widget.channel?.id) {
-      _lastFocusedIndex = null;
-      _scheduleCurrentScroll();
+        oldWidget.channel?.id != widget.channel?.id ||
+        (oldWidget.loading && !widget.loading)) {
+      _scrolledToIndex = null;
+      _scheduleScrollToLive();
     }
   }
 
@@ -8965,17 +13022,67 @@ class _EpgProgrammeListState extends State<_EpgProgrammeList> {
         icon: Icons.calendar_month,
       );
     }
-    final orderedProgrammes = _chronologicalProgrammes(widget.programmes);
-    _scheduleCurrentScroll(orderedProgrammes);
+    final orderedProgrammes = widget.programmes;
     return ListView.separated(
       controller: _controller,
       itemCount: orderedProgrammes.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (_, index) {
         final programme = orderedProgrammes[index];
-        return _programmeTile(programme, highlight: _isLive(programme));
+        final live = _isLive(programme);
+        return KeyedSubtree(
+          key: live ? _liveTileKey : null,
+          child: _programmeTile(programme, highlight: live),
+        );
       },
     );
+  }
+
+  void _scheduleScrollToLive() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToLive(0));
+  }
+
+  void _scrollToLive(int attempt) {
+    if (!mounted || widget.loading) return;
+    if (attempt > 12) return;
+
+    final items = widget.programmes;
+    if (items.isEmpty) return;
+
+    final targetIndex = _epgLiveOrNextIndex(items);
+    if (_scrolledToIndex == targetIndex && attempt > 0) return;
+
+    if (!_controller.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToLive(attempt + 1),
+      );
+      return;
+    }
+
+    _scrolledToIndex = targetIndex;
+    final offset = (targetIndex * _rowExtent - _rowExtent * 0.65)
+        .clamp(0.0, _controller.position.maxScrollExtent);
+    if ((_controller.offset - offset).abs() > 2) {
+      _controller.jumpTo(offset);
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final liveContext = _liveTileKey.currentContext;
+      if (liveContext != null) {
+        Scrollable.ensureVisible(
+          liveContext,
+          alignment: 0.28,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+        return;
+      }
+      if (attempt < 8) {
+        _scrolledToIndex = null;
+        _scrollToLive(attempt + 1);
+      }
+    });
   }
 
   bool _canInteract(EpgProgramme programme) {
@@ -8983,94 +13090,68 @@ class _EpgProgrammeListState extends State<_EpgProgrammeList> {
         (_isLive(programme) || _canReplay(programme));
   }
 
-  List<EpgProgramme> _chronologicalProgrammes(List<EpgProgramme> source) {
-    final items = source
-        .where(
-          (programme) =>
-              _isLive(programme) ||
-              _canReplay(programme) ||
-              (programme.start?.isAfter(DateTime.now()) ?? false),
-        )
-        .toList();
-    items.sort(_sortAsc);
-    return items;
-  }
-
-  void _scheduleCurrentScroll([List<EpgProgramme>? ordered]) {
-    final items = ordered ?? _chronologicalProgrammes(widget.programmes);
-    final currentIndex = items.indexWhere(_isLive);
-    if (currentIndex < 0 || _lastFocusedIndex == currentIndex) return;
-    _lastFocusedIndex = currentIndex;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_controller.hasClients) return;
-      final target = (currentIndex * _rowExtent) - (_rowExtent * 1.2);
-      _controller.animateTo(
-        target.clamp(0.0, _controller.position.maxScrollExtent).toDouble(),
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
-    });
-  }
-
   Widget _programmeTile(EpgProgramme programme, {required bool highlight}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: highlight ? LelegColors.surface3 : LelegColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: LelegColors.line),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
+    return SizedBox(
+      height: 94,
+      child: Container(
+        decoration: BoxDecoration(
+          color: highlight ? LelegColors.surface3 : LelegColors.surface,
           borderRadius: BorderRadius.circular(14),
-          onTap: _canInteract(programme)
-              ? () => widget.onWatch(widget.channel!, programme)
-              : null,
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    if (_isLive(programme) || _canReplay(programme)) ...[
+          border: Border.all(color: LelegColors.line),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: _canInteract(programme)
+                ? () => widget.onWatch(widget.channel!, programme)
+                : null,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (_isLive(programme) || _canReplay(programme)) ...[
+                        Text(
+                          _isLive(programme) ? 'LIVE' : 'REC',
+                          style: const TextStyle(
+                            color: LelegColors.accent,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 11,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       Text(
-                        _isLive(programme) ? 'LIVE' : 'REC',
+                        _timeRange(programme),
                         style: const TextStyle(
                           color: LelegColors.accent,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
                         ),
                       ),
-                      const SizedBox(width: 8),
                     ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    programme.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  if (programme.description.isNotEmpty) ...[
+                    const SizedBox(height: 6),
                     Text(
-                      _timeRange(programme),
-                      style: const TextStyle(
-                        color: LelegColors.accent,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12,
-                      ),
+                      programme.description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: LelegColors.muted),
                     ),
                   ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  programme.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w900),
-                ),
-                if (programme.description.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    programme.description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: LelegColors.muted),
-                  ),
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -9078,24 +13159,7 @@ class _EpgProgrammeListState extends State<_EpgProgrammeList> {
     );
   }
 
-  int _sortAsc(EpgProgramme a, EpgProgramme b) {
-    final aStart = a.start;
-    final bStart = b.start;
-    if (aStart == null && bStart == null) return 0;
-    if (aStart == null) return 1;
-    if (bStart == null) return -1;
-    return aStart.compareTo(bStart);
-  }
-
-  bool _isLive(EpgProgramme programme) {
-    final now = DateTime.now();
-    final start = programme.start;
-    final end = programme.end;
-    return start != null &&
-        end != null &&
-        start.isBefore(now) &&
-        end.isAfter(now);
-  }
+  bool _isLive(EpgProgramme programme) => _epgIsLiveNow(programme);
 
   bool _canReplay(EpgProgramme programme) {
     final currentChannel = widget.channel;
@@ -9125,6 +13189,43 @@ class _EpgProgrammeListState extends State<_EpgProgrammeList> {
   }
 }
 
+class _BackdropImage extends StatelessWidget {
+  const _BackdropImage({
+    required this.url,
+    this.alignment = const Alignment(0.65, -0.15),
+    super.key,
+  });
+
+  final String url;
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.isEmpty) {
+      return const ColoredBox(
+        color: LelegColors.surface2,
+        child: Center(
+          child: Icon(Icons.movie, size: 44, color: LelegColors.muted),
+        ),
+      );
+    }
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      alignment: alignment,
+      width: double.infinity,
+      height: double.infinity,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (_, _, _) => const ColoredBox(
+        color: LelegColors.surface2,
+        child: Center(
+          child: Icon(Icons.movie, size: 44, color: LelegColors.muted),
+        ),
+      ),
+    );
+  }
+}
+
 class _Poster extends StatelessWidget {
   const _Poster({required this.url});
 
@@ -9150,29 +13251,32 @@ class _Poster extends StatelessWidget {
 }
 
 class _Logo extends StatelessWidget {
-  const _Logo({required this.url, required this.fallback});
+  const _Logo({required this.url, required this.fallback, this.size = 48});
 
   final String url;
   final IconData fallback;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     if (url.isEmpty) {
       return CircleAvatar(
+        radius: size / 2,
         backgroundColor: LelegColors.surface3,
-        child: Icon(fallback, color: LelegColors.accent),
+        child: Icon(fallback, color: LelegColors.accent, size: size * 0.55),
       );
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(10),
       child: Image.network(
         url,
-        width: 48,
-        height: 48,
+        width: size,
+        height: size,
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => CircleAvatar(
+          radius: size / 2,
           backgroundColor: LelegColors.surface3,
-          child: Icon(fallback, color: LelegColors.accent),
+          child: Icon(fallback, color: LelegColors.accent, size: size * 0.55),
         ),
       ),
     );
@@ -9180,18 +13284,23 @@ class _Logo extends StatelessWidget {
 }
 
 class _SettingsBand extends StatelessWidget {
-  const _SettingsBand({required this.title, required this.child});
+  const _SettingsBand({
+    required this.title,
+    required this.child,
+    this.compact = false,
+  });
 
   final String title;
   final Widget child;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.all(compact ? 12 : 20),
       decoration: BoxDecoration(
         color: LelegColors.surface,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(compact ? 12 : 18),
         border: Border.all(color: LelegColors.line),
       ),
       child: Column(
@@ -9199,9 +13308,12 @@ class _SettingsBand extends StatelessWidget {
         children: [
           Text(
             title,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            style: TextStyle(
+              fontSize: compact ? TvUi.sectionTitle : 20,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? 8 : 16),
           child,
         ],
       ),

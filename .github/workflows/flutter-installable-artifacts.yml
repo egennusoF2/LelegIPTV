@@ -19,14 +19,15 @@ jobs:
         with:
           channel: stable
       - run: flutter pub get
-      - run: flutter build apk --release
+      - run: flutter build apk --release --flavor mobile
+      - run: flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true
       - name: Package Android APK
         working-directory: .
         run: |
           mkdir -p www/downloads/current
-          cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
+          cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-mobile-release.apk \
             www/downloads/current/LelegIPTV-android-universal-release.apk
-          cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
+          cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-tv-release.apk \
             www/downloads/current/LelegIPTV-android-tv-release.apk
       - uses: actions/upload-artifact@v4
         with:

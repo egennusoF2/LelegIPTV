@@ -159,6 +159,7 @@ else
     fi
 
     sudo \$DOCKER_COMPOSE_CMD up -d
+    sudo \$DOCKER_COMPOSE_CMD restart web
     sleep 5
 
     if sudo \$DOCKER_COMPOSE_CMD ps | grep -q "Up"; then

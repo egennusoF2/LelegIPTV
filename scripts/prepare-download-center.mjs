@@ -4,19 +4,25 @@ import { fileURLToPath } from "node:url"
 import { marked } from "marked"
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-const sourceHtml = resolve(root, "docs", "installazione-dispositivi.html")
+const sourceHtmlCandidates = [
+  resolve(root, "www", "index.html"),
+  resolve(root, "docs", "installazione-dispositivi.html"),
+]
+const sourceHtml = sourceHtmlCandidates.find((path) => existsSync(path))
 const sourceBuildDocs = resolve(root, "docs", "BUILD_ARTIFACTS.md")
 const sourceDownloads = resolve(root, "www", "downloads", "current")
 const dist = resolve(root, "dist")
 const distDownloads = resolve(dist, "downloads", "current")
+const distIndex = resolve(dist, "index.html")
+const distSw = resolve(dist, "sw.js")
 const allowLargeDownloads = process.env.ALLOW_LARGE_DOWNLOADS === "1"
 const maxHostedDownloadBytes = 50 * 1024 * 1024
 
 if (!existsSync(dist)) {
   throw new Error("Missing dist/. Run pnpm build:pages before prepare-download-center.")
 }
-if (!existsSync(sourceHtml)) {
-  throw new Error(`Missing ${sourceHtml}`)
+if (!sourceHtml) {
+  throw new Error(`Missing download page HTML (${sourceHtmlCandidates.join(" or ")})`)
 }
 if (!existsSync(sourceDownloads)) {
   throw new Error(`Missing ${sourceDownloads}`)
@@ -37,7 +43,22 @@ for (const entry of readdirSync(sourceDownloads)) {
 let html = readFileSync(sourceHtml, "utf8")
 html = html.replaceAll("../www/downloads/current/", "downloads/current/")
 html = html.replaceAll('href="../dist/home/index.html"', 'href="home/"')
-writeFileSync(resolve(dist, "index.html"), html)
+if (!html.includes("http-equiv=\"Cache-Control\"")) {
+  html = html.replace(
+    "<head>",
+    '<head>\n  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />\n  <meta http-equiv="Pragma" content="no-cache" />\n  <meta http-equiv="Expires" content="0" />',
+  )
+}
+writeFileSync(distIndex, html)
+
+if (existsSync(distSw)) {
+  let sw = readFileSync(distSw, "utf8")
+  const stripped = sw.replace(/\{url:"\/",revision:"[^"]*"\},?/, "")
+  if (stripped !== sw) {
+    writeFileSync(distSw, stripped)
+    console.log("Removed / from sw.js precache (download page must not be cached by PWA)")
+  }
+}
 
 if (existsSync(sourceBuildDocs)) {
   cpSync(sourceBuildDocs, resolve(dist, "BUILD_ARTIFACTS.md"))
@@ -80,5 +101,5 @@ if (existsSync(staleNested)) {
   rmSync(staleNested, { recursive: true, force: true })
 }
 
-console.log("Download center prepared at dist/index.html")
+console.log(`Download center prepared at dist/index.html (source: ${sourceHtml})`)
 console.log("Artifacts copied to dist/downloads/current/")

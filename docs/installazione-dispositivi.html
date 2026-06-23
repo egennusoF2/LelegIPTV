@@ -274,22 +274,27 @@
       <p class="note">
         I link puntano agli artefatti compilati in <code>www/downloads/current/</code>. I comandi per rigenerarli sono separati in
         <a href="BUILD_ARTIFACTS.html">BUILD_ARTIFACTS.html</a>.
+        Su Android ci sono <strong>due APK distinti</strong> (mobile vs TV): controlla il nome file e l'hash prima di installare.
       </p>
       <div class="download-grid">
         <article class="download-card">
           <div>
             <h3>Android smartphone e tablet</h3>
-            <p>APK universale Flutter nativo con UI mobile ottimizzata e download offline via gestore di sistema.</p>
+            <p>APK flavor <strong>mobile</strong>: UI con drawer/hamburger, download offline e layout adattivo telefono/tablet.</p>
             <p class="meta">91 MB · firma APK v2 valida</p>
+            <p class="meta"><code>LelegIPTV-android-universal-release.apk</code></p>
+            <p class="meta">SHA256: <code>21c2ec92…96fb1</code></p>
           </div>
-          <a class="button primary" href="../www/downloads/current/LelegIPTV-android-universal-release.apk">Scarica APK</a>
+          <a class="button primary" href="../www/downloads/current/LelegIPTV-android-universal-release.apk">Scarica APK mobile</a>
         </article>
 
         <article class="download-card">
           <div>
             <h3>Android TV / Google TV / Chromecast / Fire TV</h3>
-            <p>APK TV con launcher Leanback, navigazione telecomando, categorie rapide ed EPG fullscreen.</p>
+            <p>APK flavor <strong>tv</strong>: menu in header, pagine TV dedicate, solo launcher Leanback (non per telefono).</p>
             <p class="meta">Compatibile con sideload su TV Android e Fire TV.</p>
+            <p class="meta"><code>LelegIPTV-android-tv-release.apk</code></p>
+            <p class="meta">SHA256: <code>8f2b334b…c3fa7</code></p>
           </div>
           <a class="button primary" href="../www/downloads/current/LelegIPTV-android-tv-release.apk">Scarica APK TV</a>
         </article>

@@ -286,8 +286,20 @@
   <section id="download">
     <h2>📦 Download rapido</h2>
     <p style="color:var(--muted);margin-bottom:18px">
-      Seleziona la versione per il tuo dispositivo. Tutti i file sono artefatti di build 1.6.0.
+      Seleziona la versione per il tuo dispositivo. Su Android ci sono <strong>due APK diversi</strong>:
+      <code>LelegIPTV-android-universal-release.apk</code> (telefono/tablet) e
+      <code>LelegIPTV-android-tv-release.apk</code> (TV / Fire Stick).
     </p>
+
+    <div class="note warn" style="margin-bottom:18px">
+      <strong>Downloader (Fire TV / Android TV / Chromecast):</strong><br>
+      Apri Downloader, inserisci il <strong>codice</strong> oppure l'URL diretto:<br>
+      <pre style="margin:10px 0 6px;padding:12px;background:#03080b;border-radius:8px;overflow:auto"><code>Codice:  1170095
+URL TV:  https://lelegiptv.ddns.net/dl/tv.apk
+URL mob: https://lelegiptv.ddns.net/dl/mobile.apk</code></pre>
+      Se HTTPS non parte, prova <code>http://lelegiptv.ddns.net/dl/tv.apk</code>.<br>
+      Elenco completo: <a href="downloads/current/downloader-urls.txt">downloader-urls.txt</a>.
+    </div>
 
     <div class="dl-grid">
 
@@ -320,7 +332,7 @@
         <div>
           <span class="badge badge-warn">APK &middot; 91 MB &middot; unsigned</span>
         </div>
-        <a class="btn-dl" href="downloads/current/LelegIPTV-android-universal-release.apk" download>
+        <a class="btn-dl" href="https://lelegiptv.ddns.net/dl/mobile.apk">
           ⬇ Scarica .apk
         </a>
       </div>
@@ -337,7 +349,7 @@
         <div>
           <span class="badge badge-warn">APK &middot; 91 MB &middot; unsigned</span>
         </div>
-        <a class="btn-dl" href="downloads/current/LelegIPTV-android-tv-release.apk" download>
+        <a class="btn-dl" href="https://lelegiptv.ddns.net/dl/tv.apk">
           ⬇ Scarica .apk TV
         </a>
       </div>
@@ -458,6 +470,11 @@ adb install -r downloads/current/LelegIPTV-android-universal-release.apk</code><
       navigazione telecomando, categorie rapide, Guida TV selezionabile e overlay fullscreen con EPG contestuale.
     </p>
 
+    <h3>Scarica APK TV</h3>
+    <p>
+      <a href="https://lelegiptv.ddns.net/dl/tv.apk" class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ https://lelegiptv.ddns.net/dl/tv.apk</a>
+    </p>
+
     <h3>Installazione su Android TV, Google TV o Chromecast via rete</h3>
     <ol class="steps">
       <li>Sulla TV: <strong>Impostazioni → Opzioni sviluppatore → Debug USB/ADB di rete</strong> → abilita.</li>
@@ -473,7 +490,7 @@ adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
     <ol class="steps">
       <li>Su Fire TV abilita <strong>Opzioni sviluppatore → Debug ADB</strong> e <strong>App da origini sconosciute</strong>.</li>
       <li>Installa <strong>Downloader</strong> dallo store Amazon oppure usa ADB dalla stessa rete.</li>
-      <li>Con Downloader apri questa pagina e scarica <code>LelegIPTV-android-tv-release.apk</code>, poi conferma l'installazione.</li>
+      <li>Apri Downloader e inserisci il codice <strong>1170095</strong> (oppure l'URL diretto <code>https://lelegiptv.ddns.net/dl/tv.apk</code>), poi conferma l'installazione.</li>
       <li>In alternativa da computer:
         <pre><code>adb connect IP_FIRE_TV:5555
 adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
@@ -625,10 +642,16 @@ sdb devices</code></pre>
           <td data-label="Stato"><span class="badge badge-new">build locale</span></td>
         </tr>
         <tr>
+          <td data-label="Piattaforma">Android smartphone / tablet</td>
+          <td data-label="File"><a href="downloads/current/LelegIPTV-android-universal-release.apk" download>LelegIPTV-android-universal-release.apk</a></td>
+          <td data-label="Dimensione">91 MB</td>
+          <td data-label="Stato"><span class="badge badge-warn">flavor mobile</span></td>
+        </tr>
+        <tr>
           <td data-label="Piattaforma">Android TV / Chromecast / Fire TV</td>
           <td data-label="File"><a href="downloads/current/LelegIPTV-android-tv-release.apk" download>LelegIPTV-android-tv-release.apk</a></td>
           <td data-label="Dimensione">91 MB</td>
-          <td data-label="Stato"><span class="badge badge-warn">unsigned</span></td>
+          <td data-label="Stato"><span class="badge badge-warn">flavor tv</span></td>
         </tr>
         <tr>
           <td data-label="Piattaforma">iOS / iPadOS</td>

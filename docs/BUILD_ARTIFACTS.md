@@ -32,7 +32,7 @@ node scripts/prepare-download-center.mjs
 
 Lo script:
 
-- copia `docs/installazione-dispositivi.html` in `dist/index.html`;
+- copia `www/index.html` in `dist/index.html`;
 - copia in `dist/downloads/current/` solo gli artefatti sotto 50 MB;
 - riscrive i link locali `../www/downloads/current/` in link web
   `downloads/current/`;
@@ -71,8 +71,16 @@ hdiutil create -volname LelegIPTV \
 
 ```bash
 cd native/flutter/leleg_iptv
-flutter build apk --release
+flutter build apk --release --flavor mobile
 ```
+
+Per Android TV:
+
+```bash
+flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true
+```
+
+Oppure entrambi con `bash scripts/package-flutter-android-apks.sh` dalla root.
 
 Output:
 
@@ -83,20 +91,27 @@ native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk
 Copia consigliata:
 
 ```bash
-cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
-  www/downloads/current/LelegIPTV-android-universal-release.apk
-cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-release.apk \
-  www/downloads/current/LelegIPTV-android-tv-release.apk
+bash scripts/package-flutter-android-apks.sh
+```
+
+Oppure manualmente:
+
+```bash
+cd native/flutter/leleg_iptv
+flutter build apk --release --flavor mobile
+flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true
+cp build/app/outputs/flutter-apk/app-mobile-release.apk \
+  ../../../www/downloads/current/LelegIPTV-android-universal-release.apk
+cp build/app/outputs/flutter-apk/app-tv-release.apk \
+  ../../../www/downloads/current/LelegIPTV-android-tv-release.apk
 ```
 
 Nota operativa:
 
-- `www/downloads/current/LelegIPTV-android-universal-release.apk` e' il file
-  per smartphone/tablet Android.
-- `www/downloads/current/LelegIPTV-android-tv-release.apk` e' lo stesso runtime
-  Flutter ma pubblicato con nome dedicato per Android TV, Google TV,
-  Chromecast con Google TV e Fire TV/Fire Stick. L'app rileva il form factor a
-  runtime e abilita layout TV, launcher Leanback e navigazione con telecomando.
+- `LelegIPTV-android-universal-release.apk` e' il flavor **mobile** (telefono/tablet).
+- `LelegIPTV-android-tv-release.apk` e' il flavor **tv**: launcher solo Leanback,
+  layout TV fisso (sidebar + telecomando) anche se il display riporta dimensioni
+  logiche da telefono (Fire TV, Chromecast, ecc.).
 - Evitare copie versionate parallele: in passato hanno creato confusione tra
   build vecchie e nuove.
 - Su Android smartphone/tablet il download offline e' demandato al

@@ -43,6 +43,12 @@ class MainActivity : FlutterActivity() {
                     result.success(isTv)
                 }
 
+                "isTvFlavor" -> {
+                    val fromManifest =
+                        applicationInfo.metaData?.getString("leleg.tv.flavor") == "true"
+                    result.success(BuildConfig.LELEG_TV_FLAVOR || fromManifest)
+                }
+
                 "setRemoteKeyPassthrough" -> {
                     remoteKeyPassthrough = call.argument<Boolean>("enabled") == true
                     result.success(true)
