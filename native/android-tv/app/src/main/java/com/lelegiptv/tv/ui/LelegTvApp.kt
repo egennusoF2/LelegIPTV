@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,11 +68,17 @@ import com.lelegiptv.tv.SeriesState
 import com.lelegiptv.tv.VodDetailState
 import com.lelegiptv.tv.VodState
 import com.lelegiptv.tv.data.CatalogState
+import com.lelegiptv.tv.data.LIVE_FAVORITES_CATEGORY_ID
 import com.lelegiptv.tv.data.LiveCategory
 import com.lelegiptv.tv.data.LiveChannel
 import com.lelegiptv.tv.data.ProfilePresets
 import com.lelegiptv.tv.data.SavedProfile
+import com.lelegiptv.tv.data.EpisodeProgressMeta
+import com.lelegiptv.tv.data.FavoriteKind
+import com.lelegiptv.tv.data.FavoriteMeta
 import com.lelegiptv.tv.data.SeriesEpisode
+import com.lelegiptv.tv.data.SeriesInfo
+import com.lelegiptv.tv.data.SeriesShow
 import com.lelegiptv.tv.data.VodMovie
 import com.lelegiptv.tv.data.XtreamProfile
 import com.lelegiptv.tv.data.epgProgrammeKey
@@ -81,6 +88,7 @@ private class SidebarFocusHandles(
     val live: FocusRequester = FocusRequester(),
     val movies: FocusRequester = FocusRequester(),
     val series: FocusRequester = FocusRequester(),
+    val favorites: FocusRequester = FocusRequester(),
     val search: FocusRequester = FocusRequester(),
     val guide: FocusRequester = FocusRequester(),
     val settings: FocusRequester = FocusRequester(),
@@ -91,6 +99,7 @@ private class SidebarFocusHandles(
             TvRoute.Live -> live
             TvRoute.Movies, TvRoute.MovieDetail -> movies
             TvRoute.Series, TvRoute.SeriesDetail -> series
+            TvRoute.Favorites -> favorites
             TvRoute.Search -> search
             TvRoute.Guide -> guide
             TvRoute.Settings -> settings
@@ -102,11 +111,17 @@ private enum class TvRoute {
     Live,
     Movies,
     Series,
+    Favorites,
     Search,
     Guide,
     MovieDetail,
     SeriesDetail,
     Settings,
+}
+
+private sealed class VodProgressTrack {
+    data class Movie(val id: Int, val name: String, val logo: String) : VodProgressTrack()
+    data class Episode(val episodeId: Int, val meta: EpisodeProgressMeta) : VodProgressTrack()
 }
 
 private sealed interface PlaybackRequest {
@@ -118,7 +133,13 @@ private sealed interface PlaybackRequest {
         val channel: LiveChannel get() = channels[index]
     }
 
-    data class Vod(val title: String, val urls: List<String>, val referer: String) : PlaybackRequest
+    data class Vod(
+        val title: String,
+        val urls: List<String>,
+        val referer: String,
+        val startPositionMs: Long = 0L,
+        val track: VodProgressTrack? = null,
+    ) : PlaybackRequest
 }
 
 @Composable
@@ -131,6 +152,7 @@ fun LelegTvApp(viewModel: TvViewModel) {
     val vodDetailState by viewModel.vodDetailState.collectAsStateWithLifecycle()
     val seriesDetailState by viewModel.seriesDetailState.collectAsStateWithLifecycle()
     val profilesState by viewModel.profilesState.collectAsStateWithLifecycle()
+    val libraryState by viewModel.libraryState.collectAsStateWithLifecycle()
     var route by remember {
         mutableStateOf(
             if (state is CatalogState.Empty || state is CatalogState.Failed) {
@@ -183,6 +205,26 @@ fun LelegTvApp(viewModel: TvViewModel) {
                 title = request.title,
                 urls = request.urls,
                 referer = request.referer,
+                startPositionMs = request.startPositionMs,
+                onProgressUpdate = request.track?.let { track ->
+                    { positionMs: Long, durationMs: Long ->
+                        when (track) {
+                            is VodProgressTrack.Movie -> viewModel.saveMovieProgress(
+                                movieId = track.id,
+                                name = track.name,
+                                logo = track.logo,
+                                positionMs = positionMs,
+                                durationMs = durationMs,
+                            )
+                            is VodProgressTrack.Episode -> viewModel.saveEpisodeProgress(
+                                episodeId = track.episodeId,
+                                meta = track.meta,
+                                positionMs = positionMs,
+                                durationMs = durationMs,
+                            )
+                        }
+                    }
+                },
                 onBack = { playing = null },
             )
             return
@@ -215,8 +257,12 @@ fun LelegTvApp(viewModel: TvViewModel) {
     fun openRoute(next: TvRoute) {
         route = next
         ready?.profile?.let { profile ->
-            if (next == TvRoute.Movies || next == TvRoute.Search) viewModel.ensureVod(profile)
-            if (next == TvRoute.Series || next == TvRoute.Search) viewModel.ensureSeries(profile)
+            if (next == TvRoute.Movies || next == TvRoute.Search || next == TvRoute.Favorites) {
+                viewModel.ensureVod(profile)
+            }
+            if (next == TvRoute.Series || next == TvRoute.Search || next == TvRoute.Favorites) {
+                viewModel.ensureSeries(profile)
+            }
         }
     }
 
@@ -248,24 +294,115 @@ fun LelegTvApp(viewModel: TvViewModel) {
             playing = PlaybackRequest.Live(catalog.profile, catalog.channels, index)
         }
     }
-    fun playMovie(movie: VodMovie) {
+    fun playMovie(movie: VodMovie, restart: Boolean = false) {
         val profile = ready?.profile ?: return
+        val progress = libraryState.movieProgress[movie.id]?.progress
+        val startMs = if (restart || progress?.canResume != true) {
+            0L
+        } else {
+            progress.positionMs
+        }
+        if (restart) viewModel.clearMovieProgress(movie.id)
+        viewModel.setLastVodMovie(movie.id)
         playing = PlaybackRequest.Vod(
-            movie.name,
-            StreamPlayback.expandPlaybackUrls(
+            title = movie.name,
+            urls = StreamPlayback.expandPlaybackUrls(
                 profile.movieUrl(movie.id, movie.containerExtension),
             ),
-            "${profile.baseUrl}/",
+            referer = "${profile.baseUrl}/",
+            startPositionMs = startMs,
+            track = VodProgressTrack.Movie(movie.id, movie.name, movie.logo),
         )
     }
-    fun playEpisode(episode: SeriesEpisode) {
+
+    fun playEpisode(episode: SeriesEpisode, restart: Boolean = false) {
         val profile = ready?.profile ?: return
+        val seriesInfo = (seriesDetailState as? SeriesDetailState.Ready)?.info
+        val stored = libraryState.episodeProgress[episode.id]
+        val progress = stored?.progress
+        val startMs = if (restart || progress?.canResume != true) {
+            0L
+        } else {
+            progress.positionMs
+        }
+        if (restart) viewModel.clearEpisodeProgress(episode.id)
+        val meta = seriesInfo?.let {
+            EpisodeProgressMeta(
+                seriesId = it.show.id,
+                seriesName = it.show.name,
+                seriesLogo = it.show.logo,
+                season = episode.season,
+                episodeNum = episode.episode,
+                episodeTitle = episode.title,
+            )
+        } ?: stored?.meta ?: EpisodeProgressMeta(
+            seriesId = 0,
+            seriesName = episode.title,
+            seriesLogo = "",
+            season = episode.season,
+            episodeNum = episode.episode,
+            episodeTitle = episode.title,
+        )
+        seriesInfo?.show?.id?.let { viewModel.setLastVodEpisode(it, episode.id) }
         playing = PlaybackRequest.Vod(
-            episode.title,
-            StreamPlayback.expandPlaybackUrls(
+            title = episode.title.ifBlank { "S${episode.season} E${episode.episode}" },
+            urls = StreamPlayback.expandPlaybackUrls(
                 profile.seriesUrl(episode.id, episode.containerExtension),
             ),
-            "${profile.baseUrl}/",
+            referer = "${profile.baseUrl}/",
+            startPositionMs = startMs,
+            track = VodProgressTrack.Episode(episode.id, meta),
+        )
+    }
+
+    fun resumeContinueMovie(movieId: Int) {
+        val movie = (vodState as? VodState.Ready)?.movies?.firstOrNull { it.id == movieId }
+            ?: libraryState.movieProgress[movieId]?.let { entry ->
+                VodMovie(movieId, entry.name, entry.logo, "", "", "", "", "")
+            }
+        movie?.let { playMovie(it, restart = false) }
+    }
+
+    fun resumeContinueEpisode(seriesId: Int, episodeId: Int) {
+        val entry = libraryState.episodeProgress[episodeId] ?: return
+        val profile = ready?.profile ?: return
+        val progress = entry.progress
+        if (!progress.canResume) return
+        viewModel.setLastVodEpisode(seriesId, episodeId)
+        playing = PlaybackRequest.Vod(
+            title = entry.meta.episodeTitle.ifBlank {
+                "S${entry.meta.season} E${entry.meta.episodeNum}"
+            },
+            urls = StreamPlayback.expandPlaybackUrls(
+                profile.seriesUrl(episodeId, "mp4"),
+            ),
+            referer = "${profile.baseUrl}/",
+            startPositionMs = progress.positionMs,
+            track = VodProgressTrack.Episode(episodeId, entry.meta),
+        )
+    }
+
+    fun toggleMovieFavorite(movie: VodMovie) {
+        viewModel.toggleFavorite(
+            FavoriteKind.VOD,
+            movie.id,
+            FavoriteMeta(movie.name, movie.logo),
+        )
+    }
+
+    fun toggleSeriesFavorite(show: SeriesShow) {
+        viewModel.toggleFavorite(
+            FavoriteKind.SERIES,
+            show.id,
+            FavoriteMeta(show.name, show.logo),
+        )
+    }
+
+    fun toggleLiveFavorite(channel: LiveChannel) {
+        viewModel.toggleFavorite(
+            FavoriteKind.LIVE,
+            channel.id,
+            FavoriteMeta(channel.name, channel.logo),
         )
     }
 
@@ -286,6 +423,13 @@ fun LelegTvApp(viewModel: TvViewModel) {
     LaunchedEffect(route) {
         if (route == TvRoute.Home) {
             scope.launch { sidebarFocus.home.safeRequestFocus() }
+        }
+    }
+
+    LaunchedEffect(route, libraryState.movieProgress, libraryState.episodeProgress, ready?.profile) {
+        if (route == TvRoute.Home && ready != null && libraryState.continueWatching().isNotEmpty()) {
+            viewModel.ensureVod(ready.profile)
+            viewModel.ensureSeries(ready.profile)
         }
     }
 
@@ -321,6 +465,9 @@ fun LelegTvApp(viewModel: TvViewModel) {
                 liveCount = ready?.channels?.size ?: 0,
                 movieCount = (vodState as? VodState.Ready)?.movies?.size,
                 seriesCount = (seriesState as? SeriesState.Ready)?.shows?.size,
+                continueWatching = libraryState.continueWatching(),
+                onContinueMovie = ::resumeContinueMovie,
+                onContinueEpisode = ::resumeContinueEpisode,
                 onLive = { openRoute(TvRoute.Live) },
                 onMovies = { openRoute(TvRoute.Movies) },
                 onSeries = { openRoute(TvRoute.Series) },
@@ -329,8 +476,10 @@ fun LelegTvApp(viewModel: TvViewModel) {
             TvRoute.Live -> LiveScreen(
                 state = state,
                 epgState = epgState,
+                library = libraryState,
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
+                onToggleLiveFavorite = ::toggleLiveFavorite,
                 onSelectChannel = { profile, channel ->
                     viewModel.loadEpg(profile, channel.id, channel)
                 },
@@ -371,6 +520,23 @@ fun LelegTvApp(viewModel: TvViewModel) {
                 state = seriesState,
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
+                onShow = {
+                    ready?.profile?.let { profile -> viewModel.loadSeriesDetail(profile, it) }
+                    route = TvRoute.SeriesDetail
+                },
+            )
+            TvRoute.Favorites -> FavoritesScreen(
+                library = libraryState,
+                channels = ready?.channels.orEmpty(),
+                vodState = vodState,
+                seriesState = seriesState,
+                firstFocusRequester = contentRequester,
+                onMoveLeftToMenu = ::focusSidebarMenu,
+                onLive = ::playChannel,
+                onMovie = {
+                    ready?.profile?.let { profile -> viewModel.loadVodDetail(profile, it) }
+                    route = TvRoute.MovieDetail
+                },
                 onShow = {
                     ready?.profile?.let { profile -> viewModel.loadSeriesDetail(profile, it) }
                     route = TvRoute.SeriesDetail
@@ -451,13 +617,17 @@ fun LelegTvApp(viewModel: TvViewModel) {
             }
             TvRoute.MovieDetail -> MovieDetailScreen(
                 state = vodDetailState,
+                library = libraryState,
                 firstFocusRequester = contentRequester,
                 onPlay = ::playMovie,
+                onToggleFavorite = ::toggleMovieFavorite,
             )
             TvRoute.SeriesDetail -> SeriesDetailScreen(
                 state = seriesDetailState,
+                library = libraryState,
                 firstFocusRequester = contentRequester,
                 onEpisode = ::playEpisode,
+                onToggleFavorite = ::toggleSeriesFavorite,
             )
             TvRoute.Settings -> SettingsScreen(
                 state = state,
@@ -594,6 +764,18 @@ private fun Sidebar(
             focusRequester = sidebarFocus.series,
             modifier = sidebarNavFocus(
                 up = sidebarFocus.movies,
+                down = sidebarFocus.favorites,
+                onMoveRight = onMoveRight,
+            ),
+        )
+        SidebarNavItem(
+            label = "Preferiti",
+            icon = TvNavIcons.Favorites,
+            selected = route == TvRoute.Favorites,
+            onClick = { onRoute(TvRoute.Favorites) },
+            focusRequester = sidebarFocus.favorites,
+            modifier = sidebarNavFocus(
+                up = sidebarFocus.series,
                 down = sidebarFocus.search,
                 onMoveRight = onMoveRight,
             ),
@@ -605,7 +787,7 @@ private fun Sidebar(
             onClick = { onRoute(TvRoute.Search) },
             focusRequester = sidebarFocus.search,
             modifier = sidebarNavFocus(
-                up = sidebarFocus.series,
+                up = sidebarFocus.favorites,
                 down = sidebarFocus.guide,
                 onMoveRight = onMoveRight,
             ),
@@ -665,8 +847,10 @@ private val ColorSidebar = TvColors.Sidebar
 private fun LiveScreen(
     state: CatalogState,
     epgState: EpgState,
+    library: com.lelegiptv.tv.data.UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
+    onToggleLiveFavorite: (LiveChannel) -> Unit,
     onSelectChannel: (XtreamProfile, LiveChannel) -> Unit,
     onProgramme: (XtreamProfile, LiveChannel, com.lelegiptv.tv.data.EpgProgramme) -> Unit,
     onPlay: (XtreamProfile, List<LiveChannel>, Int) -> Unit,
@@ -679,8 +863,10 @@ private fun LiveScreen(
         is CatalogState.Ready -> LiveBrowser(
             state = state,
             epgState = epgState,
+            library = library,
             firstFocusRequester = firstFocusRequester,
             onMoveLeftToMenu = onMoveLeftToMenu,
+            onToggleLiveFavorite = onToggleLiveFavorite,
             onSelectChannel = onSelectChannel,
             onProgramme = onProgramme,
             onPlay = onPlay,
@@ -697,13 +883,16 @@ private fun defaultLiveCategory(categories: List<LiveCategory>): LiveCategory {
 }
 
 private const val LiveChannelDisplayLimit = 400
+private const val LIVE_EPG_DEBOUNCE_MS = 450L
 
 @Composable
 private fun LiveBrowser(
     state: CatalogState.Ready,
     epgState: EpgState,
+    library: com.lelegiptv.tv.data.UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
+    onToggleLiveFavorite: (LiveChannel) -> Unit,
     onSelectChannel: (XtreamProfile, LiveChannel) -> Unit,
     onProgramme: (XtreamProfile, LiveChannel, com.lelegiptv.tv.data.EpgProgramme) -> Unit,
     onPlay: (XtreamProfile, List<LiveChannel>, Int) -> Unit,
@@ -717,12 +906,25 @@ private fun LiveBrowser(
     val epgFocusRequester = remember { FocusRequester() }
     val channelListState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val liveCategories = remember(state.categories) {
+        buildList {
+            add(state.categories.firstOrNull() ?: LiveCategory("", "Tutti i canali"))
+            add(LiveCategory(LIVE_FAVORITES_CATEGORY_ID, "Preferiti"))
+            state.categories.drop(1).forEach { category ->
+                if (category.id != LIVE_FAVORITES_CATEGORY_ID) add(category)
+            }
+        }
+    }
     val channelsByCategory = remember(state.channels) {
         state.channels.groupBy(LiveChannel::categoryId)
     }
-    val filtered = remember(state.channels, channelsByCategory, selectedCategory.id) {
-        if (selectedCategory.id.isBlank()) state.channels
-        else channelsByCategory[selectedCategory.id].orEmpty()
+    val filtered = remember(state.channels, channelsByCategory, selectedCategory.id, library.favoriteLive) {
+        when (selectedCategory.id) {
+            LIVE_FAVORITES_CATEGORY_ID ->
+                state.channels.filter { it.id in library.favoriteLive }
+            "" -> state.channels
+            else -> channelsByCategory[selectedCategory.id].orEmpty()
+        }
     }
     val visibleChannels = remember(filtered) { filtered.take(LiveChannelDisplayLimit) }
     val truncated = filtered.size > visibleChannels.size
@@ -731,14 +933,21 @@ private fun LiveBrowser(
         val stillVisible = current != null && visibleChannels.any { it.id == current.id }
         if (!stillVisible) {
             selectedChannel = visibleChannels.firstOrNull()
-            selectedChannel?.let { onSelectChannel(state.profile, it) }
         }
         channelListState.scrollToItem(0)
     }
 
+    LaunchedEffect(selectedChannel?.id, state.profile) {
+        val channel = selectedChannel ?: return@LaunchedEffect
+        delay(LIVE_EPG_DEBOUNCE_MS)
+        if (selectedChannel?.id == channel.id) {
+            onSelectChannel(state.profile, channel)
+        }
+    }
+
     fun focusSelectedCategory() {
         scope.launch {
-            if (selectedCategory == state.categories.firstOrNull()) {
+            if (selectedCategory == liveCategories.firstOrNull()) {
                 firstFocusRequester.safeRequestFocus()
             } else {
                 categoryFocusRequester.safeRequestFocus()
@@ -784,9 +993,9 @@ private fun LiveBrowser(
                     .fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(state.categories, key = { it.id }) { category ->
+                items(liveCategories, key = { it.id }) { category ->
                     val itemFocusRequester = when {
-                        category == state.categories.first() -> firstFocusRequester
+                        category == liveCategories.firstOrNull() -> firstFocusRequester
                         category.id == selectedCategory.id -> categoryFocusRequester
                         else -> null
                     }
@@ -800,7 +1009,7 @@ private fun LiveBrowser(
                                 if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 when (it.key) {
                                     Key.DirectionLeft -> {
-                                        if (category == state.categories.first()) {
+                                        if (category == liveCategories.firstOrNull()) {
                                             onMoveLeftToMenu()
                                             true
                                         } else {
@@ -854,7 +1063,6 @@ private fun LiveBrowser(
                             .onFocusChanged {
                                 if (it.isFocused && selectedChannel?.id != channel.id) {
                                     selectedChannel = channel
-                                    onSelectChannel(state.profile, channel)
                                 }
                             },
                     ) {
@@ -874,6 +1082,12 @@ private fun LiveBrowser(
                 profile = state.profile,
                 channel = selectedChannel,
                 epgState = epgState,
+                isFavorite = selectedChannel?.let {
+                    library.isFavorite(FavoriteKind.LIVE, it.id)
+                } == true,
+                onToggleFavorite = {
+                    selectedChannel?.let(onToggleLiveFavorite)
+                },
                 epgFocusRequester = epgFocusRequester,
                 onMoveLeft = ::focusSelectedChannel,
                 onProgramme = { channel, programme ->
@@ -897,6 +1111,8 @@ private fun LiveEpgPanel(
     profile: XtreamProfile,
     channel: LiveChannel?,
     epgState: EpgState,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
     epgFocusRequester: FocusRequester,
     onMoveLeft: () -> Unit,
     onProgramme: (LiveChannel, com.lelegiptv.tv.data.EpgProgramme) -> Unit,
@@ -936,36 +1152,46 @@ private fun LiveEpgPanel(
                 .fillMaxWidth()
                 .height(220.dp),
         )
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             BasicText(
                 channel?.name ?: "Seleziona un canale",
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 style = TvTypography.listTitleStyle,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxWidth(),
             )
             if (channel != null) {
-                FocusCard(
-                    onClick = onOpenFullscreen,
-                    focusRequester = epgFocusRequester,
-                    modifier = Modifier.onPreviewKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
-                            onMoveLeft()
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                    padding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 14.dp,
-                        vertical = 8.dp,
-                    ),
-                ) {
-                    Label("Fullscreen")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FocusCard(
+                        onClick = onToggleFavorite,
+                        padding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 12.dp,
+                            vertical = 8.dp,
+                        ),
+                    ) {
+                        Label(if (isFavorite) "★ Preferito" else "☆ Preferiti")
+                    }
+                    FocusCard(
+                        onClick = onOpenFullscreen,
+                        focusRequester = epgFocusRequester,
+                        modifier = Modifier.onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
+                                onMoveLeft()
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                        padding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 14.dp,
+                            vertical = 8.dp,
+                        ),
+                    ) {
+                        Label("Fullscreen")
+                    }
                 }
             }
         }

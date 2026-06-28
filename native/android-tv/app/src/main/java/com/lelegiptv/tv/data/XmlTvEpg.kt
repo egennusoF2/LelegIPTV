@@ -24,9 +24,17 @@ object XmlTvEpg {
     @Volatile
     private var cachedBody: String? = null
 
+    @Volatile
+    private var cachedProgrammeIndexKey: String? = null
+
+    @Volatile
+    private var cachedProgrammeIndex: Map<String, List<EpgProgramme>>? = null
+
     fun clearCache() {
         cachedProfileKey = null
         cachedBody = null
+        cachedProgrammeIndexKey = null
+        cachedProgrammeIndex = null
     }
 
     /** Scarica xmltv.php una sola volta per profilo; le parse successive riusano il body. */
@@ -36,6 +44,8 @@ object XmlTvEpg {
         val body = fetchXmlTv(profile)
         cachedProfileKey = key
         cachedBody = body
+        cachedProgrammeIndexKey = null
+        cachedProgrammeIndex = null
         return body.isNotBlank()
     }
 
@@ -76,7 +86,7 @@ object XmlTvEpg {
 
         val channelById = channels.associateBy(LiveChannel::id)
         val channelIdByKey = keysByChannelId.entries.associate { (id, key) -> key to id }
-        val byKey = parseProgrammes(body, wantedKeys, channelById, channelIdByKey)
+        val byKey = programmeIndex(body).filterKeys { it in wantedKeys }
 
         val now = System.currentTimeMillis()
         val result = linkedMapOf<Int, List<EpgProgramme>>()
@@ -118,8 +128,8 @@ object XmlTvEpg {
         val connection =
             URI(url).toURL().openConnection() as HttpURLConnection
         return try {
-            connection.connectTimeout = 30_000
-            connection.readTimeout = 120_000
+            connection.connectTimeout = 12_000
+            connection.readTimeout = 45_000
             connection.setRequestProperty("Accept", "application/xml,text/xml,*/*")
             connection.setRequestProperty("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
             connection.setRequestProperty("Referer", "${profile.baseUrl}/")
@@ -171,9 +181,29 @@ object XmlTvEpg {
         return names
     }
 
+    private fun programmeIndex(body: String): Map<String, List<EpgProgramme>> {
+        val key = profileKeyFromBody(body)
+        cachedProgrammeIndex?.takeIf { cachedProgrammeIndexKey == key }?.let { return it }
+        synchronized(this) {
+            cachedProgrammeIndex?.takeIf { cachedProgrammeIndexKey == key }?.let { return it }
+            val parsed = parseProgrammes(
+                xml = body,
+                wantedKeys = null,
+                channelById = emptyMap(),
+                channelIdByKey = emptyMap(),
+            )
+            cachedProgrammeIndexKey = key
+            cachedProgrammeIndex = parsed
+            return parsed
+        }
+    }
+
+    private fun profileKeyFromBody(body: String): String =
+        "${body.length}:${body.hashCode()}"
+
     private fun parseProgrammes(
         xml: String,
-        wantedKeys: Set<String>,
+        wantedKeys: Set<String>?,
         channelById: Map<Int, LiveChannel>,
         channelIdByKey: Map<String, Int>,
     ): Map<String, List<EpgProgramme>> {
@@ -183,7 +213,7 @@ object XmlTvEpg {
             while (parser.next() != XmlPullParser.END_DOCUMENT) {
                 if (parser.eventType != XmlPullParser.START_TAG || parser.name != "programme") continue
                 val key = parser.getAttributeValue(null, "channel")?.trim()?.lowercase(Locale.US).orEmpty()
-                if (key.isEmpty() || key !in wantedKeys) {
+                if (key.isEmpty() || (wantedKeys != null && key !in wantedKeys)) {
                     skipTag(parser)
                     continue
                 }
@@ -204,11 +234,13 @@ object XmlTvEpg {
                 if (title.isBlank() || start == null || end == null || end <= start) continue
                 val channelId = channelIdByKey[key]
                 val channel = channelId?.let(channelById::get)
-                if (
-                    end < now - 30L * 60L * 1000L &&
-                    !EpgReplay.canReplay(channel, start, end, now)
-                ) {
-                    continue
+                if (wantedKeys != null) {
+                    if (
+                        end < now - 30L * 60L * 1000L &&
+                        !EpgReplay.canReplay(channel, start, end, now)
+                    ) {
+                        continue
+                    }
                 }
                 byKey.getOrPut(key) { mutableListOf() }.add(
                     EpgProgramme(

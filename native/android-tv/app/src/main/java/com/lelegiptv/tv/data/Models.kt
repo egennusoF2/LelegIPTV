@@ -59,6 +59,9 @@ data class LiveCategory(
     val name: String,
 )
 
+/** Categoria virtuale Live TV: canali preferiti salvati localmente. */
+const val LIVE_FAVORITES_CATEGORY_ID = "__favorites__"
+
 data class LiveChannel(
     val id: Int,
     val name: String,

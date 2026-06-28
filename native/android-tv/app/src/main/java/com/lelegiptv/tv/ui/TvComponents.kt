@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.LiveTv
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -169,6 +170,7 @@ fun HubTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     prominent: Boolean = false,
+    compact: Boolean = false,
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -180,18 +182,48 @@ fun HubTile(
         }
     val requesterModifier =
         if (focusRequester == null) Modifier else Modifier.focusRequester(focusRequester)
+    val tilePadding = when {
+        compact && prominent -> 14.dp
+        compact -> 12.dp
+        prominent -> 22.dp
+        else -> 18.dp
+    }
+    val iconSize = when {
+        compact && prominent -> 30.dp
+        prominent -> TvTypography.hubProminentIcon
+        else -> TvTypography.hubIcon
+    }
+    val titleSize = when {
+        compact && prominent -> TvTypography.hubProminentTitleCompact
+        compact -> TvTypography.hubTitleCompact
+        prominent -> TvTypography.hubProminentTitle
+        else -> TvTypography.hubTitle
+    }
+    val subtitleSize = if (compact) TvTypography.hubSubtitleCompact else TvTypography.hubSubtitle
+    val titleLineHeight = when {
+        compact && prominent -> 22.sp
+        compact -> 18.sp
+        prominent -> 32.sp
+        else -> 24.sp
+    }
+    val subtitleLineHeight = if (compact) 14.sp else 18.sp
+    val midSpacer = when {
+        prominent -> 20.dp
+        else -> 10.dp
+    }
+    val sideTile = compact && !prominent
 
     Box(
         modifier = modifier
             .then(requesterModifier)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(if (compact) 14.dp else 18.dp))
             .scale(if (focused) 1.015f else 1f)
             .border(
                 BorderStroke(
                     width = if (focused) 2.dp else 1.dp,
                     color = if (focused) TvColors.Accent else TvColors.Line,
                 ),
-                RoundedCornerShape(18.dp),
+                RoundedCornerShape(if (compact) 14.dp else 18.dp),
             )
             .background(
                 Brush.linearGradient(
@@ -202,58 +234,110 @@ fun HubTile(
             )
             .onFocusChanged { focused = it.isFocused }
             .tvActivate(onClick)
-            .padding(if (prominent) 22.dp else 18.dp),
+            .padding(tilePadding),
     ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
+        if (sideTile) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     tint = TvColors.Accent,
-                    modifier = Modifier.size(
-                        if (prominent) TvTypography.hubProminentIcon else TvTypography.hubIcon,
-                    ),
+                    modifier = Modifier.size(26.dp),
                 )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    BasicText(
+                        title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            color = TvColors.Text,
+                            fontSize = titleSize,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = TvTypography.fontFamily,
+                            lineHeight = titleLineHeight,
+                        ),
+                    )
+                    BasicText(
+                        subtitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            color = TvColors.Muted,
+                            fontSize = subtitleSize,
+                            fontFamily = TvTypography.fontFamily,
+                            lineHeight = subtitleLineHeight,
+                        ),
+                    )
+                }
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = null,
                     tint = TvColors.Muted,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
-            Spacer(
-                Modifier.height(if (prominent) 20.dp else 10.dp),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(if (prominent) 6.dp else 4.dp)) {
-                BasicText(
-                    title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(
-                        color = TvColors.Text,
-                        fontSize = if (prominent) TvTypography.hubProminentTitle else TvTypography.hubTitle,
-                        fontWeight = FontWeight.Black,
-                        fontFamily = TvTypography.fontFamily,
-                        lineHeight = if (prominent) 32.sp else 24.sp,
-                    ),
-                )
-                BasicText(
-                    subtitle,
-                    maxLines = if (prominent) 2 else 2,
-                    overflow = TextOverflow.Ellipsis,
-                    style = TextStyle(
-                        color = TvColors.Muted,
-                        fontSize = TvTypography.hubSubtitle,
-                        fontFamily = TvTypography.fontFamily,
-                    ),
-                )
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = if (compact) {
+                    Arrangement.spacedBy(8.dp)
+                } else {
+                    Arrangement.SpaceBetween
+                },
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = TvColors.Accent,
+                        modifier = Modifier.size(iconSize),
+                    )
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = TvColors.Muted,
+                        modifier = Modifier.size(if (compact) 16.dp else 20.dp),
+                    )
+                }
+                if (!compact) {
+                    Spacer(Modifier.height(midSpacer))
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else if (prominent) 6.dp else 4.dp)) {
+                    BasicText(
+                        title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            color = TvColors.Text,
+                            fontSize = titleSize,
+                            fontWeight = FontWeight.Black,
+                            fontFamily = TvTypography.fontFamily,
+                            lineHeight = titleLineHeight,
+                        ),
+                    )
+                    BasicText(
+                        subtitle,
+                        maxLines = if (compact) 1 else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            color = TvColors.Muted,
+                            fontSize = subtitleSize,
+                            fontFamily = TvTypography.fontFamily,
+                            lineHeight = subtitleLineHeight,
+                        ),
+                    )
+                }
             }
         }
     }
@@ -265,6 +349,7 @@ object TvNavIcons {
     val Movies = Icons.Outlined.Movie
     val Series = Icons.Outlined.Layers
     val Search = Icons.Outlined.Search
+    val Favorites = Icons.Outlined.Star
     val Guide = Icons.Outlined.CalendarMonth
     val Lists = Icons.AutoMirrored.Outlined.PlaylistPlay
 }

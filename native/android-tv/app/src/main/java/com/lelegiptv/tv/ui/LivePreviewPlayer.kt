@@ -10,13 +10,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -31,6 +31,12 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.lelegiptv.tv.data.LiveChannel
 import com.lelegiptv.tv.data.XtreamProfile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+
+private const val PreviewDebounceMs = 550L
+private const val PreviewPlayTimeoutMs = 3_500L
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -42,9 +48,7 @@ fun LivePreviewPlayer(
     val context = androidx.compose.ui.platform.LocalContext.current
     val lightweight = DeviceCapabilities.useLightweightPreview()
     var error by remember { mutableStateOf<String?>(null) }
-    val urls = remember(profile, channel?.id) {
-        if (channel == null) emptyList() else StreamPlayback.buildLiveStreamUrls(profile, channel.id)
-    }
+    var previewGeneration by remember { mutableIntStateOf(0) }
 
     if (channel == null) {
         Box(
@@ -58,7 +62,7 @@ fun LivePreviewPlayer(
         return
     }
 
-    val player = remember(profile.baseUrl, channel.id) {
+    val player = remember(profile.baseUrl) {
         val dataSource = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
             .setDefaultRequestProperties(mapOf("Referer" to "${profile.baseUrl}/"))
@@ -83,20 +87,36 @@ fun LivePreviewPlayer(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
+            player.stop()
+            player.clearMediaItems()
             player.release()
         }
     }
 
-    LaunchedEffect(urls) {
-        if (urls.isEmpty()) {
-            player.stop()
-            player.clearMediaItems()
-            return@LaunchedEffect
-        }
-        runCatching {
-            StreamPlayback.playPreviewUrl(player, urls, lightweight) { error = it }
-        }.onFailure {
-            error = it.message ?: "Errore anteprima"
+    LaunchedEffect(channel.id) {
+        previewGeneration += 1
+        val generation = previewGeneration
+        error = null
+        player.stop()
+        player.clearMediaItems()
+        delay(PreviewDebounceMs)
+        if (generation != previewGeneration) return@LaunchedEffect
+
+        val urls = StreamPlayback.buildLiveStreamUrls(profile, channel.id)
+        if (urls.isEmpty()) return@LaunchedEffect
+
+        try {
+            withTimeout(PreviewPlayTimeoutMs) {
+                StreamPlayback.playPreviewUrl(player, urls, lightweight) {
+                    if (generation == previewGeneration) error = it
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            if (generation == previewGeneration) {
+                error = "Anteprima non disponibile"
+            }
         }
     }
 
@@ -106,10 +126,6 @@ fun LivePreviewPlayer(
             .background(TvColors.SurfaceDeep),
         contentAlignment = Alignment.Center,
     ) {
-        if (urls.isEmpty()) {
-            BasicText(channel.name, style = TvTypography.mutedStyle)
-            return@Box
-        }
         AndroidView(
             factory = {
                 PlayerView(it).apply {

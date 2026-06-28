@@ -16,6 +16,16 @@ import com.lelegiptv.tv.data.VodInfo
 import com.lelegiptv.tv.data.VodMovie
 import com.lelegiptv.tv.data.ProfilePresets
 import com.lelegiptv.tv.data.ProfileStore
+import com.lelegiptv.tv.data.UserLibraryStore
+import com.lelegiptv.tv.data.FavoriteKind
+import com.lelegiptv.tv.data.FavoriteMeta
+import com.lelegiptv.tv.data.PlaybackProgress
+import com.lelegiptv.tv.data.EpisodeProgressMeta
+import com.lelegiptv.tv.data.EpisodeProgressEntry
+import com.lelegiptv.tv.data.LastVodPlay
+import com.lelegiptv.tv.data.MovieProgressEntry
+import com.lelegiptv.tv.data.UserLibrarySnapshot
+import com.lelegiptv.tv.data.favoriteMetaKey
 import com.lelegiptv.tv.data.XtreamClient
 import com.lelegiptv.tv.data.XtreamProfile
 import com.lelegiptv.tv.data.XmlTvEpg
@@ -30,9 +40,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.cancellation.CancellationException
 
 class TvViewModel(application: Application) : AndroidViewModel(application) {
     private val store = ProfileStore(application)
+    private val libraryStore = UserLibraryStore(application)
     private val cache = CatalogCache(application)
     private val libraryCache = LibraryCache(application)
     private val client = XtreamClient()
@@ -45,6 +58,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableSeriesDetailState =
         MutableStateFlow<SeriesDetailState>(SeriesDetailState.Idle)
     private val mutableProfilesState = MutableStateFlow(ProfilesState())
+    private val mutableLibraryState = MutableStateFlow(UserLibrarySnapshot.Empty)
     private var lastGuideChannelIds: List<Int>? = null
     private val epgMemoryCache =
         object : LinkedHashMap<Int, List<EpgProgramme>>(16, 0.75f, true) {
@@ -54,6 +68,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private val xmlTvCache = mutableMapOf<Int, List<EpgProgramme>>()
     private var xmlTvProfileKey: String? = null
     private var epgLoadJob: Job? = null
+    private var epgRequestSeq = 0
     private var guideWarmJob: Job? = null
     private var guideChannelJob: Job? = null
     private val guideFullLoadChannels = mutableSetOf<Int>()
@@ -66,6 +81,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     val vodDetailState: StateFlow<VodDetailState> = mutableVodDetailState.asStateFlow()
     val seriesDetailState: StateFlow<SeriesDetailState> = mutableSeriesDetailState.asStateFlow()
     val profilesState: StateFlow<ProfilesState> = mutableProfilesState.asStateFlow()
+    val libraryState: StateFlow<UserLibrarySnapshot> = mutableLibraryState.asStateFlow()
 
     init {
         refreshProfilesState()
@@ -80,6 +96,131 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         mutableProfilesState.value = ProfilesState(
             profiles = store.loadAll(),
             activeId = store.loadActiveId(),
+        )
+        reloadLibraryState()
+    }
+
+    private fun reloadLibraryState() {
+        val profileId = store.loadActiveId().orEmpty()
+        mutableLibraryState.value = libraryStore.load(profileId)
+    }
+
+    private fun persistLibrary(snapshot: UserLibrarySnapshot) {
+        val profileId = store.loadActiveId() ?: return
+        libraryStore.save(profileId, snapshot)
+        mutableLibraryState.value = snapshot
+    }
+
+    fun toggleFavorite(kind: FavoriteKind, id: Int, meta: FavoriteMeta) {
+        val current = mutableLibraryState.value
+        val metaKey = favoriteMetaKey(kind, id)
+        val nextMeta = current.favoriteMeta + (metaKey to meta)
+        val snapshot = when (kind) {
+            FavoriteKind.LIVE -> {
+                val next = if (id in current.favoriteLive) {
+                    current.favoriteLive - id
+                } else {
+                    current.favoriteLive + id
+                }
+                current.copy(favoriteLive = next, favoriteMeta = nextMeta)
+            }
+            FavoriteKind.VOD -> {
+                val next = if (id in current.favoriteVod) {
+                    current.favoriteVod - id
+                } else {
+                    current.favoriteVod + id
+                }
+                current.copy(favoriteVod = next, favoriteMeta = nextMeta)
+            }
+            FavoriteKind.SERIES -> {
+                val next = if (id in current.favoriteSeries) {
+                    current.favoriteSeries - id
+                } else {
+                    current.favoriteSeries + id
+                }
+                current.copy(favoriteSeries = next, favoriteMeta = nextMeta)
+            }
+        }
+        persistLibrary(snapshot)
+    }
+
+    fun saveMovieProgress(
+        movieId: Int,
+        name: String,
+        logo: String,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (durationMs <= 0) return
+        val current = mutableLibraryState.value
+        val progress = PlaybackProgress(
+            positionMs = positionMs.coerceAtLeast(0L),
+            durationMs = durationMs,
+            updatedAt = System.currentTimeMillis(),
+        )
+        val snapshot = current.copy(
+            movieProgress = current.movieProgress + (movieId to MovieProgressEntry(progress, name, logo)),
+        )
+        persistLibrary(snapshot)
+    }
+
+    fun saveEpisodeProgress(
+        episodeId: Int,
+        meta: EpisodeProgressMeta,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (durationMs <= 0) return
+        val current = mutableLibraryState.value
+        val progress = PlaybackProgress(
+            positionMs = positionMs.coerceAtLeast(0L),
+            durationMs = durationMs,
+            updatedAt = System.currentTimeMillis(),
+        )
+        val snapshot = current.copy(
+            episodeProgress = current.episodeProgress + (
+                episodeId to EpisodeProgressEntry(progress, meta)
+                ),
+        )
+        persistLibrary(snapshot)
+    }
+
+    fun clearMovieProgress(movieId: Int) {
+        val current = mutableLibraryState.value
+        if (movieId !in current.movieProgress) return
+        persistLibrary(current.copy(movieProgress = current.movieProgress - movieId))
+    }
+
+    fun clearEpisodeProgress(episodeId: Int) {
+        val current = mutableLibraryState.value
+        if (episodeId !in current.episodeProgress) return
+        persistLibrary(current.copy(episodeProgress = current.episodeProgress - episodeId))
+    }
+
+    fun setLastVodMovie(movieId: Int) {
+        val current = mutableLibraryState.value
+        persistLibrary(
+            current.copy(
+                lastVodPlay = LastVodPlay(
+                    type = "movie",
+                    movieId = movieId,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            ),
+        )
+    }
+
+    fun setLastVodEpisode(seriesId: Int, episodeId: Int) {
+        val current = mutableLibraryState.value
+        persistLibrary(
+            current.copy(
+                lastVodPlay = LastVodPlay(
+                    type = "episode",
+                    seriesId = seriesId,
+                    episodeId = episodeId,
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            ),
         )
     }
 
@@ -174,35 +315,59 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         epgLoadJob?.cancel()
+        val requestSeq = ++epgRequestSeq
         epgLoadJob = viewModelScope.launch {
             mutableEpgState.value = EpgState.Loading(streamId)
-            delay(150)
-            mutableEpgState.value = try {
-                val resolvedChannel = channel ?: findChannel(streamId)
+            val resolvedChannel = channel ?: findChannel(streamId)
+            try {
                 val shortEpg = withContext(Dispatchers.IO) {
-                    runCatching {
-                        client.loadShortEpg(profile, streamId, limit = 100)
-                    }.getOrDefault(emptyList())
+                    withTimeout(EPG_SHORT_TIMEOUT_MS) {
+                        runCatching {
+                            client.loadShortEpg(profile, streamId, limit = 100)
+                        }.getOrDefault(emptyList())
+                    }
                 }
-                val xmlTvEpg = if (resolvedChannel != null) {
-                    ensureXmlTv(profile, listOf(resolvedChannel))[streamId].orEmpty()
-                } else {
-                    emptyList()
+                if (requestSeq != epgRequestSeq) return@launch
+
+                if (shortEpg.isNotEmpty()) {
+                    val quick = dedupeEpgProgrammes(shortEpg)
+                    epgMemoryCache[streamId] = quick
+                    mutableEpgState.value = EpgState.Ready(streamId, quick)
                 }
+
+                if (resolvedChannel == null) {
+                    if (shortEpg.isEmpty()) {
+                        mutableEpgState.value = EpgState.Failed(streamId, "EPG non disponibile")
+                    }
+                    return@launch
+                }
+
+                val xmlTvEpg = withContext(Dispatchers.IO) {
+                    withTimeout(EPG_XML_TIMEOUT_MS) {
+                        runCatching {
+                            ensureXmlTv(profile, listOf(resolvedChannel))[streamId].orEmpty()
+                        }.getOrDefault(emptyList())
+                    }
+                }
+                if (requestSeq != epgRequestSeq) return@launch
+
                 val programmes = dedupeEpgProgrammes(mergeEpgProgrammes(shortEpg, xmlTvEpg))
                 if (programmes.isNotEmpty()) {
                     epgMemoryCache[streamId] = programmes
-                } else {
+                    mutableEpgState.value = EpgState.Ready(streamId, programmes)
+                } else if (shortEpg.isEmpty()) {
                     epgMemoryCache.remove(streamId)
+                    mutableEpgState.value = EpgState.Failed(streamId, "EPG non disponibile")
                 }
-                if (programmes.isEmpty()) {
-                    EpgState.Failed(streamId, "EPG non disponibile")
-                } else {
-                    EpgState.Ready(streamId, programmes)
-                }
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
+                if (requestSeq != epgRequestSeq) return@launch
                 epgMemoryCache.remove(streamId)
-                EpgState.Failed(streamId, error.message ?: "EPG non disponibile")
+                mutableEpgState.value = EpgState.Failed(
+                    streamId,
+                    error.message ?: "EPG non disponibile",
+                )
             }
         }
     }
@@ -480,6 +645,8 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val CATALOG_TTL_MILLIS = 24L * 60L * 60L * 1000L
         const val EPG_CACHE_MAX_CHANNELS = 12
+        const val EPG_SHORT_TIMEOUT_MS = 10_000L
+        const val EPG_XML_TIMEOUT_MS = 15_000L
         const val GUIDE_LOOKBACK_DAYS = 7
         const val GUIDE_PROGRAMME_LIMIT = 120
         const val DAY_MILLIS = 24L * 60L * 60L * 1000L

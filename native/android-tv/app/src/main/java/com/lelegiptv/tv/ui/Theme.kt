@@ -49,9 +49,13 @@ object TvTypography {
     val inputText = 15.sp
 
     val hubHeight = 360.dp
+    val hubHeightCompact = 212.dp
     val hubProminentTitle = 34.sp
+    val hubProminentTitleCompact = 20.sp
     val hubTitle = 22.sp
+    val hubTitleCompact = 16.sp
     val hubSubtitle = 13.sp
+    val hubSubtitleCompact = 11.sp
     val hubProminentIcon = 42.dp
     val hubIcon = 30.dp
     val posterWidth = 158.dp

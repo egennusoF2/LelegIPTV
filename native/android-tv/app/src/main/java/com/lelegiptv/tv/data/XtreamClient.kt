@@ -161,6 +161,8 @@ class XtreamClient {
                 "get_live_streams" -> 90_000
                 "get_vod_streams", "get_series" -> 150_000
                 "get_series_info" -> 75_000
+                "get_short_epg" -> 12_000
+                "get_simple_data_table" -> 15_000
                 else -> 45_000
             }
             connection.setRequestProperty("Accept", "application/json,text/plain,*/*")

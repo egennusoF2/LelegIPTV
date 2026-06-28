@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -158,6 +159,7 @@ fun GuideScreen(
     }
 
     val channelFocusRequester = remember { FocusRequester() }
+    val categoryFocusRequester = remember { FocusRequester() }
     val dayFocusRequester = remember { FocusRequester() }
     val programmeFocusRequester = remember { FocusRequester() }
     val channelListState = rememberLazyListState()
@@ -169,6 +171,17 @@ fun GuideScreen(
             channelListState.scrollToItem(index)
             channelFocusRequester.safeRequestFocus()
         }
+    }
+
+    fun focusCategoryStrip() {
+        scope.launch { categoryFocusRequester.safeRequestFocus() }
+    }
+
+    LaunchedEffect(selectedCategoryId, channels) {
+        if (channels.isEmpty()) return@LaunchedEffect
+        selectedChannel = channels.firstOrNull()
+        delay(80)
+        focusChannelList()
     }
 
     Column(
@@ -186,7 +199,10 @@ fun GuideScreen(
             GuideCategoryStrip(
                 categories = categories,
                 selectedCategoryId = selectedCategoryId,
+                categoryFocusRequester = categoryFocusRequester,
                 onCategorySelected = onCategorySelected,
+                onMoveDown = ::focusChannelList,
+                onMoveLeftToMenu = onMoveLeftToMenu,
             )
         }
         GuideDayStrip(
@@ -195,6 +211,9 @@ fun GuideScreen(
             nowMillis = nowMillis,
             dayFocusRequester = dayFocusRequester,
             onSelect = { selectedDayOffset = it },
+            onMoveUp = {
+                if (categories.isNotEmpty()) focusCategoryStrip() else focusChannelList()
+            },
             onMoveDown = {
                 if (dayProgrammes.isNotEmpty()) {
                     scope.launch { programmeFocusRequester.safeRequestFocus() }
@@ -220,6 +239,7 @@ fun GuideScreen(
                 onMoveRight = {
                     scope.launch { dayFocusRequester.safeRequestFocus() }
                 },
+                onMoveUp = ::focusCategoryStrip,
                 onMoveLeftToMenu = onMoveLeftToMenu,
             )
             GuideProgrammeColumn(
@@ -286,7 +306,10 @@ private fun GuideHeader(
 private fun GuideCategoryStrip(
     categories: List<LiveCategory>,
     selectedCategoryId: String,
+    categoryFocusRequester: FocusRequester,
     onCategorySelected: (String) -> Unit,
+    onMoveDown: () -> Unit,
+    onMoveLeftToMenu: () -> Unit,
 ) {
     LazyRow(
         modifier = Modifier
@@ -295,9 +318,30 @@ private fun GuideCategoryStrip(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(categories, key = { it.id }) { category ->
+            val isSelected = category.id == selectedCategoryId
             FocusCard(
                 onClick = { onCategorySelected(category.id) },
-                selected = category.id == selectedCategoryId,
+                focusRequester = if (isSelected) categoryFocusRequester else null,
+                selected = isSelected,
+                modifier = Modifier
+                    .onPreviewKeyEvent {
+                        if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (it.key) {
+                            Key.DirectionDown -> {
+                                onMoveDown()
+                                true
+                            }
+                            Key.DirectionLeft -> {
+                                if (category == categories.firstOrNull()) {
+                                    onMoveLeftToMenu()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            else -> false
+                        }
+                    },
                 padding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
             ) {
                 BasicText(
@@ -322,6 +366,7 @@ private fun GuideDayStrip(
     nowMillis: Long,
     dayFocusRequester: FocusRequester,
     onSelect: (Int) -> Unit,
+    onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
 ) {
     val dayOffsets = remember(lookbackDays) {
@@ -346,11 +391,17 @@ private fun GuideDayStrip(
                     .width(if (offset in listOf(-1, 0, 1)) 96.dp else 78.dp)
                     .height(42.dp)
                     .onPreviewKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionDown) {
-                            onMoveDown()
-                            true
-                        } else {
-                            false
+                        if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (it.key) {
+                            Key.DirectionDown -> {
+                                onMoveDown()
+                                true
+                            }
+                            Key.DirectionUp -> {
+                                onMoveUp()
+                                true
+                            }
+                            else -> false
                         }
                     },
                 padding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
@@ -381,6 +432,7 @@ private fun GuideChannelColumn(
     firstFocusRequester: FocusRequester,
     onSelect: (LiveChannel) -> Unit,
     onMoveRight: () -> Unit,
+    onMoveUp: () -> Unit,
     onMoveLeftToMenu: () -> Unit,
 ) {
     LazyColumn(
@@ -397,8 +449,8 @@ private fun GuideChannelColumn(
             FocusCard(
                 onClick = { onSelect(channel) },
                 focusRequester = when {
-                    channel == channels.firstOrNull() -> firstFocusRequester
                     isSelected -> channelFocusRequester
+                    channel == channels.firstOrNull() -> firstFocusRequester
                     else -> null
                 },
                 selected = isSelected,
@@ -418,6 +470,14 @@ private fun GuideChannelColumn(
                             Key.DirectionRight -> {
                                 onMoveRight()
                                 true
+                            }
+                            Key.DirectionUp -> {
+                                if (channel == channels.firstOrNull()) {
+                                    onMoveUp()
+                                    true
+                                } else {
+                                    false
+                                }
                             }
                             else -> false
                         }

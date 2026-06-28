@@ -71,6 +71,7 @@ import java.util.Locale
 
 private const val ControlsTimeoutMs = 5_000L
 private const val SeekIncrementMs = 10_000L
+private const val ProgressFlushIntervalMs = 12_000L
 
 private enum class TrackMenu {
     Audio,
@@ -92,6 +93,8 @@ fun PlayerScreen(
     urls: List<String>,
     referer: String,
     programmes: List<EpgProgramme> = emptyList(),
+    startPositionMs: Long = 0L,
+    onProgressUpdate: ((positionMs: Long, durationMs: Long) -> Unit)? = null,
     onPreviousChannel: (() -> Unit)? = null,
     onNextChannel: (() -> Unit)? = null,
     onBack: () -> Unit,
@@ -144,12 +147,18 @@ fun PlayerScreen(
         }
         player.addListener(listener)
         onDispose {
+            if (onProgressUpdate != null && !isLive) {
+                val duration = player.duration
+                if (duration > 0) {
+                    onProgressUpdate(player.currentPosition.coerceAtLeast(0L), duration)
+                }
+            }
             player.removeListener(listener)
             player.release()
         }
     }
 
-    LaunchedEffect(player, urls) {
+    LaunchedEffect(player, urls, startPositionMs) {
         error = null
         controlsVisible = true
         interactionId++
@@ -158,6 +167,20 @@ fun PlayerScreen(
             urls = urls,
             onError = { message -> error = message },
         )
+        if (startPositionMs > 0L && player.duration > 0) {
+            player.seekTo(startPositionMs.coerceAtMost(player.duration - 1_000L))
+        }
+    }
+
+    LaunchedEffect(player, onProgressUpdate, isLive) {
+        if (onProgressUpdate == null || isLive) return@LaunchedEffect
+        while (true) {
+            delay(ProgressFlushIntervalMs)
+            val duration = player.duration
+            if (duration > 0 && player.playbackState != Player.STATE_IDLE) {
+                onProgressUpdate(player.currentPosition.coerceAtLeast(0L), duration)
+            }
+        }
     }
 
     LaunchedEffect(player) {

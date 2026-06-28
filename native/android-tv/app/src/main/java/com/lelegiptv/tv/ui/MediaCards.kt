@@ -39,6 +39,7 @@ fun HorizontalMediaCard(
     title: String,
     modifier: Modifier = Modifier,
     badge: String? = null,
+    progressFraction: Float? = null,
     subtitle: String? = null,
     description: String? = null,
     selected: Boolean = false,
@@ -96,6 +97,22 @@ fun HorizontalMediaCard(
                         BasicText(
                             label,
                             style = TextStyle(color = Color.White, fontSize = 11.sp),
+                        )
+                    }
+                }
+                progressFraction?.takeIf { it in 0.01f..0.99f }?.let { fraction ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Color(0x66000000)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(fraction)
+                                .height(4.dp)
+                                .background(TvColors.Accent),
                         )
                     }
                 }

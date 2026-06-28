@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -58,6 +59,11 @@ import com.lelegiptv.tv.SeriesDetailState
 import com.lelegiptv.tv.SeriesState
 import com.lelegiptv.tv.VodDetailState
 import com.lelegiptv.tv.VodState
+import com.lelegiptv.tv.data.ContinueWatchingItem
+import com.lelegiptv.tv.data.FavoriteKind
+import com.lelegiptv.tv.data.PlaybackProgress
+import com.lelegiptv.tv.data.UserLibrarySnapshot
+import com.lelegiptv.tv.data.favoriteMetaKey
 import com.lelegiptv.tv.data.LiveChannel
 import com.lelegiptv.tv.data.SeriesEpisode
 import com.lelegiptv.tv.data.SeriesInfo
@@ -72,6 +78,9 @@ fun HomeScreen(
     liveCount: Int,
     movieCount: Int?,
     seriesCount: Int?,
+    continueWatching: List<ContinueWatchingItem>,
+    onContinueMovie: (Int) -> Unit,
+    onContinueEpisode: (Int, Int) -> Unit,
     onLive: () -> Unit,
     onMovies: () -> Unit,
     onSeries: () -> Unit,
@@ -105,11 +114,17 @@ fun HomeScreen(
                 ),
             )
         }
+
+        val continueFocusRequester = remember { FocusRequester() }
+        val scope = rememberCoroutineScope()
+        val hubCompact = continueWatching.isNotEmpty()
+        val hubHeight = if (hubCompact) TvTypography.hubHeightCompact else TvTypography.hubHeight
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(TvTypography.hubHeight),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                .height(hubHeight),
+            horizontalArrangement = Arrangement.spacedBy(if (hubCompact) 12.dp else 16.dp),
         ) {
             HubTile(
                 title = "Live TV",
@@ -117,16 +132,27 @@ fun HomeScreen(
                 icon = TvNavIcons.Live,
                 onClick = onLive,
                 prominent = true,
+                compact = hubCompact,
                 focusRequester = firstFocusRequester,
                 modifier = Modifier
                     .weight(2f)
                     .fillMaxHeight()
                     .onPreviewKeyEvent {
-                        if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
-                            onMoveLeftToMenu()
-                            true
-                        } else {
-                            false
+                        if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (it.key) {
+                            Key.DirectionLeft -> {
+                                onMoveLeftToMenu()
+                                true
+                            }
+                            Key.DirectionDown -> {
+                                if (continueWatching.isNotEmpty()) {
+                                    scope.launch { continueFocusRequester.safeRequestFocus() }
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            else -> false
                         }
                     },
             )
@@ -134,13 +160,14 @@ fun HomeScreen(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(if (hubCompact) 10.dp else 16.dp),
             ) {
                 HubTile(
                     title = "Film",
                     subtitle = movieCount?.let { "$it titoli nel catalogo." } ?: "Apri il catalogo film.",
                     icon = TvNavIcons.Movies,
                     onClick = onMovies,
+                    compact = hubCompact,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -151,10 +178,68 @@ fun HomeScreen(
                         ?: "Apri il catalogo serie.",
                     icon = TvNavIcons.Series,
                     onClick = onSeries,
+                    compact = hubCompact,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
                 )
+            }
+        }
+
+        if (continueWatching.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                BasicText(
+                    "CONTINUA A GUARDARE",
+                    style = TextStyle(
+                        color = TvColors.Muted,
+                        fontSize = TvTypography.eyebrow,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.1.sp,
+                        fontFamily = TvTypography.fontFamily,
+                    ),
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    items(continueWatching, key = {
+                        when (it) {
+                            is ContinueWatchingItem.Movie -> "m-${it.movieId}"
+                            is ContinueWatchingItem.Episode -> "e-${it.episodeId}"
+                        }
+                    }) { item ->
+                        val isFirst = item == continueWatching.firstOrNull()
+                        ContinueWatchingCard(
+                            item = item,
+                            focusRequester = if (isFirst) continueFocusRequester else null,
+                            onClick = {
+                                when (item) {
+                                    is ContinueWatchingItem.Movie -> onContinueMovie(item.movieId)
+                                    is ContinueWatchingItem.Episode ->
+                                        onContinueEpisode(item.seriesId, item.episodeId)
+                                }
+                            },
+                            modifier = if (isFirst) {
+                                Modifier.onPreviewKeyEvent {
+                                    if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (it.key) {
+                                        Key.DirectionLeft -> {
+                                            onMoveLeftToMenu()
+                                            true
+                                        }
+                                        Key.DirectionUp -> {
+                                            scope.launch { firstFocusRequester.safeRequestFocus() }
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                            } else {
+                                Modifier
+                            },
+                        )
+                    }
+                }
             }
         }
     }
@@ -458,31 +543,57 @@ private fun <T> LibraryBrowser(
 @Composable
 fun MovieDetailScreen(
     state: VodDetailState,
+    library: UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
-    onPlay: (VodMovie) -> Unit,
+    onPlay: (VodMovie, Boolean) -> Unit,
+    onToggleFavorite: (VodMovie) -> Unit,
 ) {
     when (state) {
         VodDetailState.Idle -> LibraryLoading("Seleziona un film")
-        is VodDetailState.Loading -> DetailLayout(
-            title = state.movie.name,
-            imageUrl = state.movie.logo,
-            description = state.movie.plot,
-            metadata = "Caricamento dettagli...",
-            firstFocusRequester = firstFocusRequester,
-            onPlay = { onPlay(state.movie) },
-        )
-        is VodDetailState.Failed -> DetailLayout(
-            title = state.movie.name,
-            imageUrl = state.movie.logo,
-            description = state.movie.plot.ifBlank { state.message },
-            metadata = state.message,
-            firstFocusRequester = firstFocusRequester,
-            onPlay = { onPlay(state.movie) },
-        )
+        is VodDetailState.Loading -> {
+            val progress = library.movieProgress[state.movie.id]?.progress
+            DetailLayout(
+                title = state.movie.name,
+                imageUrl = state.movie.logo,
+                description = state.movie.plot,
+                metadata = "Caricamento dettagli...",
+                canResume = progress?.canResume == true,
+                isFavorite = library.isFavorite(FavoriteKind.VOD, state.movie.id),
+                firstFocusRequester = firstFocusRequester,
+                onPlay = { onPlay(state.movie, false) },
+                onRestart = if (progress?.canResume == true) {
+                    { onPlay(state.movie, true) }
+                } else {
+                    null
+                },
+                onToggleFavorite = { onToggleFavorite(state.movie) },
+            )
+        }
+        is VodDetailState.Failed -> {
+            val progress = library.movieProgress[state.movie.id]?.progress
+            DetailLayout(
+                title = state.movie.name,
+                imageUrl = state.movie.logo,
+                description = state.movie.plot.ifBlank { state.message },
+                metadata = state.message,
+                canResume = progress?.canResume == true,
+                isFavorite = library.isFavorite(FavoriteKind.VOD, state.movie.id),
+                firstFocusRequester = firstFocusRequester,
+                onPlay = { onPlay(state.movie, false) },
+                onRestart = if (progress?.canResume == true) {
+                    { onPlay(state.movie, true) }
+                } else {
+                    null
+                },
+                onToggleFavorite = { onToggleFavorite(state.movie) },
+            )
+        }
         is VodDetailState.Ready -> MovieInfoLayout(
             info = state.info,
+            library = library,
             firstFocusRequester = firstFocusRequester,
             onPlay = onPlay,
+            onToggleFavorite = onToggleFavorite,
         )
     }
 }
@@ -490,9 +601,12 @@ fun MovieDetailScreen(
 @Composable
 private fun MovieInfoLayout(
     info: VodInfo,
+    library: UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
-    onPlay: (VodMovie) -> Unit,
+    onPlay: (VodMovie, Boolean) -> Unit,
+    onToggleFavorite: (VodMovie) -> Unit,
 ) {
+    val progress = library.movieProgress[info.movie.id]?.progress
     DetailLayout(
         title = info.movie.name,
         imageUrl = resolveVodImage(info),
@@ -500,8 +614,16 @@ private fun MovieInfoLayout(
         metadata = listOf(info.releaseDate, info.genre, info.duration, info.movie.rating)
             .filter(String::isNotBlank)
             .joinToString("  •  "),
+        canResume = progress?.canResume == true,
+        isFavorite = library.isFavorite(FavoriteKind.VOD, info.movie.id),
         firstFocusRequester = firstFocusRequester,
-        onPlay = { onPlay(info.movie) },
+        onPlay = { onPlay(info.movie, false) },
+        onRestart = if (progress?.canResume == true) {
+            { onPlay(info.movie, true) }
+        } else {
+            null
+        },
+        onToggleFavorite = { onToggleFavorite(info.movie) },
     )
 }
 
@@ -518,7 +640,11 @@ private fun DetailLayout(
     description: String,
     metadata: String,
     firstFocusRequester: FocusRequester,
+    canResume: Boolean = false,
+    isFavorite: Boolean = false,
     onPlay: () -> Unit,
+    onRestart: (() -> Unit)? = null,
+    onToggleFavorite: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -563,12 +689,30 @@ private fun DetailLayout(
                 style = TvTypography.mutedStyle,
             )
             Spacer(Modifier.height(8.dp))
-            FocusCard(
-                onClick = onPlay,
-                focusRequester = firstFocusRequester,
-                modifier = Modifier.width(220.dp),
-            ) {
-                ItemTitle("Riproduci")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FocusCard(
+                    onClick = onPlay,
+                    focusRequester = firstFocusRequester,
+                    modifier = Modifier.width(180.dp),
+                ) {
+                    ItemTitle(if (canResume) "Riprendi" else "Riproduci")
+                }
+                if (onRestart != null) {
+                    FocusCard(
+                        onClick = onRestart,
+                        modifier = Modifier.width(180.dp),
+                    ) {
+                        ItemTitle("Ricomincia")
+                    }
+                }
+                if (onToggleFavorite != null) {
+                    FocusCard(
+                        onClick = onToggleFavorite,
+                        modifier = Modifier.width(180.dp),
+                    ) {
+                        ItemTitle(if (isFavorite) "★ Preferito" else "☆ Preferiti")
+                    }
+                }
             }
         }
     }
@@ -577,8 +721,10 @@ private fun DetailLayout(
 @Composable
 fun SeriesDetailScreen(
     state: SeriesDetailState,
+    library: UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
-    onEpisode: (SeriesEpisode) -> Unit,
+    onEpisode: (SeriesEpisode, Boolean) -> Unit,
+    onToggleFavorite: (SeriesShow) -> Unit,
 ) {
     when (state) {
         SeriesDetailState.Idle -> LibraryLoading("Seleziona una serie")
@@ -586,8 +732,10 @@ fun SeriesDetailScreen(
         is SeriesDetailState.Failed -> LibraryError(state.message)
         is SeriesDetailState.Ready -> SeriesEpisodes(
             info = state.info,
+            library = library,
             firstFocusRequester = firstFocusRequester,
             onEpisode = onEpisode,
+            onToggleFavorite = { onToggleFavorite(state.info.show) },
         )
     }
 }
@@ -595,8 +743,10 @@ fun SeriesDetailScreen(
 @Composable
 private fun SeriesEpisodes(
     info: SeriesInfo,
+    library: UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
-    onEpisode: (SeriesEpisode) -> Unit,
+    onEpisode: (SeriesEpisode, Boolean) -> Unit,
+    onToggleFavorite: () -> Unit,
 ) {
     val seasons = remember(info.episodes) {
         info.episodes
@@ -698,6 +848,18 @@ private fun SeriesEpisodes(
                         style = TvTypography.mutedStyle,
                     )
                 }
+                FocusCard(
+                    onClick = onToggleFavorite,
+                    modifier = Modifier.width(200.dp),
+                ) {
+                    ItemTitle(
+                        if (library.isFavorite(FavoriteKind.SERIES, info.show.id)) {
+                            "★ Preferita"
+                        } else {
+                            "☆ Aggiungi ai preferiti"
+                        },
+                    )
+                }
             }
         }
 
@@ -771,8 +933,10 @@ private fun SeriesEpisodes(
             ) {
                 items(seasonEpisodes, key = { it.id }) { episode ->
                     val isFirstEpisode = episode == seasonEpisodes.firstOrNull()
+                    val episodeProgress = library.episodeProgress[episode.id]?.progress
+                    val progressBadge = episodeProgress?.progressLabel
                     HorizontalMediaCard(
-                        onClick = { onEpisode(episode) },
+                        onClick = { onEpisode(episode, false) },
                         imageUrl = episode.image.ifBlank { imageUrl },
                         imageContentDescription = episode.title,
                         eyebrow =
@@ -780,7 +944,8 @@ private fun SeriesEpisodes(
                         title = episode.title.ifBlank { "Episodio ${episode.episode}" },
                         subtitle = episode.duration.takeIf { it.isNotBlank() },
                         description = episode.plot.takeIf { it.isNotBlank() },
-                        badge = episode.duration.takeIf { it.isNotBlank() },
+                        badge = progressBadge ?: episode.duration.takeIf { it.isNotBlank() },
+                        progressFraction = episodeProgress?.fraction?.toFloat(),
                         focusRequester = if (isFirstEpisode) episodeFocusRequester else null,
                         modifier = Modifier.onPreviewKeyEvent {
                             if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -958,6 +1123,308 @@ private fun searchResultKey(result: SearchResult): String =
         is SearchResult.Movie -> "movie_${result.value.id}"
         is SearchResult.Show -> "show_${result.value.id}"
     }
+
+@Composable
+private fun ContinueWatchingCard(
+    item: ContinueWatchingItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+) {
+    val progressLabel = "${(item.progress.fraction * 100).toInt()}%"
+    FocusCard(
+        onClick = onClick,
+        focusRequester = focusRequester,
+        modifier = modifier
+            .width(220.dp)
+            .height(136.dp),
+        padding = PaddingValues(0.dp),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (item.logo.isNotBlank()) {
+                AsyncImage(
+                    model = item.logo,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(TvColors.SurfaceDeep),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(
+                                androidx.compose.ui.graphics.Color.Transparent,
+                                androidx.compose.ui.graphics.Color(0xCC000000),
+                                androidx.compose.ui.graphics.Color(0xEE000000),
+                            ),
+                        ),
+                    ),
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    BasicText(
+                        item.subtitle.uppercase(),
+                        style = TvTypography.accentCaptionStyle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    BasicText(
+                        item.title,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TextStyle(
+                            color = TvColors.Text,
+                            fontSize = TvTypography.cardTitle,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = TvTypography.fontFamily,
+                            lineHeight = 16.sp,
+                        ),
+                    )
+                    BasicText(
+                        "Riprendi • $progressLabel",
+                        style = TvTypography.listMetaStyle.copy(lineHeight = 14.sp),
+                        maxLines = 1,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .background(Color(0x66000000)),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(item.progress.fraction.toFloat())
+                            .height(4.dp)
+                            .background(TvColors.Accent),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private enum class FavoritesFilter {
+    ALL,
+    LIVE,
+    VOD,
+    SERIES,
+}
+
+sealed interface FavoriteListEntry {
+    val id: Int
+    val title: String
+    val logo: String
+    val subtitle: String
+
+    data class Live(val channel: LiveChannel) : FavoriteListEntry {
+        override val id = channel.id
+        override val title = channel.name
+        override val logo = channel.logo
+        override val subtitle = "Canale TV"
+    }
+
+    data class Movie(val movie: VodMovie) : FavoriteListEntry {
+        override val id = movie.id
+        override val title = movie.name
+        override val logo = movie.logo
+        override val subtitle = "Film"
+    }
+
+    data class Show(val show: SeriesShow) : FavoriteListEntry {
+        override val id = show.id
+        override val title = show.name
+        override val logo = show.logo
+        override val subtitle = "Serie TV"
+    }
+}
+
+@Composable
+fun FavoritesScreen(
+    library: UserLibrarySnapshot,
+    channels: List<LiveChannel>,
+    vodState: VodState,
+    seriesState: SeriesState,
+    firstFocusRequester: FocusRequester,
+    onMoveLeftToMenu: () -> Unit,
+    onLive: (LiveChannel) -> Unit,
+    onMovie: (VodMovie) -> Unit,
+    onShow: (SeriesShow) -> Unit,
+) {
+    var filter by remember { mutableStateOf(FavoritesFilter.ALL) }
+    val movies = (vodState as? VodState.Ready)?.movies.orEmpty()
+    val shows = (seriesState as? SeriesState.Ready)?.shows.orEmpty()
+    val entries = remember(library, channels, movies, shows, filter) {
+        buildList {
+            if (filter == FavoritesFilter.ALL || filter == FavoritesFilter.LIVE) {
+                library.favoriteLive.forEach { id ->
+                    channels.firstOrNull { it.id == id }?.let { add(FavoriteListEntry.Live(it)) }
+                        ?: library.favoriteMeta[favoriteMetaKey(FavoriteKind.LIVE, id)]?.let { meta ->
+                            add(
+                                FavoriteListEntry.Live(
+                                    LiveChannel(id, meta.name, meta.logo, "", "", "", 0),
+                                ),
+                            )
+                        }
+                }
+            }
+            if (filter == FavoritesFilter.ALL || filter == FavoritesFilter.VOD) {
+                library.favoriteVod.forEach { id ->
+                    movies.firstOrNull { it.id == id }?.let { add(FavoriteListEntry.Movie(it)) }
+                        ?: library.favoriteMeta[favoriteMetaKey(FavoriteKind.VOD, id)]?.let { meta ->
+                            add(
+                                FavoriteListEntry.Movie(
+                                    VodMovie(id, meta.name, meta.logo, "", "", "", "", ""),
+                                ),
+                            )
+                        }
+                }
+            }
+            if (filter == FavoritesFilter.ALL || filter == FavoritesFilter.SERIES) {
+                library.favoriteSeries.forEach { id ->
+                    shows.firstOrNull { it.id == id }?.let { add(FavoriteListEntry.Show(it)) }
+                        ?: library.favoriteMeta[favoriteMetaKey(FavoriteKind.SERIES, id)]?.let { meta ->
+                            add(
+                                FavoriteListEntry.Show(
+                                    SeriesShow(id, meta.name, meta.logo, "", "", "", ""),
+                                ),
+                            )
+                        }
+                }
+            }
+        }
+    }
+    val gridState = rememberLazyGridState()
+    val filters = FavoritesFilter.entries
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ScreenHeading("Preferiti", "${entries.size} elementi salvati")
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(filters.size) { index ->
+                val item = filters[index]
+                val label = when (item) {
+                    FavoritesFilter.ALL -> "Tutti"
+                    FavoritesFilter.LIVE -> "Live"
+                    FavoritesFilter.VOD -> "Film"
+                    FavoritesFilter.SERIES -> "Serie"
+                }
+                FocusCard(
+                    onClick = { filter = item },
+                    selected = filter == item,
+                    focusRequester = if (index == 0) firstFocusRequester else null,
+                    modifier = if (index == 0) {
+                        Modifier.onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
+                                onMoveLeftToMenu()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    } else {
+                        Modifier
+                    },
+                ) {
+                    ItemTitle(label)
+                }
+            }
+        }
+        if (entries.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BasicText(
+                    "Nessun preferito. Aggiungi film, serie o canali dalle rispettive sezioni.",
+                    style = TvTypography.mutedStyle,
+                )
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(TvTypography.posterWidth),
+                state = gridState,
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                items(entries, key = {
+                    when (it) {
+                        is FavoriteListEntry.Live -> "live-${it.id}"
+                        is FavoriteListEntry.Movie -> "vod-${it.id}"
+                        is FavoriteListEntry.Show -> "series-${it.id}"
+                    }
+                }) { entry ->
+                    FocusCard(
+                        onClick = {
+                            when (entry) {
+                                is FavoriteListEntry.Live -> onLive(entry.channel)
+                                is FavoriteListEntry.Movie -> onMovie(entry.movie)
+                                is FavoriteListEntry.Show -> onShow(entry.show)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(2f / 3f),
+                        padding = PaddingValues(0.dp),
+                    ) {
+                        Box(Modifier.fillMaxSize()) {
+                            if (entry.logo.isNotBlank()) {
+                                AsyncImage(
+                                    model = entry.logo,
+                                    contentDescription = entry.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(TvColors.SurfaceDeep),
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .background(Color(0xCC000000))
+                                    .padding(8.dp),
+                            ) {
+                                Column {
+                                    BasicText(
+                                        entry.title,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = TvTypography.listTitleStyle,
+                                    )
+                                    BasicText(entry.subtitle, style = TvTypography.listMetaStyle)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun ScreenHeading(title: String, subtitle: String) {

@@ -75,7 +75,7 @@ object StreamPlayback {
         }
     }
 
-    /** Anteprima Live: su emulatore un solo URL e timeout breve. */
+    /** Anteprima Live: timeout breve per non bloccare la UI durante lo scroll canali. */
     suspend fun playPreviewUrl(
         player: Player,
         urls: List<String>,
@@ -87,10 +87,15 @@ object StreamPlayback {
                 player = player,
                 urls = urls.take(1),
                 onError = onError,
-                maxAttemptsPerUrl = 8,
+                maxAttemptsPerUrl = 6,
             )
         } else {
-            playFirstWorkingUrl(player, urls, onError)
+            playFirstWorkingUrl(
+                player = player,
+                urls = urls.take(1),
+                onError = onError,
+                maxAttemptsPerUrl = 8,
+            )
         }
     }
 }
