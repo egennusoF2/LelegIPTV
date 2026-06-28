@@ -5,6 +5,7 @@ import type { LiveChannel, VodMovie } from "./data/models";
 import { AvplayPlayer, Html5PreviewPlayer } from "./player/avplay";
 import { CatalogState } from "./state/catalogState";
 import {
+  clearElement,
   el,
   formatEpgTime,
   pageHeader,
@@ -13,6 +14,7 @@ import {
   renderChannelList,
   renderEpgList,
   renderPosterRow,
+  setElementChildren,
 } from "./ui/renderUtils";
 
 type Zone = "nav" | "content";
@@ -70,7 +72,7 @@ export class LelegTvApp {
   }
 
   private renderNav(): void {
-    this.sidebar.replaceChildren(el("div", "brand", "LELEG IPTV"));
+    setElementChildren(this.sidebar, [el("div", "brand", "LELEG IPTV")]);
     const items = NAV_ITEMS.map((item) => {
       const button = el("button", "nav-item");
       button.type = "button";
@@ -93,7 +95,7 @@ export class LelegTvApp {
     for (const button of Array.from(this.sidebar.querySelectorAll<HTMLElement>(".nav-item"))) {
       button.classList.toggle("active", button.dataset.route === route);
     }
-    this.content.replaceChildren();
+    clearElement(this.content);
     switch (route) {
       case "home":
         this.renderHome();
@@ -196,7 +198,7 @@ export class LelegTvApp {
     const channelItems = renderChannelList(channelsPanel, channels, this.selectedChannel?.id ?? null, (channel) => {
       void onSelectChannel(channel);
     });
-    channelsPanel.replaceChildren(...channelItems.map((i) => i.el));
+    setElementChildren(channelsPanel, channelItems.map((i) => i.el));
 
     this.contentFocus.setItems([...categoryButtons, ...channelItems]);
     if (!this.selectedChannel && channels[0]) void onSelectChannel(channels[0]);
@@ -280,6 +282,23 @@ export class LelegTvApp {
     connectBtn.style.padding = "14px 18px";
     connectBtn.style.fontWeight = "800";
 
+    const reloadBtn = el("button", "focusable panel", "Ricarica dal provider");
+    reloadBtn.type = "button";
+    reloadBtn.style.padding = "14px 18px";
+    reloadBtn.style.fontWeight = "800";
+    reloadBtn.hidden = !profile;
+
+    const cacheHint = el(
+      "p",
+      "",
+      profile
+        ? "Cache catalogo 24h. Ricarica forza un nuovo download dal provider."
+        : "",
+    );
+    cacheHint.style.color = "var(--muted)";
+    cacheHint.style.fontSize = "14px";
+    cacheHint.hidden = !profile;
+
     const fields: { label: string; input: HTMLInputElement }[] = [
       { label: "Titolo / codice lista", input: titleInput },
       { label: "Server", input: serverInput },
@@ -291,7 +310,7 @@ export class LelegTvApp {
       block.append(el("label", "", field.label), field.input);
       form.append(block);
     }
-    form.append(el("label", "", "Preset rapidi"), presetRow, connectBtn);
+    form.append(el("label", "", "Preset rapidi"), presetRow, connectBtn, reloadBtn, cacheHint);
     this.content.append(form);
 
     const items = [
@@ -313,6 +332,13 @@ export class LelegTvApp {
           void this.catalog.connect(next).then(() => this.router.navigate("home"));
         },
       },
+      {
+        el: reloadBtn,
+        onActivate: () => {
+          if (!this.catalog.activeProfile) return;
+          void this.catalog.refreshCatalog(true);
+        },
+      },
     ];
     this.contentFocus.setItems(items);
   }
@@ -329,7 +355,7 @@ export class LelegTvApp {
   private openFullscreen(url: string, title: string): void {
     this.fullscreen = true;
     this.playerLayer.hidden = false;
-    this.playerLayer.replaceChildren();
+    clearElement(this.playerLayer);
     const overlay = el("div", "player-overlay");
     overlay.innerHTML = `
       <div class="top-bar">
@@ -358,7 +384,7 @@ export class LelegTvApp {
     this.playerLayer.hidden = true;
     this.avplay.stop();
     this.htmlPreview.stop();
-    this.playerLayer.replaceChildren();
+    clearElement(this.playerLayer);
   }
 
   private onKeyDown(event: KeyboardEvent): void {

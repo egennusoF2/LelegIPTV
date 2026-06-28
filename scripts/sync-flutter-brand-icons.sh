@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="${ROOT_DIR}/public/icon-512.png"
 FLUTTER_DIR="${ROOT_DIR}/native/flutter/leleg_iptv"
+ANDROID_TV_RES="${ROOT_DIR}/native/android-tv/app/src/main/res"
 TMP_DIR="${ROOT_DIR}/.tmp/flutter-icons"
 
 if [[ ! -f "${SOURCE}" ]]; then
@@ -27,6 +28,13 @@ resize_png 72 "${FLUTTER_DIR}/android/app/src/main/res/mipmap-hdpi/ic_launcher.p
 resize_png 96 "${FLUTTER_DIR}/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png"
 resize_png 144 "${FLUTTER_DIR}/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png"
 resize_png 192 "${FLUTTER_DIR}/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
+
+# Android TV native launcher (same brand icon as Flutter).
+resize_png 48 "${ANDROID_TV_RES}/mipmap-mdpi/ic_launcher.png"
+resize_png 72 "${ANDROID_TV_RES}/mipmap-hdpi/ic_launcher.png"
+resize_png 96 "${ANDROID_TV_RES}/mipmap-xhdpi/ic_launcher.png"
+resize_png 144 "${ANDROID_TV_RES}/mipmap-xxhdpi/ic_launcher.png"
+resize_png 192 "${ANDROID_TV_RES}/mipmap-xxxhdpi/ic_launcher.png"
 
 # iOS app icons.
 IOS_DIR="${FLUTTER_DIR}/ios/Runner/Assets.xcassets/AppIcon.appiconset"
@@ -81,6 +89,7 @@ fi
 # Tizen launcher icon. Samsung TV accepts PNG; 192px is enough for the package
 # manifest icon and avoids shipping the old Flutter placeholder.
 resize_png 192 "${FLUTTER_DIR}/tizen/shared/res/ic_launcher.png"
+resize_png 192 "${ROOT_DIR}/native/tizen-tv/public/icon.png"
 
 # Flutter web fallback icons.
 resize_png 32 "${FLUTTER_DIR}/web/favicon.png"

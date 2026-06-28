@@ -6,7 +6,9 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    target: "es2020",
+    target: "es2015",
+    modulePreload: false,
+    cssCodeSplit: false,
     rollupOptions: {
       input: resolve(__dirname, "index.html"),
     },

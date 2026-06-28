@@ -18,16 +18,26 @@
         rewrite * /LelegIPTV-android-tv-release.apk
         header Content-Type "application/vnd.android.package-archive"
         header Content-Disposition "attachment; filename=LelegIPTV-android-tv-release.apk"
-        header Cache-Control "public, max-age=3600"
+        header Cache-Control "no-cache, no-store, must-revalidate"
         file_server
     }
 
     handle /dl/mobile.apk {
         root * /usr/share/caddy/downloads/current
-        rewrite * /LelegIPTV-android-universal-release.apk
+        rewrite * /LelegIPTV-android-mobile-release.apk
         header Content-Type "application/vnd.android.package-archive"
-        header Content-Disposition "attachment; filename=LelegIPTV-android-universal-release.apk"
-        header Cache-Control "public, max-age=3600"
+        header Content-Disposition "attachment; filename=LelegIPTV-mobile.apk"
+        header Cache-Control "no-cache, no-store, must-revalidate"
+        file_server
+    }
+
+    # Vecchio nome "universal" → stesso APK mobile (compatibilità link salvati).
+    handle /downloads/current/LelegIPTV-android-universal-release.apk {
+        root * /usr/share/caddy/downloads/current
+        rewrite * /LelegIPTV-android-mobile-release.apk
+        header Content-Type "application/vnd.android.package-archive"
+        header Content-Disposition "attachment; filename=LelegIPTV-mobile.apk"
+        header Cache-Control "no-cache, no-store, must-revalidate"
         file_server
     }
 
@@ -36,14 +46,14 @@
         rewrite * /LelegIPTV-tizen-tv-release.tpk
         header Content-Type "application/vnd.android.package-archive"
         header Content-Disposition "attachment; filename=LelegIPTV-tizen-tv-release.tpk"
-        header Cache-Control "public, max-age=3600"
+        header Cache-Control "no-cache, no-store, must-revalidate"
         file_server
     }
 
     # Installable artifacts: never fall back to index.html, never gzip large binaries
     handle /downloads/* {
         header Content-Disposition "attachment"
-        header Cache-Control "public, max-age=3600"
+        header Cache-Control "no-cache, no-store, must-revalidate"
         file_server
     }
 

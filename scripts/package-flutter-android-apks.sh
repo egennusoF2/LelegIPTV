@@ -5,15 +5,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${ROOT_DIR}/native/flutter/leleg_iptv"
 OUT_DIR="${ROOT_DIR}/www/downloads/current"
 MOBILE_APK="${APP_DIR}/build/app/outputs/flutter-apk/app-mobile-release.apk"
-TV_APK="${APP_DIR}/build/app/outputs/flutter-apk/app-tv-release.apk"
+MOBILE_OUT="${OUT_DIR}/LelegIPTV-android-mobile-release.apk"
+LEGACY_UNIVERSAL="${OUT_DIR}/LelegIPTV-android-universal-release.apk"
 
 cd "${APP_DIR}"
 flutter build apk --release --flavor mobile
-flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true
 
 mkdir -p "${OUT_DIR}"
-cp "${MOBILE_APK}" "${OUT_DIR}/LelegIPTV-android-universal-release.apk"
-cp "${TV_APK}" "${OUT_DIR}/LelegIPTV-android-tv-release.apk"
+cp "${MOBILE_APK}" "${MOBILE_OUT}"
+# Rimuovi il vecchio nome fuorviante se presente.
+rm -f "${LEGACY_UNIVERSAL}"
 
 (
   cd "${OUT_DIR}"
@@ -22,5 +23,4 @@ cp "${TV_APK}" "${OUT_DIR}/LelegIPTV-android-tv-release.apk"
 )
 
 echo "Packaged:"
-echo "  ${OUT_DIR}/LelegIPTV-android-universal-release.apk"
-echo "  ${OUT_DIR}/LelegIPTV-android-tv-release.apk"
+echo "  ${MOBILE_OUT}"

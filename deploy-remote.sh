@@ -46,6 +46,16 @@ command -v pnpm &>/dev/null || \
   { echo -e "${RED}❌ pnpm non trovato${NC}"; exit 1; }
 
 echo -e "${YELLOW}🔨 Build locale...${NC}"
+if command -v flutter &>/dev/null && [ -d "native/flutter/leleg_iptv" ]; then
+  echo "Building Flutter mobile APK (telefono/tablet)..."
+  bash ./scripts/package-flutter-android-apks.sh
+else
+  echo -e "${YELLOW}⚠️  Flutter non trovato: uso APK mobile già presente in www/downloads/current/${NC}"
+fi
+if [ -d "native/android-tv" ]; then
+  echo "Building Android TV nativo (Kotlin)..."
+  bash ./scripts/package-native-android-tv.sh
+fi
 $PNPM build:pages
 ALLOW_LARGE_DOWNLOADS=1 $PNPM download-center:prepare
 [ -f "dist/index.html" ] || { echo -e "${RED}❌ Build fallita: dist/index.html mancante${NC}"; exit 1; }

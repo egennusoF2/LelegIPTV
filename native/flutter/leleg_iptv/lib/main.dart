@@ -9750,25 +9750,58 @@ class SettingsScreen extends StatelessWidget {
     final libraryBand = _SettingsBand(
       title: 'Stato libreria',
       compact: tv,
-      child: Wrap(
-        spacing: tv ? 8 : 12,
-        runSpacing: tv ? 8 : 12,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _MetricPill(label: 'Live TV', value: liveCount.toString(), compact: tv),
-          _MetricPill(label: 'Film', value: movieCount.toString(), compact: tv),
-          _MetricPill(label: 'Serie', value: seriesCount.toString(), compact: tv),
-          _MetricPill(
-            label: 'Preferiti',
-            value: favoriteCount.toString(),
-            compact: tv,
+          Wrap(
+            spacing: tv ? 8 : 12,
+            runSpacing: tv ? 8 : 12,
+            children: [
+              _MetricPill(label: 'Live TV', value: liveCount.toString(), compact: tv),
+              _MetricPill(label: 'Film', value: movieCount.toString(), compact: tv),
+              _MetricPill(label: 'Serie', value: seriesCount.toString(), compact: tv),
+              _MetricPill(
+                label: 'Preferiti',
+                value: favoriteCount.toString(),
+                compact: tv,
+              ),
+              _MetricPill(
+                label: 'Da vedere',
+                value: watchLaterCount.toString(),
+                compact: tv,
+              ),
+              _MetricPill(label: 'Cache', value: '24h', compact: tv),
+              if (!tv)
+                const _MetricPill(label: 'Player', value: 'media_kit', compact: true),
+            ],
           ),
-          _MetricPill(
-            label: 'Da vedere',
-            value: watchLaterCount.toString(),
-            compact: tv,
-          ),
-          const _MetricPill(label: 'Cache', value: '24h', compact: true),
-          const _MetricPill(label: 'Player', value: 'media_kit', compact: true),
+          if (tv && activeProfile != null) ...[
+            const SizedBox(height: 10),
+            _EnsureVisibleWhenSelected(
+              selected: reloadSelected,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(0, 32),
+                  textStyle: const TextStyle(
+                    fontSize: TvUi.body,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  side: BorderSide(
+                    color: reloadSelected ? LelegColors.accent : LelegColors.line,
+                    width: reloadSelected ? 2 : 1,
+                  ),
+                ),
+                onPressed: onReload,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Ricarica dal provider'),
+              ),
+            ),
+            const Text(
+              'Forza un nuovo download della lista attiva (ignora cache 24h).',
+              style: TextStyle(color: LelegColors.muted, fontSize: TvUi.caption),
+            ),
+          ],
         ],
       ),
     );
@@ -9791,6 +9824,7 @@ class SettingsScreen extends StatelessWidget {
                 compact: tv,
                 onSelect: () => onSelectProfile(profile),
                 onDelete: () => onDeleteProfile(profile),
+                onReload: activeProfile?.id == profile.id ? onReload : null,
               ),
             ),
             SizedBox(height: tv ? 10 : 18),
@@ -10194,6 +10228,7 @@ class _ProfileTile extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.onDelete,
+    this.onReload,
     this.compact = false,
   });
 
@@ -10202,6 +10237,7 @@ class _ProfileTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onSelect;
   final VoidCallback onDelete;
+  final VoidCallback? onReload;
   final bool compact;
 
   @override
@@ -10273,6 +10309,19 @@ class _ProfileTile extends StatelessWidget {
               onPressed: active ? null : onSelect,
               child: Text(active ? 'Attiva' : 'Usa'),
             ),
+            if (active && compact) ...[
+              const SizedBox(width: 4),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  minimumSize: const Size(0, 28),
+                  textStyle: const TextStyle(fontSize: TvUi.caption),
+                ),
+                onPressed: onReload,
+                icon: const Icon(Icons.refresh, size: 14),
+                label: const Text('Ricarica'),
+              ),
+            ],
             SizedBox(width: compact ? 4 : 8),
             IconButton(
               onPressed: onDelete,

@@ -663,6 +663,7 @@ fun LelegTvApp(viewModel: TvViewModel) {
                 },
                 onDeleteProfile = viewModel::deleteProfile,
                 onAddProfile = viewModel::addProfile,
+                onReloadActive = viewModel::reloadActiveProfile,
             )
         }
         }
@@ -1281,6 +1282,7 @@ private fun SettingsScreen(
     onSelectProfile: (String) -> Unit,
     onDeleteProfile: (String) -> Unit,
     onAddProfile: (XtreamProfile) -> Unit,
+    onReloadActive: () -> Unit,
 ) {
     var formGeneration by remember { mutableIntStateOf(0) }
     var title by remember(formGeneration) { mutableStateOf("") }
@@ -1339,9 +1341,16 @@ private fun SettingsScreen(
                         },
                         onSelect = { onSelectProfile(saved.id) },
                         onDelete = { onDeleteProfile(saved.id) },
+                        onReload = if (saved.id == profilesState.activeId) onReloadActive else null,
                     )
                 }
             }
+        }
+        if (profilesState.activeId != null) {
+            BasicText(
+                "Cache catalogo 24h. Ricarica forza un nuovo download dal provider.",
+                style = TextStyle(color = TvColors.Muted, fontSize = 13.sp),
+            )
         }
         BasicText(
             "Nuova lista",
@@ -1412,6 +1421,7 @@ private fun SavedProfileRow(
     focusRequester: FocusRequester?,
     onSelect: () -> Unit,
     onDelete: () -> Unit,
+    onReload: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1448,6 +1458,21 @@ private fun SavedProfileRow(
                         style = TvTypography.listMetaStyle,
                     )
                 }
+            }
+        }
+        if (onReload != null) {
+            FocusCard(
+                onClick = onReload,
+                modifier = Modifier.width(170.dp),
+                padding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 12.dp,
+                    vertical = 14.dp,
+                ),
+            ) {
+                BasicText(
+                    if (loading) "Ricarica..." else "Ricarica",
+                    style = TvTypography.listTitleStyle,
+                )
             }
         }
         FocusCard(

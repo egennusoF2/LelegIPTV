@@ -28,13 +28,13 @@ jobs:
         run: |
           mkdir -p www/downloads/current
           cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-mobile-release.apk \
-            www/downloads/current/LelegIPTV-android-universal-release.apk
+            www/downloads/current/LelegIPTV-android-mobile-release.apk
           cp native/android-tv/app/build/outputs/apk/release/app-release.apk \
             www/downloads/current/LelegIPTV-android-tv-release.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LelegIPTV-android-universal-release
-          path: www/downloads/current/LelegIPTV-android-universal-release.apk
+          name: LelegIPTV-android-mobile-release
+          path: www/downloads/current/LelegIPTV-android-mobile-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: LelegIPTV-android-tv-release

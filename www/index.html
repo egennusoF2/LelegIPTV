@@ -287,17 +287,19 @@
     <h2>📦 Download rapido</h2>
     <p style="color:var(--muted);margin-bottom:18px">
       Seleziona la versione per il tuo dispositivo. Su Android ci sono <strong>due APK diversi</strong>:
-      <code>LelegIPTV-android-universal-release.apk</code> (telefono/tablet) e
+      <code>LelegIPTV-android-mobile-release.apk</code> (telefono/tablet) e
       <code>LelegIPTV-android-tv-release.apk</code> (TV / Fire Stick).
     </p>
 
     <div class="note warn" style="margin-bottom:18px">
-      <strong>Downloader (Fire TV / Android TV / Chromecast):</strong><br>
-      Apri Downloader, inserisci il <strong>codice</strong> oppure l'URL diretto:<br>
-      <pre style="margin:10px 0 6px;padding:12px;background:#03080b;border-radius:8px;overflow:auto"><code>Codice:  1170095
-URL TV:  https://lelegiptv.ddns.net/dl/tv.apk
-URL mob: https://lelegiptv.ddns.net/dl/mobile.apk</code></pre>
-      Se HTTPS non parte, prova <code>http://lelegiptv.ddns.net/dl/tv.apk</code>.<br>
+      <strong>Downloader (Fire TV / Android TV / tablet):</strong><br>
+      Apri Downloader e inserisci il <strong>codice</strong> per il tuo dispositivo oppure l'URL diretto:<br>
+      <pre style="margin:10px 0 6px;padding:12px;background:#03080b;border-radius:8px;overflow:auto"><code>Telefono / tablet:  codice 2630049
+Fire TV / Android TV: codice 1170095
+
+URL mobile: https://lelegiptv.ddns.net/dl/mobile.apk
+URL TV:     https://lelegiptv.ddns.net/dl/tv.apk</code></pre>
+      Se HTTPS non parte, prova <code>http://lelegiptv.ddns.net/dl/mobile.apk</code> o <code>http://lelegiptv.ddns.net/dl/tv.apk</code>.<br>
       Elenco completo: <a href="downloads/current/downloader-urls.txt">downloader-urls.txt</a>.
     </div>
 
@@ -333,8 +335,10 @@ URL mob: https://lelegiptv.ddns.net/dl/mobile.apk</code></pre>
           <span class="badge badge-warn">APK &middot; 91 MB &middot; unsigned</span>
         </div>
         <a class="btn-dl" href="https://lelegiptv.ddns.net/dl/mobile.apk">
-          ⬇ Scarica .apk
+          ⬇ Scarica per telefono/tablet
         </a>
+        <p class="dl-sub" style="margin-top:8px">File: <code>LelegIPTV-mobile.apk</code> (build mobile v1.0.2)<br>
+        Downloader: codice <strong>2630049</strong></p>
       </div>
 
       <!-- Android TV -->
@@ -431,7 +435,8 @@ URL mob: https://lelegiptv.ddns.net/dl/mobile.apk</code></pre>
   <section id="android">
     <h2>🤖 Android smartphone e tablet</h2>
     <p>
-      L'APK è universale (arm64 + x86) ed è la release Flutter nativa con UI mobile ottimizzata per telefono e tablet.
+      L'APK mobile (arm64 + x86) è la release Flutter con UI ottimizzata per telefono e tablet.
+      Scaricalo dal link corto <code>/dl/mobile.apk</code> — il file si chiama <code>LelegIPTV-mobile.apk</code>.
       È <strong>unsigned</strong>: per uso continuativo su più dispositivi, firmalo con un keystore stabile.
     </p>
 
@@ -444,16 +449,25 @@ URL mob: https://lelegiptv.ddns.net/dl/mobile.apk</code></pre>
     <h3>Installazione su telefono o tablet</h3>
     <ol class="steps">
       <li>
-        <a href="downloads/current/LelegIPTV-android-universal-release.apk" download class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV-android-universal-release.apk</a>
+        <a href="https://lelegiptv.ddns.net/dl/mobile.apk" class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV-mobile.apk</a>
+        <span class="dl-sub"> (oppure <a href="downloads/current/LelegIPTV-android-mobile-release.apk" download>LelegIPTV-android-mobile-release.apk</a>)</span>
       </li>
       <li>Copia l'APK sul dispositivo (USB, cloud drive, qualsiasi metodo).</li>
       <li>In <strong>Impostazioni → Applicazioni → Installa app sconosciute</strong>, abilita l'app con cui apri il file (es. File Manager).</li>
       <li>Tocca il file APK e completa l'installazione.</li>
     </ol>
 
+    <h3>Installazione con Downloader (tablet Android / Fire tablet)</h3>
+    <ol class="steps">
+      <li>Installa <strong>Downloader</strong> dallo store del dispositivo (Amazon, Google Play o sideload).</li>
+      <li>Apri Downloader e inserisci il codice <strong>2630049</strong> oppure l'URL <code>https://lelegiptv.ddns.net/dl/mobile.apk</code>.</li>
+      <li>Avvia il download, poi apri il file <code>LelegIPTV-mobile.apk</code> e conferma l'installazione.</li>
+      <li>Se richiesto, abilita <strong>Installa app sconosciute</strong> per Downloader.</li>
+    </ol>
+
     <h3>Installazione via ADB (telefono o tablet)</h3>
     <pre><code>adb devices
-adb install -r downloads/current/LelegIPTV-android-universal-release.apk</code></pre>
+adb install -r downloads/current/LelegIPTV-android-mobile-release.apk</code></pre>
 
     <h3>Download offline su Android</h3>
     <ol class="steps">
@@ -644,7 +658,7 @@ sdb devices</code></pre>
         </tr>
         <tr>
           <td data-label="Piattaforma">Android smartphone / tablet</td>
-          <td data-label="File"><a href="downloads/current/LelegIPTV-android-universal-release.apk" download>LelegIPTV-android-universal-release.apk</a></td>
+          <td data-label="File"><a href="https://lelegiptv.ddns.net/dl/mobile.apk">LelegIPTV-mobile.apk</a> (<a href="downloads/current/LelegIPTV-android-mobile-release.apk" download>mobile-release</a>)</td>
           <td data-label="Dimensione">91 MB</td>
           <td data-label="Stato"><span class="badge badge-warn">flavor mobile</span></td>
         </tr>

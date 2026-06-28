@@ -14,6 +14,20 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/** Tizen WebKit spesso non ha Element.replaceChildren (Chrome 86+). */
+export function clearElement(node: Element): void {
+  while (node.firstChild) {
+    node.removeChild(node.firstChild);
+  }
+}
+
+export function setElementChildren(node: Element, children: Node[]): void {
+  clearElement(node);
+  for (const child of children) {
+    node.appendChild(child);
+  }
+}
+
 export function pageHeader(eyebrow: string, title: string): HTMLElement {
   const wrap = el("div");
   wrap.append(el("p", "page-eyebrow", eyebrow), el("h1", "page-title", title));
@@ -26,7 +40,7 @@ export function renderChannelList(
   selectedId: number | null,
   onSelect: (channel: LiveChannel) => void,
 ): FocusableElement[] {
-  container.replaceChildren();
+  clearElement(container);
   if (!channels.length) {
     container.append(el("div", "empty", "Nessun canale in questa categoria."));
     return [];
@@ -53,7 +67,7 @@ export function renderChannelList(
 }
 
 export function renderEpgList(container: HTMLElement, programmes: { title: string; start: string }[]): void {
-  container.replaceChildren();
+  clearElement(container);
   if (!programmes.length) {
     container.append(el("div", "empty", "EPG non disponibile."));
     return;
@@ -81,7 +95,7 @@ export function renderPosterRow(
   movies: VodMovie[],
   onSelect: (movie: VodMovie) => void,
 ): FocusableElement[] {
-  container.replaceChildren();
+  clearElement(container);
   const row = el("div", "poster-row");
   container.append(row);
   if (!movies.length) {

@@ -291,6 +291,12 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         load(saved.profile, persist = false)
     }
 
+    fun reloadActiveProfile() {
+        val activeId = store.loadActiveId() ?: return
+        val saved = store.loadAll().firstOrNull { it.id == activeId } ?: return
+        load(saved.profile, forceRefresh = true, persist = false)
+    }
+
     fun deleteProfile(id: String) {
         val wasActive = store.loadActiveId() == id
         val nextActiveId = store.delete(id)

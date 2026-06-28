@@ -39,8 +39,9 @@ try {
   process.exit(0);
 }
 
-const wgts = readdirSync(resolve(root, "build")).filter((f) => f.endsWith(".wgt"));
+const wgts = readdirSync(resolve(root, "build", "wgt")).filter((f) => f.endsWith(".wgt"));
 if (wgts.length) {
-  cpSync(resolve(root, "build", wgts[0]!), outWgt);
+  const packaged = wgts[0];
+  cpSync(resolve(root, "build", "wgt", packaged), outWgt);
   console.log(`Packaged: ${outWgt}`);
 }

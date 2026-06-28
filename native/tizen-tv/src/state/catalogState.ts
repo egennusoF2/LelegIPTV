@@ -82,7 +82,12 @@ export class CatalogState {
       this.status(`Catalogo in cache: ${this.liveChannels.length} canali`);
       return;
     }
-    this.status("Caricamento catalogo…");
+    if (force) {
+      this.vodCache.clear();
+      this.seriesCache.clear();
+      this.epgCache.clear();
+    }
+    this.status(force ? "Ricarica catalogo dal provider…" : "Caricamento catalogo…");
     try {
       const live = await this.client.loadLive(profile);
       const vodCategories = await this.client.loadVodCategories(profile);
