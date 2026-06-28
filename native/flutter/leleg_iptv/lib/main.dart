@@ -22,6 +22,10 @@ const MethodChannel _storageChannel = MethodChannel(
 
 const bool kAndroidTvBuild = bool.fromEnvironment('LELEG_ANDROID_TV');
 
+/// Preserves [Video] state when [PlayerCard] moves between inline and fullscreen.
+final GlobalKey _lelegMediaKitVideoSurfaceKey =
+    GlobalKey(debugLabel: 'Leleg media_kit video surface');
+
 /// True on Tizen, Android TV flavor, or Android TV hardware at runtime.
 bool lelegTvShellActive = kAndroidTvBuild;
 
@@ -605,7 +609,12 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     _player = mediaPlayer;
     _videoController = mediaPlayer == null
         ? null
-        : VideoController(mediaPlayer);
+        : VideoController(
+            mediaPlayer,
+            configuration: const VideoControllerConfiguration(
+              androidAttachSurfaceAfterVideoParameters: true,
+            ),
+          );
     _titleController = TextEditingController();
     _serverController = TextEditingController();
     _userController = TextEditingController();
@@ -4086,7 +4095,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (Platform.isAndroid || Platform.isIOS) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         unawaited(
-          _applyMobileOrientationPolicy(fullscreen: next).catchError((error) {
+          _applyMobileOrientationPolicy(fullscreen: next)
+              .then((_) => _syncMediaKitSurfaceAfterLayoutChange())
+              .catchError((error) {
             if (mounted) {
               setState(() => _status = 'Fullscreen non disponibile: $error');
             }
@@ -4104,6 +4115,29 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         }),
       );
     }
+  }
+
+  /// Re-binds the Android media_kit surface after fullscreen layout/orientation changes.
+  void _syncMediaKitSurfaceAfterLayoutChange() {
+    if (!Platform.isAndroid || _useAppleVideoBackend || _player == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final player = _player;
+        if (!mounted || player == null) return;
+        try {
+          final position = player.state.position;
+          final wasPlaying = player.state.playing;
+          await player.seek(position);
+          if (wasPlaying && !player.state.playing) {
+            await player.play();
+          }
+        } catch (_) {
+          // Best-effort; playback may still recover on the next surface attach.
+        }
+      });
+    });
   }
 
   void _revealFullscreenOverlay() {
@@ -10176,6 +10210,98 @@ class _PlayerCardState extends State<PlayerCard> {
     final mediaController = widget.controller;
     final mediaPlayer = widget.player;
     final controlsVisible = _showControls || _pinControlsInFocusMode;
+    final playerBody = ColoredBox(
+      color: Colors.black,
+      child: Column(
+        children: [
+          if (!widget.focusMode)
+            Container(
+              height: 54,
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              color: LelegColors.surface,
+              child: Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18,
+                ),
+              ),
+            ),
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: tizenController != null
+                      ? _TizenVideoSurface(controller: tizenController)
+                      : appleController != null
+                      ? _AppleVideoSurface(controller: appleController)
+                      : mediaController == null
+                      ? const Center(
+                          child: Text(
+                            'Player non inizializzato',
+                            style: TextStyle(color: LelegColors.muted),
+                          ),
+                        )
+                      : Video(
+                          key: _lelegMediaKitVideoSurfaceKey,
+                          controller: mediaController,
+                          controls: NoVideoControls,
+                          fit: BoxFit.contain,
+                          fill: Colors.black,
+                        ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: AnimatedOpacity(
+                    opacity: controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 160),
+                    child: IgnorePointer(
+                      ignoring: !controlsVisible,
+                      child: tizenController != null
+                          ? _TizenTimelineControls(
+                              controller: tizenController,
+                              rate: widget.rate,
+                              onRateChanged: widget.onRateChanged,
+                              focusMode: widget.focusMode,
+                              onToggleFocusMode: widget.onToggleFocusMode,
+                              onPictureInPicture: widget.onPictureInPicture,
+                            )
+                          : appleController != null
+                          ? _AppleTimelineControls(
+                              controller: appleController,
+                              rate: widget.rate,
+                              onRateChanged: widget.onRateChanged,
+                              focusMode: widget.focusMode,
+                              onToggleFocusMode: widget.onToggleFocusMode,
+                              onPictureInPicture: widget.onPictureInPicture,
+                            )
+                          : mediaPlayer == null
+                          ? const SizedBox.shrink()
+                          : _PlayerTimelineControls(
+                              player: mediaPlayer,
+                              rate: widget.rate,
+                              labelFor: widget.labelFor,
+                              onAudioChanged: widget.onAudioChanged,
+                              onSubtitleChanged: widget.onSubtitleChanged,
+                              onRateChanged: widget.onRateChanged,
+                              focusMode: widget.focusMode,
+                              onToggleFocusMode: widget.onToggleFocusMode,
+                              onPictureInPicture: widget.onPictureInPicture,
+                            ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _revealControls,
@@ -10184,115 +10310,12 @@ class _PlayerCardState extends State<PlayerCard> {
         onEnter: (_) => _revealControls(),
         onHover: (_) => _revealControls(),
         onExit: (_) => _hideControls(),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: ColoredBox(
-            color: Colors.black,
-            child: Column(
-              children: [
-                Container(
-                  height: widget.focusMode ? 0 : 54,
-                  alignment: Alignment.centerLeft,
-                  padding: widget.focusMode
-                      ? EdgeInsets.zero
-                      : const EdgeInsets.symmetric(horizontal: 18),
-                  color: LelegColors.surface,
-                  child: widget.focusMode
-                      ? const SizedBox.shrink()
-                      : Text(
-                          widget.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 18,
-                          ),
-                        ),
-                ),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: tizenController != null
-                            ? _TizenVideoSurface(controller: tizenController)
-                            : appleController != null
-                            ? _AppleVideoSurface(controller: appleController)
-                            : mediaController == null
-                            ? const Center(
-                                child: Text(
-                                  'Player non inizializzato',
-                                  style: TextStyle(color: LelegColors.muted),
-                                ),
-                              )
-                            : LayoutBuilder(
-                                builder: (context, constraints) {
-                                  return Video(
-                                    key: ValueKey(
-                                      'video-${constraints.maxWidth.round()}x'
-                                      '${constraints.maxHeight.round()}-'
-                                      '${widget.focusMode}',
-                                    ),
-                                    controller: mediaController,
-                                    controls: NoVideoControls,
-                                    fit: BoxFit.contain,
-                                    fill: Colors.black,
-                                  );
-                                },
-                              ),
-                      ),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: AnimatedOpacity(
-                          opacity: controlsVisible ? 1 : 0,
-                          duration: const Duration(milliseconds: 160),
-                          child: IgnorePointer(
-                            ignoring: !controlsVisible,
-                            child: tizenController != null
-                                ? _TizenTimelineControls(
-                                    controller: tizenController,
-                                    rate: widget.rate,
-                                    onRateChanged: widget.onRateChanged,
-                                    focusMode: widget.focusMode,
-                                    onToggleFocusMode: widget.onToggleFocusMode,
-                                    onPictureInPicture:
-                                        widget.onPictureInPicture,
-                                  )
-                                : appleController != null
-                                ? _AppleTimelineControls(
-                                    controller: appleController,
-                                    rate: widget.rate,
-                                    onRateChanged: widget.onRateChanged,
-                                    focusMode: widget.focusMode,
-                                    onToggleFocusMode: widget.onToggleFocusMode,
-                                    onPictureInPicture:
-                                        widget.onPictureInPicture,
-                                  )
-                                : mediaPlayer == null
-                                ? const SizedBox.shrink()
-                                : _PlayerTimelineControls(
-                                    player: mediaPlayer,
-                                    rate: widget.rate,
-                                    labelFor: widget.labelFor,
-                                    onAudioChanged: widget.onAudioChanged,
-                                    onSubtitleChanged: widget.onSubtitleChanged,
-                                    onRateChanged: widget.onRateChanged,
-                                    focusMode: widget.focusMode,
-                                    onToggleFocusMode: widget.onToggleFocusMode,
-                                    onPictureInPicture:
-                                        widget.onPictureInPicture,
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: widget.focusMode
+            ? playerBody
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(18),
+                child: playerBody,
+              ),
       ),
     );
   }
