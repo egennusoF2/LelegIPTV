@@ -381,10 +381,10 @@ URL mob: https://lelegiptv.ddns.net/dl/mobile.apk</code></pre>
           </div>
         </div>
         <div>
-          <span class="badge badge-ok">TPK &middot; Flutter nativo</span>
+          <span class="badge badge-ok">WGT &middot; Web + AVPlay</span>
         </div>
-        <a class="btn-dl" href="downloads/current/LelegIPTV-tizen-tv-release.tpk" download>
-          ⬇ Scarica .tpk
+        <a class="btn-dl" href="downloads/current/LelegIPTV-tizen-tv-release.wgt" download>
+          ⬇ Scarica .wgt
         </a>
       </div>
 
@@ -550,7 +550,8 @@ adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
   <section id="tizen">
     <h2>📺 Samsung Smart TV (Tizen)</h2>
     <p>
-      LelegIPTV per Samsung TV è la app Flutter nativa pacchettizzata in <code>.tpk</code>. Richiede Tizen 6.5 o superiore.
+      LelegIPTV per Samsung TV è l'app web nativa Tizen (TypeScript + AVPlay) in <code>.wgt</code>.
+      Richiede Tizen 6.0+ e Developer Mode sulla TV.
     </p>
 
     <h3>Prerequisiti</h3>
@@ -563,7 +564,7 @@ adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
     <h3>Installazione con CLI Tizen</h3>
     <ol class="steps">
       <li>
-        <a href="downloads/current/LelegIPTV-tizen-tv-release.tpk" download class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV-tizen-tv-release.tpk</a>
+        <a href="downloads/current/LelegIPTV-tizen-tv-release.wgt" download class="btn-dl btn-dl-sec" style="display:inline-flex;margin-bottom:4px">⬇ Scarica LelegIPTV-tizen-tv-release.wgt</a>
       </li>
       <li>
         Collega la TV:
@@ -572,7 +573,7 @@ sdb devices</code></pre>
       </li>
       <li>
         Installa il pacchetto:
-        <pre><code>tizen install -n LelegIPTV-tizen-tv-release.tpk -t NOME_DEVICE</code></pre>
+        <pre><code>tizen install -n LelegIPTV-tizen-tv-release.wgt -t NOME_DEVICE</code></pre>
       </li>
     </ol>
 
@@ -580,11 +581,11 @@ sdb devices</code></pre>
     <ol class="steps">
       <li>Apri <strong>Device Manager</strong> e connetti la TV.</li>
       <li>Assicurati che il certificate profile sia selezionato.</li>
-      <li>Menu <strong>Tools → Package → Install Package</strong> e seleziona il <code>.tpk</code>.</li>
+      <li>Menu <strong>Tools → Package → Install Package</strong> e seleziona il <code>.wgt</code>.</li>
     </ol>
 
     <div class="note warn">
-      Tizen usa la build Flutter nativa e il backend Samsung AVPlay. Non usare la vecchia build web <code>.wgt</code>.
+      La vecchia build Flutter <code>.tpk</code> è congelata. Usa il nuovo pacchetto web in <code>native/tizen-tv/</code> (AVPlay diretto, stessa UX dell'app Android TV).
     </div>
   </section>
 
@@ -661,8 +662,8 @@ sdb devices</code></pre>
         </tr>
         <tr>
           <td data-label="Piattaforma">Samsung Tizen TV</td>
-          <td data-label="File"><a href="downloads/current/LelegIPTV-tizen-tv-release.tpk" download>LelegIPTV-tizen-tv-release.tpk</a></td>
-          <td data-label="Dimensione">16 MB</td>
+          <td data-label="File"><a href="downloads/current/LelegIPTV-tizen-tv-release.wgt" download>LelegIPTV-tizen-tv-release.wgt</a></td>
+          <td data-label="Dimensione">~21 KB (dev bundle)</td>
           <td data-label="Stato"><span class="badge badge-ok">pronto</span></td>
         </tr>
         <tr>

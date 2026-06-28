@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:tizen="http://tizen.org/ns/widgets"
+        id="https://lelegiptv.ddns.net/tizen"
+        version="0.1.0"
+        viewmodes="maximized">
+  <tizen:application id="com.lelegiptv.tizen.LelegIPTV"
+                     package="com.lelegiptv.tizen"
+                     required_version="6.0"/>
+  <tizen:profile name="tv"/>
+  <tizen:setting screen-orientation="landscape"
+                 context-menu="disable"
+                 background-support="disable"
+                 encryption="disable"
+                 install-location="auto"
+                 hwkey-event="enable"/>
+  <tizen:content src="index.html"/>
+  <icon src="icon.png"/>
+  <name>Leleg IPTV</name>
+  <description>IPTV player for Samsung Tizen TV with Xtream Codes.</description>
+  <author href="https://lelegiptv.ddns.net">Leleg IPTV</author>
+  <access origin="*" subdomains="true"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+</widget>

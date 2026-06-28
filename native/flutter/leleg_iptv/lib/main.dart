@@ -136,6 +136,14 @@ Map<String, String> _mediaHttpHeaders(String url, XtreamProfile? profile) {
   };
 }
 
+bool _isLivePlaybackUrl(String url) {
+  final target = url.toLowerCase();
+  return RegExp(r'/live/').hasMatch(target) ||
+      RegExp(r'/timeshift/').hasMatch(target) ||
+      target.endsWith('.ts') ||
+      RegExp(r'\.m3u8(?:[?#]|$)').hasMatch(target);
+}
+
 List<String> _vodPlayUrls(XtreamProfile profile, VodMovie movie) {
   final urls = <String>[XtreamClient(profile).vodUrl(movie)];
   final ext = movie.containerExtension.trim().replaceAll('.', '').toLowerCase();
@@ -151,6 +159,25 @@ List<String> _vodPlayUrls(XtreamProfile profile, VodMovie movie) {
 bool _useCompactAdaptiveLayout(Size size, {double phoneShortestSide = 700}) {
   if (lelegTvShellActive || isTizenRuntime) return false;
   return size.shortestSide < phoneShortestSide;
+}
+
+/// Portrait lock only on narrow phones. Tablets (even 7" / head unit ~530dp) stay rotatable.
+const double _phonePortraitLockShortestSide = 480;
+
+bool _shouldLockPortraitOnPhone(Size size) {
+  return size.shortestSide < _phonePortraitLockShortestSide;
+}
+
+List<DeviceOrientation> _defaultOrientationsForSize(Size size) {
+  if (_shouldLockPortraitOnPhone(size)) {
+    return const [DeviceOrientation.portraitUp];
+  }
+  return const [
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ];
 }
 
 bool _useCompactAdaptiveConstraints(
@@ -562,25 +589,13 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return WidgetsBinding.instance.platformDispatcher.views.first;
   }
 
-  bool get _isPhoneMobileDevice {
-    if (!(Platform.isAndroid || Platform.isIOS)) return false;
-    if (_isAndroidTv) return false;
+  Size get _logicalViewSize {
     final view = _activeFlutterView;
-    final logicalSize = view.physicalSize / view.devicePixelRatio;
-    return logicalSize.shortestSide < 700;
+    return view.physicalSize / view.devicePixelRatio;
   }
 
-  List<DeviceOrientation> get _defaultMobileOrientations {
-    if (_isPhoneMobileDevice) {
-      return const [DeviceOrientation.portraitUp];
-    }
-    return const [
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ];
-  }
+  List<DeviceOrientation> get _defaultMobileOrientations =>
+      _defaultOrientationsForSize(_logicalViewSize);
 
   Future<void> _applyMobileOrientationPolicy({bool? fullscreen}) async {
     if (!(Platform.isAndroid || Platform.isIOS)) return;
@@ -3030,8 +3045,11 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     }
 
     if (Platform.isAndroid && !isTizenRuntime) {
-      addCandidate(profile.copyWith(liveContainer: 'ts'));
-      addCandidate(profile.copyWith(liveContainer: 'm3u8'));
+      final primary = profile.liveContainer.trim().toLowerCase();
+      final first = primary == 'm3u8' ? 'm3u8' : 'ts';
+      final second = first == 'ts' ? 'm3u8' : 'ts';
+      addCandidate(profile.copyWith(liveContainer: first));
+      addCandidate(profile.copyWith(liveContainer: second));
     } else {
       addCandidate(profile);
       addCandidate(
@@ -3637,6 +3655,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
     final mediaPlayer = _player;
     if (mediaPlayer == null) return false;
+    final isLive = _isLivePlaybackUrl(url);
     await mediaPlayer.open(
       Media(
         url,
@@ -3649,7 +3668,38 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (startAt != null && startAt.inMilliseconds > 0) {
       await mediaPlayer.seek(startAt);
     }
+    if (Platform.isAndroid && isLive) {
+      final hasVideo = await _waitForMediaKitVideoFrame(mediaPlayer);
+      if (!hasVideo) {
+        try {
+          await mediaPlayer.stop();
+        } catch (_) {}
+        return false;
+      }
+      _syncMediaKitSurfaceAfterLayoutChange();
+    }
     return true;
+  }
+
+  /// Live/HLS often omits [Player.state.width]/height; wait for decoded video params.
+  Future<bool> _waitForMediaKitVideoFrame(
+    Player player, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
+      return true;
+    }
+    try {
+      await for (final params in player.stream.videoParams.timeout(
+        timeout,
+        onTimeout: (sink) => sink.close(),
+      )) {
+        final w = params.dw ?? 0;
+        final h = params.dh ?? 0;
+        if (w > 0 && h > 0) return true;
+      }
+    } catch (_) {}
+    return (player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0;
   }
 
   Future<bool> _openAppleMedia(

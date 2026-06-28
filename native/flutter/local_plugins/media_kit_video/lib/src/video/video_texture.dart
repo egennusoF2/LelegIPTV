@@ -400,9 +400,13 @@ class VideoState extends State<Video> with WidgetsBindingObserver {
                                 return ValueListenableBuilder<Rect?>(
                                   valueListenable: notifier.rect,
                                   builder: (context, rect, _) {
+                                    final frameReady = _visible ||
+                                        (rect != null &&
+                                            rect.width > 1.0 &&
+                                            rect.height > 1.0);
                                     if (id != null &&
                                         rect != null &&
-                                        _visible) {
+                                        frameReady) {
                                       return SizedBox(
                                         // Apply aspect ratio if provided.
                                         width:

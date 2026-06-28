@@ -1,0 +1,370 @@
+/* Design tokens aligned with native/android-tv Theme.kt and Flutter LelegColors */
+
+:root {
+  --bg: #081016;
+  --bg-deep: #040a0f;
+  --bg-glow: #0b2530;
+  --surface: #121a20;
+  --surface-deep: #0e151b;
+  --surface-2: #172028;
+  --panel: #121a20;
+  --panel-selected: #1f2b34;
+  --line: #2d3a44;
+  --accent: #45c7f1;
+  --text: #f4f8fb;
+  --muted: #9aa7b1;
+  --error: #ff7a7a;
+  --sidebar-width: 200px;
+  --focus-ring: 0 0 0 3px rgba(69, 199, 241, 0.55);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: radial-gradient(circle at top left, var(--bg-glow) 0, var(--bg) 42rem);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+}
+
+#player-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+}
+
+#player-layer[hidden] {
+  display: none !important;
+}
+
+.shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  background: var(--sidebar, var(--bg));
+  border-right: 1px solid var(--line);
+  padding: 28px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.brand {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: 18px;
+  padding: 0 8px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: default;
+  outline: none;
+}
+
+.nav-item.focused {
+  background: var(--panel-selected);
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.nav-item.active {
+  color: var(--accent);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 28px 32px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+
+.page-title {
+  font-size: 22px;
+  font-weight: 900;
+  margin: 0 0 20px;
+}
+
+.status-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: rgba(8, 16, 22, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  z-index: 50;
+  pointer-events: none;
+}
+
+.status-bar.error {
+  color: var(--error);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.focusable {
+  outline: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.focusable.focused {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+  background: var(--panel-selected);
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.live-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr 380px;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+}
+
+.list {
+  overflow-y: auto;
+  max-height: 100%;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+
+.list-item.focused {
+  background: var(--panel-selected);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.list-item img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--surface-deep);
+}
+
+.list-item .name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.list-item .meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.preview-box {
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.preview-box .placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.hub-tile {
+  min-height: 120px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 640px;
+}
+
+.settings-form label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.settings-form input,
+.settings-form select {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 15px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preset-chip {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.player-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.player-overlay .top-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 28px 36px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), transparent);
+}
+
+.player-overlay .bottom-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 24px 36px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.8), transparent);
+}
+
+.player-title {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.player-hint {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.poster-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.poster-card {
+  width: 158px;
+  flex-shrink: 0;
+}
+
+.poster-card img {
+  width: 158px;
+  height: 236px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--surface-deep);
+  display: block;
+}
+
+.poster-card .title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.poster-card.focused img {
+  outline: 3px solid var(--accent);
+}
+
+.empty {
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+}
