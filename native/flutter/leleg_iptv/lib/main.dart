@@ -308,6 +308,107 @@ int _epgLiveOrNextIndex(List<EpgProgramme> programmes) {
   return nextIndex >= 0 ? nextIndex : programmes.length - 1;
 }
 
+const _guideDefaultLookbackDays = 7;
+const _guideChannelColumnWidth = 248.0;
+
+DateTime _guideDayStart(int dayOffset) {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day).add(Duration(days: dayOffset));
+}
+
+DateTime _guideDayEnd(DateTime dayStart) =>
+    dayStart.add(const Duration(days: 1));
+
+List<EpgProgramme> _programmesForGuideDay(
+  List<EpgProgramme> programmes,
+  DateTime dayStart,
+  DateTime dayEnd,
+) {
+  final filtered = programmes.where((programme) {
+    final start = programme.start;
+    if (start == null) return false;
+    return !start.isBefore(dayStart) && start.isBefore(dayEnd);
+  }).toList();
+  filtered.sort((a, b) {
+    final aStart = a.start;
+    final bStart = b.start;
+    if (aStart == null && bStart == null) return 0;
+    if (aStart == null) return 1;
+    if (bStart == null) return -1;
+    return aStart.compareTo(bStart);
+  });
+  return _dedupeGuideProgrammes(filtered);
+}
+
+List<EpgProgramme> _dedupeGuideProgrammes(List<EpgProgramme> programmes) {
+  final result = <EpgProgramme>[];
+  for (final programme in programmes) {
+    final start = programme.start;
+    if (start == null) continue;
+    final duplicateIndex = result.indexWhere((existing) {
+      final existingStart = existing.start;
+      if (existingStart == null) return false;
+      if (existing.title.trim().toLowerCase() !=
+          programme.title.trim().toLowerCase()) {
+        return false;
+      }
+      return (existingStart.difference(start).inMinutes).abs() <= 3;
+    });
+    if (duplicateIndex >= 0) {
+      final existing = result[duplicateIndex];
+      final keepNew =
+          (programme.end != null && existing.end == null) ||
+          (programme.description.length > existing.description.length);
+      if (keepNew) {
+        result[duplicateIndex] = programme;
+      }
+      continue;
+    }
+    result.add(programme);
+  }
+  return result;
+}
+
+int _guideLookbackDays(LiveChannel? channel) {
+  if (channel == null) return _guideDefaultLookbackDays;
+  if (channel.catchupDays > _guideDefaultLookbackDays) {
+    return channel.catchupDays.clamp(1, 14);
+  }
+  return _guideDefaultLookbackDays;
+}
+
+String _formatGuideDayTab(int dayOffset) {
+  if (dayOffset == -1) return 'IERI';
+  if (dayOffset == 0) return 'OGGI';
+  if (dayOffset == 1) return 'DOMANI';
+  final date = DateTime.now().add(Duration(days: dayOffset));
+  const days = ['LUN', 'MAR', 'MER', 'GIO', 'VEN', 'SAB', 'DOM'];
+  final dow = days[date.weekday - 1];
+  return '$dow ${date.day}';
+}
+
+String _formatGuideDayLabel(DateTime dayStart) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  if (dayStart == today) return 'Oggi';
+  if (dayStart == today.subtract(const Duration(days: 1))) return 'Ieri';
+  if (dayStart == today.add(const Duration(days: 1))) return 'Domani';
+  return '${dayStart.day.toString().padLeft(2, '0')}/'
+      '${dayStart.month.toString().padLeft(2, '0')}/'
+      '${dayStart.year}';
+}
+
+String _formatGuideClock(DateTime? value) {
+  if (value == null) return '--:--';
+  return '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}';
+}
+
+int _guideLiveProgrammeIndex(List<EpgProgramme> programmes, int dayOffset) {
+  if (dayOffset != 0) return -1;
+  return programmes.indexWhere(_epgIsLiveNow);
+}
+
 class _TvUiScope extends InheritedWidget {
   const _TvUiScope({required super.child});
 
@@ -481,6 +582,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   LiveChannel? _selectedLiveChannel;
   List<EpgProgramme> _selectedLiveEpg = const [];
   final Map<int, List<EpgProgramme>> _epgByChannel = {};
+  int? _epgLoadingChannelId;
   List<VodMovie> _movies = const [];
   VodMovie? _selectedMovie;
   String _selectedMovieDescription = '';
@@ -522,11 +624,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   bool _isAndroidTv = false;
   bool _livePlayerActive = false;
   bool _fullscreenOverlayVisible = true;
+  bool get _usesDesktopFullscreenOverlay =>
+      !_isAndroidTv && (Platform.isMacOS || Platform.isWindows);
   bool _remoteSearchSelected = false;  // campo di testo aperto
   bool _remoteSearchIconFocused = false; // solo l'icona cerca è evidenziata
   bool _tvSearchEditing = false;
   bool _remotePassthroughActive = false;
   int _epgProgrammeIndex = 0;
+  int _epgGuideDayOffset = 0;
+  int _epgLoadGeneration = 0;
   int _vodToolbarIndex = -1;
   Timer? _fullscreenOverlayTimer;
 
@@ -1837,7 +1943,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _togglePlayerFocusMode();
       return KeyEventResult.handled;
     }
-    _revealFullscreenOverlay();
+    if (_isAndroidTv) {
+      _revealFullscreenOverlay(resetTimer: true);
+    }
     if (_livePlayerActive) {
       if (key == LogicalKeyboardKey.arrowUp) {
         unawaited(_playAdjacentLiveChannel(-1));
@@ -1846,6 +1954,9 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       if (key == LogicalKeyboardKey.arrowDown) {
         unawaited(_playAdjacentLiveChannel(1));
         return KeyEventResult.handled;
+      }
+      if (!_isAndroidTv) {
+        return KeyEventResult.ignored;
       }
       if (key == LogicalKeyboardKey.arrowLeft) {
         _moveEpgProgrammeSelection(-1);
@@ -2397,13 +2508,33 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
   }
 
   void _setEpgCategory(String id) {
+    if (_liveCategoryId == id) return;
+    _epgLoadGeneration += 1;
     setState(() {
       _liveCategoryId = id;
       _tvContentIndex = 0;
       _selectedLiveEpg = const [];
+      _epgGuideDayOffset = 0;
     });
+    unawaited(_reloadEpgAfterCategoryChange());
+  }
+
+  Future<void> _reloadEpgAfterCategoryChange() async {
+    await _loadEpgPage();
+    if (!mounted) return;
     _previewEpgChannelAt(0);
-    unawaited(_loadEpgPage(force: true));
+  }
+
+  bool _epgCoverageIsShallow(List<EpgProgramme> programmes) {
+    if (programmes.isEmpty) return true;
+    final now = DateTime.now();
+    final minStart = now.subtract(
+      Duration(days: _guideDefaultLookbackDays - 1),
+    );
+    return !programmes.any((programme) {
+      final start = programme.start;
+      return start != null && !start.isAfter(minStart);
+    });
   }
 
   void _setMovieCategory(String id) {
@@ -2434,21 +2565,34 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _status = 'Canale selezionato: ${channel.name}';
     });
     unawaited(_recordRecentLiveChannel(channel.id));
-    unawaited(_loadShortEpg(channel));
+    unawaited(_loadChannelEpg(channel));
   }
 
   void _previewEpgChannelAt(int index) {
     if (_epgChannels.isEmpty) return;
     final channel = _epgChannels[index.clamp(0, _epgChannels.length - 1)];
-    if (_selectedLiveChannel?.id == channel.id && _selectedLiveEpg.isNotEmpty) {
+    final cached = _epgByChannel[channel.id] ?? const <EpgProgramme>[];
+    final hasUsableCache = cached.isNotEmpty && !_epgCoverageIsShallow(cached);
+    if (_selectedLiveChannel?.id == channel.id && hasUsableCache) {
+      setState(() {
+        _selectedLiveChannel = channel;
+        final programmes = _epgGuideProgrammes(channel);
+        _epgProgrammeIndex = programmes.isEmpty
+            ? 0
+            : _defaultProgrammeIndex(programmes);
+        _status = 'Guida TV: ${channel.name}';
+      });
       return;
     }
     setState(() {
       _selectedLiveChannel = channel;
-      _epgProgrammeIndex = 0;
+      final programmes = _epgGuideProgrammes(channel);
+      _epgProgrammeIndex = programmes.isEmpty
+          ? 0
+          : _defaultProgrammeIndex(programmes);
       _status = 'Guida TV: ${channel.name}';
     });
-    unawaited(_loadShortEpg(channel));
+    unawaited(_loadChannelEpg(channel));
   }
 
   int _channelIndexOf(List<LiveChannel> channels, LiveChannel channel) {
@@ -2456,10 +2600,40 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return index < 0 ? 0 : index;
   }
 
+  List<EpgProgramme> _epgGuideProgrammes(LiveChannel channel) {
+    final source = _epgByChannel[channel.id] ?? const [];
+    final dayStart = _guideDayStart(_epgGuideDayOffset);
+    final dayEnd = _guideDayEnd(dayStart);
+    return _programmesForGuideDay(source, dayStart, dayEnd);
+  }
+
+  void _setEpgGuideDayOffset(int offset) {
+    final channel = _selectedLiveChannel;
+    final clamped = channel == null
+        ? offset
+        : offset.clamp(-_guideLookbackDays(channel), 1).toInt();
+    if (_epgGuideDayOffset == clamped) return;
+    setState(() {
+      _epgGuideDayOffset = clamped;
+      if (channel != null) {
+        final programmes = _epgGuideProgrammes(channel);
+        _epgProgrammeIndex = programmes.isEmpty
+            ? 0
+            : _defaultProgrammeIndex(programmes);
+      }
+    });
+    if (channel != null) {
+      final programmes = _epgGuideProgrammes(channel);
+      if (programmes.isEmpty) {
+        unawaited(_loadChannelEpg(channel));
+      }
+    }
+  }
+
   void _moveEpgProgrammeSelection(int delta) {
     final channel = _selectedLiveChannel;
     if (channel == null) return;
-    final programmes = _fullscreenOverlayProgrammes(channel);
+    final programmes = _epgGuideProgrammes(channel);
     if (programmes.isEmpty) return;
     final next = (_epgProgrammeIndex + delta)
         .clamp(0, programmes.length - 1)
@@ -2539,12 +2713,44 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
   EpgProgramme? _selectedGuideProgrammeFor(LiveChannel? channel) {
     if (channel == null) return null;
-    final programmes = _fullscreenOverlayProgrammes(channel);
+    final programmes = _epgGuideProgrammes(channel);
     if (programmes.isEmpty) return null;
     return programmes[_epgProgrammeIndex.clamp(0, programmes.length - 1)];
   }
 
   bool _isLiveProgramme(EpgProgramme programme) => _epgIsLiveNow(programme);
+
+  EpgProgramme _resolveGuideProgramme(
+    LiveChannel channel,
+    EpgProgramme programme,
+  ) {
+    final start = programme.start;
+    if (start == null) return programme;
+    final source = _epgByChannel[channel.id] ?? const <EpgProgramme>[];
+    EpgProgramme? best;
+    for (final item in source) {
+      final itemStart = item.start;
+      final itemEnd = item.end;
+      if (itemStart == null || itemEnd == null) continue;
+      if (item.title.trim().toLowerCase() !=
+          programme.title.trim().toLowerCase()) {
+        continue;
+      }
+      if ((itemStart.difference(start).inMinutes).abs() > 3) continue;
+      if (!_canReplayProgramme(channel, item) && !_isLiveProgramme(item)) {
+        continue;
+      }
+      best = item;
+      if (itemStart == start && itemEnd == programme.end) break;
+    }
+    return best ?? programme;
+  }
+
+  Future<void> _waitForPlayerSurfaceAttach() async {
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+  }
 
   bool _canReplayProgramme(LiveChannel channel, EpgProgramme programme) {
     final now = DateTime.now();
@@ -2552,7 +2758,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final end = programme.end;
     if (!channel.hasCatchup || start == null || end == null) return false;
     if (end.isAfter(now) || !end.isAfter(start)) return false;
-    final days = channel.catchupDays > 0 ? channel.catchupDays : 7;
+    final days = channel.catchupDays > 0
+        ? channel.catchupDays
+        : (channel.hasCatchup ? 7 : 0);
+    if (days <= 0) return false;
     return start.isAfter(now.subtract(Duration(days: days)));
   }
 
@@ -2648,7 +2857,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         if (_epgChannels.isNotEmpty) {
           final channel = _epgChannels[index.clamp(0, _epgChannels.length - 1)];
           setState(() => _selectedLiveChannel = channel);
-          await _loadShortEpg(channel);
+          await _loadChannelEpg(channel);
           final programme = _selectedGuideProgrammeFor(channel);
           if (programme != null &&
               (_isLiveProgramme(programme) ||
@@ -2956,6 +3165,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     _liveChannels = const [];
     _selectedLiveChannel = null;
     _selectedLiveEpg = const [];
+    XtreamClient.clearXmlTvCache();
     _epgByChannel.clear();
     _movies = const [];
     _selectedMovie = null;
@@ -3088,7 +3298,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         () => _status = 'Riproduzione live non riuscita: ${channel.name}',
       );
     }
-    unawaited(_loadShortEpg(channel));
+    unawaited(_loadChannelEpg(channel));
   }
 
   Future<void> _playProgramme(
@@ -3107,25 +3317,55 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       await _playLive(channel);
       return;
     }
-    final catchupUrl = XtreamClient(profile).catchupUrl(channel, programme);
-    if (catchupUrl == null) {
+    final catchupUrls = <String>[];
+    void addCatchupUrls(XtreamProfile candidate) {
+      for (final url in XtreamClient(candidate).catchupUrls(channel, programme)) {
+        if (!catchupUrls.contains(url)) catchupUrls.add(url);
+      }
+    }
+
+    addCatchupUrls(profile);
+    addCatchupUrls(
+      profile.copyWith(
+        liveContainer: profile.liveContainer == 'ts' ? 'm3u8' : 'ts',
+      ),
+    );
+    if (catchupUrls.isEmpty) {
       setState(() {
-        _status = 'Registrato non disponibile per ${programme.title}.';
+        _status = 'Archivio non disponibile per ${programme.title}.';
       });
       return;
     }
+    // ignore: avoid_print
+    print(
+      '[leleg:catchup] ${channel.name} "${programme.title}" urls=${catchupUrls.length}',
+    );
     setState(() {
       _selectedLiveChannel = channel;
       _livePlayerActive = true;
     });
     unawaited(_recordRecentLiveChannel(channel.id));
-    final opened = await _openMedia(
-      catchupUrl,
-      '${channel.name} - ${programme.title}',
-      preferApple: Platform.isIOS,
-    );
+    var opened = false;
+    for (final catchupUrl in catchupUrls) {
+      // ignore: avoid_print
+      print('[leleg:catchup] try $catchupUrl');
+      opened = await _openMedia(
+        catchupUrl,
+        '${channel.name} - ${programme.title}',
+        preferApple: Platform.isIOS,
+      );
+      if (opened) break;
+    }
     if (opened) {
-      _enterFullscreenOnPhonePlayback(force: Platform.isIOS);
+      if (Platform.isIOS) {
+        _enterFullscreenOnPhonePlayback(force: true);
+      } else if (!_playerFocusMode) {
+        _setPlayerFocusMode(true);
+      }
+    } else if (mounted) {
+      setState(() {
+        _status = 'Archivio non riproducibile: ${programme.title}';
+      });
     }
   }
 
@@ -3133,12 +3373,24 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     LiveChannel channel,
     EpgProgramme programme,
   ) async {
-    setState(() {
-      _section = AppSection.live;
-      _selectedLiveChannel = channel;
-      _selectedLiveEpg = _epgByChannel[channel.id] ?? const [];
-    });
-    await _playProgramme(channel, programme);
+    final resolved = _resolveGuideProgramme(channel, programme);
+    final switchingSection = _section != AppSection.live;
+    if (switchingSection) {
+      setState(() {
+        _section = AppSection.live;
+        _remoteSection = AppSection.live;
+        _selectedLiveChannel = channel;
+        _selectedLiveEpg = _epgByChannel[channel.id] ?? const [];
+      });
+      await _waitForPlayerSurfaceAttach();
+    } else {
+      setState(() {
+        _selectedLiveChannel = channel;
+        _selectedLiveEpg = _epgByChannel[channel.id] ?? const [];
+      });
+    }
+    if (!mounted) return;
+    await _playProgramme(channel, resolved);
   }
 
   Future<void> _playMovie(VodMovie movie, {bool fromStart = false}) async {
@@ -3655,20 +3907,30 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
 
     final mediaPlayer = _player;
     if (mediaPlayer == null) return false;
+    try {
+      if (mediaPlayer.state.playing ||
+          mediaPlayer.state.playlist.medias.isNotEmpty) {
+        await mediaPlayer.stop();
+      }
+    } catch (_) {}
     final isLive = _isLivePlaybackUrl(url);
-    await mediaPlayer.open(
-      Media(
-        url,
-        httpHeaders: _profile == null
-            ? const {}
-            : _mediaHttpHeaders(url, _profile),
-      ),
-      play: true,
-    );
+    try {
+      await mediaPlayer.open(
+        Media(
+          url,
+          httpHeaders: _profile == null
+              ? const {}
+              : _mediaHttpHeaders(url, _profile),
+        ),
+        play: true,
+      );
+    } catch (_) {
+      return false;
+    }
     if (startAt != null && startAt.inMilliseconds > 0) {
       await mediaPlayer.seek(startAt);
     }
-    if (Platform.isAndroid && isLive) {
+    if (isLive && Platform.isAndroid) {
       final hasVideo = await _waitForMediaKitVideoFrame(mediaPlayer);
       if (!hasVideo) {
         try {
@@ -3854,51 +4116,74 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     return null;
   }
 
-  Future<void> _loadShortEpg(LiveChannel channel) async {
+  Future<void> _loadChannelEpg(LiveChannel channel) async {
     final profile = _profile;
     if (profile == null) return;
-    setState(() {
-      _epgLoading = true;
-      _selectedLiveEpg = const [];
-    });
+    final channelId = channel.id;
+    final previous = _epgByChannel[channelId] ?? const <EpgProgramme>[];
+    _epgLoadingChannelId = channelId;
+    if (mounted) {
+      setState(() => _epgLoading = true);
+    }
     try {
       final client = XtreamClient(profile);
-      var epg = const <EpgProgramme>[];
-      Object? shortEpgError;
+      var epg = List<EpgProgramme>.from(previous);
+      Object? epgError;
       try {
-        epg = await client.shortEpg(channel, limit: 16);
+        epg = _mergeProgrammes(epg, await client.simpleEpg(channel));
       } catch (error) {
-        shortEpgError = error;
+        epgError = error;
       }
       try {
-        final xmltv = await client.xmlTvEpgForChannels([channel], limit: 32);
-        final xmltvEpg = xmltv[channel.id] ?? const <EpgProgramme>[];
+        epg = _mergeProgrammes(
+          epg,
+          await client.shortEpg(channel, limit: 100),
+        );
+      } catch (error) {
+        epgError ??= error;
+      }
+      try {
+        final xmltv = await client.xmlTvEpgForChannels(
+          [channel],
+          limit: 240,
+          lookbackDays: _guideDefaultLookbackDays,
+        );
+        final xmltvEpg = xmltv[channelId] ?? const <EpgProgramme>[];
         if (xmltvEpg.isNotEmpty) {
           epg = _mergeProgrammes(epg, xmltvEpg);
         }
       } catch (_) {
-        // Keep get_short_epg results: contextual EPG should still be usable.
+        // Keep provider/API results when XMLTV is unavailable.
       }
-      if (!mounted) return;
+      if (!mounted || _epgLoadingChannelId != channelId) return;
       final guideItems = _guideProgrammesFrom(channel, epg);
       setState(() {
-        _selectedLiveEpg = epg;
-        _epgByChannel[channel.id] = epg;
-        _epgProgrammeIndex = _defaultProgrammeIndex(guideItems);
-        if (epg.isEmpty && shortEpgError != null) {
-          _status = 'EPG non caricato: $shortEpgError';
+        if (_selectedLiveChannel?.id == channelId) {
+          _selectedLiveEpg = epg;
+        }
+        _epgByChannel[channelId] = epg;
+        if (_selectedLiveChannel?.id == channelId) {
+          _epgProgrammeIndex = _defaultProgrammeIndex(guideItems);
+        }
+        if (epg.isEmpty && epgError != null) {
+          _status = 'EPG non caricato: $epgError';
         }
       });
     } catch (error) {
-      if (mounted) setState(() => _status = 'EPG non caricato: $error');
+      if (mounted && _epgLoadingChannelId == channelId) {
+        setState(() => _status = 'EPG non caricato: $error');
+      }
     } finally {
-      if (mounted) setState(() => _epgLoading = false);
+      if (mounted && _epgLoadingChannelId == channelId) {
+        setState(() => _epgLoading = false);
+      }
     }
   }
 
   Future<void> _loadEpgPage({bool force = false}) async {
     final profile = _profile;
     if (profile == null || _liveChannels.isEmpty) return;
+    final loadId = ++_epgLoadGeneration;
     setState(() {
       _epgLoading = true;
       _status = 'Caricamento guida TV...';
@@ -3906,6 +4191,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     final client = XtreamClient(profile);
     final channels = _epgChannels.take(80).toList();
     if (channels.isEmpty) {
+      if (!mounted || loadId != _epgLoadGeneration) return;
       setState(() {
         _epgLoading = false;
         _status = 'Guida TV: nessun canale per la categoria selezionata.';
@@ -3920,13 +4206,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     var xmlTvMappedChannels = 0;
     var xmlTvProgrammesCount = 0;
     Object? xmlTvError;
+    if (!mounted || loadId != _epgLoadGeneration) return;
     setState(() => _status = 'Guida TV: caricamento XMLTV...');
     try {
       final xmlTvProgrammes = await client.xmlTvEpgForChannels(
         channels,
-        limit: 48,
+        limit: 240,
+        lookbackDays: _guideDefaultLookbackDays,
       );
-      if (!mounted) return;
+      if (!mounted || loadId != _epgLoadGeneration) return;
       xmlTvMappedChannels = xmlTvProgrammes.length;
       xmlTvProgrammesCount = xmlTvProgrammes.values.fold<int>(
         0,
@@ -3943,24 +4231,28 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       });
     } catch (error) {
       xmlTvError = error;
-      if (mounted) {
-        setState(() => _status = 'XMLTV non caricato: $error');
-      }
+      if (!mounted || loadId != _epgLoadGeneration) return;
+      setState(() => _status = 'XMLTV non caricato: $error');
     }
 
-    final missingChannels = channels
-        .where((channel) => (_epgByChannel[channel.id] ?? const []).isEmpty)
-        .take(12)
+    final needsAttention = channels
+        .where((channel) {
+          final programmes = _epgByChannel[channel.id] ?? const [];
+          return programmes.isEmpty || _epgCoverageIsShallow(programmes);
+        })
         .toList();
-    if (missingChannels.isNotEmpty) {
-      var loaded = channels.length - missingChannels.length;
+    if (needsAttention.isNotEmpty) {
+      var loaded = channels.length - needsAttention.length;
       var fallbackLoaded = 0;
       var fallback429Count = 0;
-      for (final channel in missingChannels) {
-        if (!mounted) return;
+      for (final channel in needsAttention.take(24)) {
+        if (!mounted || loadId != _epgLoadGeneration) return;
         try {
-          final programmes = await client.shortEpg(channel, limit: 12);
-          if (!mounted) return;
+          var programmes = await client.simpleEpg(channel);
+          if (programmes.isEmpty) {
+            programmes = await client.shortEpg(channel, limit: 100);
+          }
+          if (!mounted || loadId != _epgLoadGeneration) return;
           setState(() {
             if (programmes.isNotEmpty) {
               final existing =
@@ -3970,21 +4262,18 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 programmes,
               );
               fallbackLoaded += 1;
-            } else {
-              _epgByChannel[channel.id] = const [];
             }
             loaded += 1;
             _status =
                 'Guida TV fallback: $loaded/${channels.length} canali '
-                '($fallbackLoaded da get_short_epg)';
+                '($fallbackLoaded da API provider)';
           });
         } catch (error) {
-          if (!mounted) return;
+          if (!mounted || loadId != _epgLoadGeneration) return;
           if (error.toString().contains('HTTP 429')) {
             fallback429Count += 1;
           }
           setState(() {
-            _epgByChannel[channel.id] = const [];
             _status =
                 'Guida TV fallback limitato'
                 '${fallback429Count > 0 ? ' ($fallback429Count rate limit)' : ''}: $error';
@@ -3993,7 +4282,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         await Future<void>.delayed(const Duration(milliseconds: 120));
       }
     }
-    if (mounted) {
+    if (mounted && loadId == _epgLoadGeneration) {
       final programmeCount = channels.fold<int>(
         0,
         (count, channel) => count + (_epgByChannel[channel.id]?.length ?? 0),
@@ -4134,10 +4423,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     if (_playerFocusMode == next) return;
     setState(() {
       _playerFocusMode = next;
-      _fullscreenOverlayVisible = next;
+      _fullscreenOverlayVisible = next && _isAndroidTv;
       _vodToolbarIndex = -1;
     });
-    if (next) {
+    if (next && _isAndroidTv) {
       _scheduleFullscreenOverlayHide();
     } else {
       _fullscreenOverlayTimer?.cancel();
@@ -4190,19 +4479,21 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
     });
   }
 
-  void _revealFullscreenOverlay() {
+  void _revealFullscreenOverlay({bool resetTimer = false}) {
     if (!_playerFocusMode) return;
-    _fullscreenOverlayTimer?.cancel();
-    if (!_fullscreenOverlayVisible && mounted) {
+    final wasHidden = !_fullscreenOverlayVisible;
+    if (wasHidden && mounted) {
       setState(() => _fullscreenOverlayVisible = true);
+      _scheduleFullscreenOverlayHide();
+    } else if (resetTimer) {
+      _scheduleFullscreenOverlayHide();
     }
-    _scheduleFullscreenOverlayHide();
   }
 
   void _scheduleFullscreenOverlayHide() {
     _fullscreenOverlayTimer?.cancel();
     if (_vodToolbarIndex >= 0) return;
-    _fullscreenOverlayTimer = Timer(const Duration(seconds: 4), () {
+    _fullscreenOverlayTimer = Timer(const Duration(seconds: 3), () {
       if (mounted && _playerFocusMode && _vodToolbarIndex < 0) {
         setState(() => _fullscreenOverlayVisible = false);
       }
@@ -4454,7 +4745,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                       ),
                     ),
                   ),
-                if (_livePlayerActive)
+                if (_livePlayerActive && _isAndroidTv)
                   Positioned(
                     left: 32,
                     right: 32,
@@ -4481,13 +4772,20 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                 Positioned(
                   top: 20,
                   right: 20,
-                  child: Material(
-                    color: Colors.black.withValues(alpha: 0.72),
-                    shape: const CircleBorder(),
-                    child: IconButton(
-                      tooltip: 'Chiudi player',
-                      onPressed: () => unawaited(_closePlayer()),
-                      icon: const Icon(Icons.close),
+                  child: AnimatedOpacity(
+                    opacity: (!_isAndroidTv || _fullscreenOverlayVisible) ? 1 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: IgnorePointer(
+                      ignoring: _isAndroidTv && !_fullscreenOverlayVisible,
+                      child: Material(
+                        color: Colors.black.withValues(alpha: 0.72),
+                        shape: const CircleBorder(),
+                        child: IconButton(
+                          tooltip: 'Chiudi player',
+                          onPressed: () => unawaited(_closePlayer()),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -5014,22 +5312,24 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
               ),
       AppSection.epg => EpgScreen(
         tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
-        selectedProgrammeIndex: _remoteMenuMode ? null : _epgProgrammeIndex,
-        selectedProgramme: _selectedLiveChannel == null
-            ? null
-            : _selectedGuideProgrammeFor(_selectedLiveChannel!),
+        selectedProgrammeIndex:
+            (_isAndroidTv && !_remoteMenuMode) ? _epgProgrammeIndex : null,
+        selectedProgramme: null,
         channels: _epgChannels,
         categories: _liveCategories,
         selectedCategoryId: _liveCategoryId,
-        categoryName: (id) => _categoryName(_liveCategories, id),
         selectedChannel: _selectedLiveChannel,
+        selectedDayOffset: _epgGuideDayOffset,
         epgByChannel: _epgByChannel,
         loading: _epgLoading,
+        canReplayProgramme: _canReplayProgramme,
         onCategoryChanged: _setEpgCategory,
+        onDayOffsetChanged: _setEpgGuideDayOffset,
         onRefresh: () => unawaited(_loadEpgPage(force: true)),
         onSelectChannel: (channel) =>
             _previewEpgChannelAt(_channelIndexOf(_epgChannels, channel)),
         onWatchProgramme: _openLiveProgrammeFromGuide,
+        onLoadChannel: (channel) => unawaited(_loadChannelEpg(channel)),
       ),
       AppSection.downloads => DownloadsScreen(
         tvSelectedIndex: _remoteMenuMode ? null : _tvContentIndex,
@@ -8603,14 +8903,17 @@ class EpgScreen extends StatelessWidget {
     required this.channels,
     required this.categories,
     required this.selectedCategoryId,
-    required this.categoryName,
     required this.selectedChannel,
+    required this.selectedDayOffset,
     required this.epgByChannel,
     required this.loading,
+    required this.canReplayProgramme,
     required this.onCategoryChanged,
+    required this.onDayOffsetChanged,
     required this.onRefresh,
     required this.onSelectChannel,
     required this.onWatchProgramme,
+    required this.onLoadChannel,
     super.key,
   });
 
@@ -8620,66 +8923,287 @@ class EpgScreen extends StatelessWidget {
   final List<LiveChannel> channels;
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
-  final String Function(String id) categoryName;
   final LiveChannel? selectedChannel;
+  final int selectedDayOffset;
   final Map<int, List<EpgProgramme>> epgByChannel;
   final bool loading;
+  final bool Function(LiveChannel channel, EpgProgramme programme)
+      canReplayProgramme;
   final ValueChanged<String> onCategoryChanged;
+  final ValueChanged<int> onDayOffsetChanged;
   final VoidCallback onRefresh;
   final ValueChanged<LiveChannel> onSelectChannel;
   final void Function(LiveChannel channel, EpgProgramme programme)
-  onWatchProgramme;
+      onWatchProgramme;
+  final ValueChanged<LiveChannel> onLoadChannel;
 
   @override
   Widget build(BuildContext context) {
     return _PageScaffold(
+      hideHeader: true,
       title: 'Guida TV',
-      eyebrow: loading
-          ? 'Caricamento programmi...'
-          : '${channels.length} canali',
+      child: _TvGuideLayout(
+        tvSelectedIndex: tvSelectedIndex,
+        selectedProgrammeIndex: selectedProgrammeIndex,
+        selectedProgramme: selectedProgramme,
+        channels: channels,
+        categories: categories,
+        selectedCategoryId: selectedCategoryId,
+        selectedChannel: selectedChannel,
+        selectedDayOffset: selectedDayOffset,
+        epgByChannel: epgByChannel,
+        loading: loading,
+        canReplayProgramme: canReplayProgramme,
+        onCategoryChanged: onCategoryChanged,
+        onDayOffsetChanged: onDayOffsetChanged,
+        onRefresh: onRefresh,
+        onSelectChannel: onSelectChannel,
+        onWatchProgramme: onWatchProgramme,
+        onLoadChannel: onLoadChannel,
+      ),
+    );
+  }
+}
+
+class _TvGuideLayout extends StatefulWidget {
+  const _TvGuideLayout({
+    required this.tvSelectedIndex,
+    required this.selectedProgrammeIndex,
+    required this.selectedProgramme,
+    required this.channels,
+    required this.categories,
+    required this.selectedCategoryId,
+    required this.selectedChannel,
+    required this.selectedDayOffset,
+    required this.epgByChannel,
+    required this.loading,
+    required this.canReplayProgramme,
+    required this.onCategoryChanged,
+    required this.onDayOffsetChanged,
+    required this.onRefresh,
+    required this.onSelectChannel,
+    required this.onWatchProgramme,
+    required this.onLoadChannel,
+  });
+
+  final int? tvSelectedIndex;
+  final int? selectedProgrammeIndex;
+  final EpgProgramme? selectedProgramme;
+  final List<LiveChannel> channels;
+  final List<XtreamCategory> categories;
+  final String selectedCategoryId;
+  final LiveChannel? selectedChannel;
+  final int selectedDayOffset;
+  final Map<int, List<EpgProgramme>> epgByChannel;
+  final bool loading;
+  final bool Function(LiveChannel channel, EpgProgramme programme)
+      canReplayProgramme;
+  final ValueChanged<String> onCategoryChanged;
+  final ValueChanged<int> onDayOffsetChanged;
+  final VoidCallback onRefresh;
+  final ValueChanged<LiveChannel> onSelectChannel;
+  final void Function(LiveChannel channel, EpgProgramme programme)
+      onWatchProgramme;
+  final ValueChanged<LiveChannel> onLoadChannel;
+
+  @override
+  State<_TvGuideLayout> createState() => _TvGuideLayoutState();
+}
+
+class _TvGuideLayoutState extends State<_TvGuideLayout> {
+  final ScrollController _channelScrollController = ScrollController();
+  final ScrollController _programmeScrollController = ScrollController();
+  Timer? _loadChannelDebounce;
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    _loadChannelDebounce?.cancel();
+    _channelScrollController.dispose();
+    _programmeScrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TvGuideLayout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final channel = widget.selectedChannel;
+    if (channel != null &&
+        oldWidget.selectedChannel?.id != channel.id) {
+      _loadChannelDebounce?.cancel();
+      _loadChannelDebounce = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        widget.onLoadChannel(channel);
+      });
+    }
+    if (channel == null) return;
+    final programmes = _dayProgrammes(channel);
+    final liveIndex = _guideLiveProgrammeIndex(programmes, widget.selectedDayOffset);
+    final targetIndex = programmes.isEmpty
+        ? 0
+        : (liveIndex >= 0
+            ? liveIndex
+            : (widget.selectedProgrammeIndex ?? 0)
+                .clamp(0, programmes.length - 1));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_programmeScrollController.hasClients) return;
+      if (programmes.isEmpty) return;
+      final offset = (targetIndex * 118.0).clamp(
+        0.0,
+        _programmeScrollController.position.maxScrollExtent,
+      );
+      _programmeScrollController.jumpTo(offset);
+    });
+    if (oldWidget.selectedChannel?.id != channel.id ||
+        oldWidget.tvSelectedIndex != widget.tvSelectedIndex) {
+      final channelIndex = widget.channels.indexWhere((item) => item.id == channel.id);
+      if (channelIndex >= 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_channelScrollController.hasClients) return;
+          final offset = (channelIndex * 58.0).clamp(
+            0.0,
+            _channelScrollController.position.maxScrollExtent,
+          );
+          _channelScrollController.jumpTo(offset);
+        });
+      }
+    }
+  }
+
+  List<EpgProgramme> _dayProgrammes(LiveChannel channel) {
+    final source = widget.epgByChannel[channel.id] ?? const [];
+    final dayStart = _guideDayStart(widget.selectedDayOffset);
+    final dayEnd = _guideDayEnd(dayStart);
+    return _programmesForGuideDay(source, dayStart, dayEnd);
+  }
+
+  void _handleProgrammeTap(LiveChannel channel, EpgProgramme programme) {
+    final now = DateTime.now();
+    final end = programme.end;
+    final start = programme.start;
+    final isPast = end != null && !end.isAfter(now);
+    final canReplay = widget.canReplayProgramme(channel, programme);
+    if (isPast && canReplay) {
+      widget.onWatchProgramme(channel, programme);
+      return;
+    }
+    if (start != null && !start.isAfter(now)) {
+      widget.onWatchProgramme(channel, programme);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final channel = widget.selectedChannel;
+    final lookbackDays = _guideDefaultLookbackDays;
+    final dayStart = _guideDayStart(widget.selectedDayOffset);
+    final dayEnd = _guideDayEnd(dayStart);
+    final channelProgrammes = channel == null
+        ? const <EpgProgramme>[]
+        : (widget.epgByChannel[channel.id] ?? const []);
+    final dayProgrammes = channel == null
+        ? const <EpgProgramme>[]
+        : _programmesForGuideDay(channelProgrammes, dayStart, dayEnd);
+    final liveIndex =
+        _guideLiveProgrammeIndex(dayProgrammes, widget.selectedDayOffset);
+    final channelLoading = channel != null &&
+        channelProgrammes.isEmpty &&
+        widget.loading;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 24, 16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(28, 8, 28, 16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _ToolbarSelect<String>(
-                    label: 'Categoria',
-                    value:
-                        [
-                          '',
-                          ...categories.map((item) => item.id),
-                        ].contains(selectedCategoryId)
-                        ? selectedCategoryId
-                        : '',
-                    items: ['', ...categories.map((item) => item.id)],
-                    itemLabel: categoryName,
-                    onChanged: onCategoryChanged,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: onRefresh,
-                  icon: const Icon(Icons.refresh),
+          Row(
+            children: [
+              const Text(
+                'Guida TV',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '${widget.channels.length} canali',
+                style: const TextStyle(color: LelegColors.muted, fontSize: 14),
+              ),
+              const Spacer(),
+              if (widget.loading)
+                const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 10),
+                    Text(
+                      'Caricamento programmi...',
+                      style: TextStyle(color: LelegColors.accent, fontSize: 13),
+                    ),
+                  ],
+                )
+              else
+                TextButton.icon(
+                  onPressed: widget.onRefresh,
+                  icon: const Icon(Icons.refresh, size: 18),
                   label: const Text('Aggiorna'),
                 ),
-              ],
-            ),
+            ],
           ),
+          if (widget.categories.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _QuickCategoryStrip(
+              categories: widget.categories,
+              selectedCategoryId: widget.selectedCategoryId,
+              onCategoryChanged: widget.onCategoryChanged,
+            ),
+          ],
+          const SizedBox(height: 8),
+          _GuideDayStrip(
+            lookbackDays: lookbackDays,
+            selectedDayOffset: widget.selectedDayOffset,
+            onSelect: widget.onDayOffsetChanged,
+          ),
+          const SizedBox(height: 14),
           Expanded(
-            child: channels.isEmpty
+            child: widget.channels.isEmpty
                 ? const _EmptyState(message: 'Nessun canale caricato.')
-                : _EpgGrid(
-                    channels: channels.take(80).toList(),
-                    selectedChannel: selectedChannel,
-                    epgByChannel: epgByChannel,
-                    onSelectChannel: onSelectChannel,
-                    onWatchProgramme: onWatchProgramme,
-                    loading: loading,
-                    selectedIndex: tvSelectedIndex,
-                    selectedProgrammeIndex: selectedProgrammeIndex,
-                    selectedProgramme: selectedProgramme,
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        width: _guideChannelColumnWidth,
+                        child: _GuideChannelColumn(
+                          controller: _channelScrollController,
+                          channels: widget.channels,
+                          selectedChannel: channel,
+                          selectedIndex: widget.tvSelectedIndex,
+                          onSelect: widget.onSelectChannel,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: _GuideProgrammeColumn(
+                          controller: _programmeScrollController,
+                          channel: channel,
+                          programmes: dayProgrammes,
+                          dayStart: dayStart,
+                          liveProgrammeIndex: liveIndex,
+                          selectedDayOffset: widget.selectedDayOffset,
+                          selectedProgrammeIndex: widget.selectedProgrammeIndex,
+                          selectedProgramme: widget.selectedProgramme,
+                          isLoading: channelLoading,
+                          canReplayProgramme: widget.canReplayProgramme,
+                          onProgrammeTap: _handleProgrammeTap,
+                          onRetry: widget.onRefresh,
+                        ),
+                      ),
+                    ],
                   ),
           ),
         ],
@@ -8688,650 +9212,451 @@ class EpgScreen extends StatelessWidget {
   }
 }
 
-class _EpgGrid extends StatefulWidget {
-  const _EpgGrid({
-    required this.channels,
-    required this.selectedChannel,
-    required this.epgByChannel,
-    required this.onSelectChannel,
-    required this.onWatchProgramme,
-    required this.loading,
-    required this.selectedIndex,
-    required this.selectedProgrammeIndex,
-    required this.selectedProgramme,
+class _GuideDayStrip extends StatelessWidget {
+  const _GuideDayStrip({
+    required this.lookbackDays,
+    required this.selectedDayOffset,
+    required this.onSelect,
   });
 
-  final List<LiveChannel> channels;
-  final LiveChannel? selectedChannel;
-  final Map<int, List<EpgProgramme>> epgByChannel;
-  final ValueChanged<LiveChannel> onSelectChannel;
-  final void Function(LiveChannel channel, EpgProgramme programme)
-  onWatchProgramme;
-  final bool loading;
-  final int? selectedIndex;
-  final int? selectedProgrammeIndex;
-  final EpgProgramme? selectedProgramme;
-
-  @override
-  State<_EpgGrid> createState() => _EpgGridState();
-}
-
-class _EpgGridState extends State<_EpgGrid> {
-  late DateTime _viewStart;
-
-  @override
-  void initState() {
-    super.initState();
-    _viewStart = _defaultViewStart();
-  }
+  final int lookbackDays;
+  final int selectedDayOffset;
+  final ValueChanged<int> onSelect;
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        const horizontalPadding = 56.0;
-        final available = (constraints.maxWidth - horizontalPadding)
-            .clamp(760.0, double.infinity)
-            .toDouble();
-        final channelWidth = (available * 0.24).clamp(210.0, 300.0).toDouble();
-        const visibleHours = 8;
-        final hourWidth = (available - channelWidth) / visibleHours;
-        return Column(
+    final offsets = [
+      for (var offset = -lookbackDays; offset <= 1; offset++) offset,
+    ];
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: LelegColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: LelegColors.line),
+      ),
+      child: SizedBox(
+        height: 58,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          scrollDirection: Axis.horizontal,
+          itemCount: offsets.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final offset = offsets[index];
+            final selected = offset == selectedDayOffset;
+            final width = offset >= -1 && offset <= 1 ? 96.0 : 78.0;
+            return SizedBox(
+              width: width,
+              child: _CategoryChipButton(
+                label: _formatGuideDayTab(offset),
+                selected: selected,
+                onTap: () => onSelect(offset),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _GuideChannelColumn extends StatelessWidget {
+  const _GuideChannelColumn({
+    required this.controller,
+    required this.channels,
+    required this.selectedChannel,
+    required this.selectedIndex,
+    required this.onSelect,
+  });
+
+  final ScrollController controller;
+  final List<LiveChannel> channels;
+  final LiveChannel? selectedChannel;
+  final int? selectedIndex;
+  final ValueChanged<LiveChannel> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: LelegColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: LelegColors.line),
+      ),
+      child: ListView.separated(
+        controller: controller,
+        padding: const EdgeInsets.all(8),
+        itemCount: channels.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 6),
+        itemBuilder: (context, index) {
+          final channel = channels[index];
+          final selected = selectedChannel?.id == channel.id;
+          final highlighted = selectedIndex == index;
+          return Material(
+            color: selected || highlighted
+                ? LelegColors.accent.withValues(alpha: 0.14)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => onSelect(channel),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: selected || highlighted
+                        ? LelegColors.accent.withValues(alpha: 0.75)
+                        : Colors.transparent,
+                    width: selected || highlighted ? 1.5 : 1,
+                  ),
+                ),
+                child: Text(
+                  channel.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: selected || highlighted
+                        ? LelegColors.fg
+                        : LelegColors.muted,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _GuideProgrammeColumn extends StatelessWidget {
+  const _GuideProgrammeColumn({
+    required this.controller,
+    required this.channel,
+    required this.programmes,
+    required this.dayStart,
+    required this.liveProgrammeIndex,
+    required this.selectedDayOffset,
+    required this.selectedProgrammeIndex,
+    required this.selectedProgramme,
+    required this.isLoading,
+    required this.canReplayProgramme,
+    required this.onProgrammeTap,
+    required this.onRetry,
+  });
+
+  final ScrollController controller;
+  final LiveChannel? channel;
+  final List<EpgProgramme> programmes;
+  final DateTime dayStart;
+  final int liveProgrammeIndex;
+  final int selectedDayOffset;
+  final int? selectedProgrammeIndex;
+  final EpgProgramme? selectedProgramme;
+  final bool isLoading;
+  final bool Function(LiveChannel channel, EpgProgramme programme)
+      canReplayProgramme;
+  final void Function(LiveChannel channel, EpgProgramme programme)
+      onProgrammeTap;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (channel == null) {
+      return const Center(
+        child: Text(
+          'Seleziona un canale',
+          style: TextStyle(color: LelegColors.muted, fontSize: 16),
+        ),
+      );
+    }
+    final activeChannel = channel!;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(28, 0, 28, 8),
-              child: Row(
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: () => _shiftWindow(-4),
-                    icon: const Icon(Icons.chevron_left),
-                    label: const Text('4h'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: () =>
-                        setState(() => _viewStart = _defaultViewStart()),
-                    child: const Text('Ora'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _shiftWindow(4),
-                    icon: const Icon(Icons.chevron_right),
-                    label: const Text('4h'),
-                  ),
-                  const SizedBox(width: 16),
                   Text(
-                    _windowLabel(visibleHours),
+                    activeChannel.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: LelegColors.muted,
-                      fontWeight: FontWeight.w800,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    _formatGuideDayLabel(dayStart),
+                    style: const TextStyle(
+                      color: LelegColors.accent,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(28, 0, 28, 8),
-              child: _EpgTimelineHeader(
-                viewStart: _viewStart,
-                channelWidth: channelWidth,
-                hourWidth: hourWidth,
-                visibleHours: visibleHours,
-              ),
-            ),
-            Expanded(
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(28, 0, 28, 28),
-                itemCount: widget.channels.length + (widget.loading ? 1 : 0),
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (_, index) {
-                  if (widget.loading && index == 0) {
-                    return const _LoadingBand(
-                      status: 'Caricamento guida TV...',
-                    );
-                  }
-                  final channel =
-                      widget.channels[index - (widget.loading ? 1 : 0)];
-                  final channelIndex = index - (widget.loading ? 1 : 0);
-                  return _EpgTimelineRow(
-                    channel: channel,
-                    programmes:
-                        widget.epgByChannel[channel.id] ??
-                        const <EpgProgramme>[],
-                    active:
-                        widget.selectedChannel?.id == channel.id ||
-                        widget.selectedIndex == channelIndex,
-                    selectedProgrammeIndex: widget.selectedIndex == channelIndex
-                        ? widget.selectedProgrammeIndex
-                        : null,
-                    selectedProgramme: widget.selectedIndex == channelIndex
-                        ? widget.selectedProgramme
-                        : null,
-                    viewStart: _viewStart,
-                    channelWidth: channelWidth,
-                    hourWidth: hourWidth,
-                    visibleHours: visibleHours,
-                    onSelectChannel: widget.onSelectChannel,
-                    onWatchProgramme: widget.onWatchProgramme,
-                  );
-                },
-              ),
+            Text(
+              '${programmes.length} programmi',
+              style: const TextStyle(color: LelegColors.muted, fontSize: 13),
             ),
           ],
-        );
-      },
-    );
-  }
-
-  DateTime _defaultViewStart() {
-    return DateTime.now()
-        .subtract(const Duration(hours: 2))
-        .copyWith(minute: 0, second: 0, millisecond: 0, microsecond: 0);
-  }
-
-  void _shiftWindow(int hours) {
-    setState(() => _viewStart = _viewStart.add(Duration(hours: hours)));
-  }
-
-  String _windowLabel(int visibleHours) {
-    String fmt(DateTime value) => '${value.hour.toString().padLeft(2, '0')}:00';
-    final end = _viewStart.add(Duration(hours: visibleHours));
-    return '${fmt(_viewStart)} - ${fmt(end)}';
-  }
-}
-
-class _EpgTimelineHeader extends StatelessWidget {
-  const _EpgTimelineHeader({
-    required this.viewStart,
-    required this.channelWidth,
-    required this.hourWidth,
-    required this.visibleHours,
-  });
-
-  final DateTime viewStart;
-  final double channelWidth;
-  final double hourWidth;
-  final int visibleHours;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 38,
-      decoration: BoxDecoration(
-        color: LelegColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: LelegColors.line),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: channelWidth,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 14),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Canale',
-                  style: TextStyle(
-                    color: LelegColors.muted,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const VerticalDivider(width: 1, color: LelegColors.line),
-          SizedBox(
-            width: hourWidth * visibleHours,
-            child: Row(
-              children: [
-                for (var i = 0; i < visibleHours; i++)
-                  SizedBox(
-                    width: hourWidth,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 10),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          _formatHour(viewStart.add(Duration(hours: i))),
-                          style: const TextStyle(
-                            color: LelegColors.muted,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  String _formatHour(DateTime value) {
-    return '${value.hour.toString().padLeft(2, '0')}:00';
-  }
-}
-
-class _EpgTimelineRow extends StatelessWidget {
-  const _EpgTimelineRow({
-    required this.channel,
-    required this.programmes,
-    required this.active,
-    required this.selectedProgrammeIndex,
-    required this.selectedProgramme,
-    required this.viewStart,
-    required this.channelWidth,
-    required this.hourWidth,
-    required this.visibleHours,
-    required this.onSelectChannel,
-    required this.onWatchProgramme,
-  });
-
-  static const double rowHeight = 96;
-
-  final LiveChannel channel;
-  final List<EpgProgramme> programmes;
-  final bool active;
-  final int? selectedProgrammeIndex;
-  final EpgProgramme? selectedProgramme;
-  final DateTime viewStart;
-  final double channelWidth;
-  final double hourWidth;
-  final int visibleHours;
-  final ValueChanged<LiveChannel> onSelectChannel;
-  final void Function(LiveChannel channel, EpgProgramme programme)
-  onWatchProgramme;
-
-  @override
-  Widget build(BuildContext context) {
-    final visibleEnd = viewStart.add(Duration(hours: visibleHours));
-    final visibleProgrammes = _withoutVisualOverlaps(
-      programmes.where((programme) {
-        final start = programme.start;
-        final end = programme.end;
-        final title = _cleanTitle(programme.title);
-        if (title.isEmpty) return false;
-        final duration = end == null || start == null
-            ? Duration.zero
-            : end.difference(start);
-        final isImportant =
-            _isLive(programme) || _canReplay(channel, programme);
-        if (start == null || end == null) return false;
-        final visibleStart = start.isBefore(viewStart) ? viewStart : start;
-        final visibleStop = end.isAfter(visibleEnd) ? visibleEnd : end;
-        final visibleMinutes = visibleStop.difference(visibleStart).inMinutes;
-        final visibleWidth = (visibleMinutes / 60) * hourWidth;
-        return (duration.inMinutes >= 8 || isImportant) &&
-            (visibleWidth >= 54 || isImportant) &&
-            end.isAfter(viewStart) &&
-            start.isBefore(visibleEnd);
-      }).toList(),
-    );
-    return Container(
-      height: rowHeight,
-      decoration: BoxDecoration(
-        color: active ? LelegColors.surface3 : LelegColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: active
-              ? LelegColors.accent.withValues(alpha: 0.65)
-              : LelegColors.line,
         ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Row(
-        children: [
-          InkWell(
-            onTap: () => onSelectChannel(channel),
-            child: SizedBox(
-              width: channelWidth,
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    _Logo(url: channel.logo, fallback: Icons.live_tv),
-                    const SizedBox(width: 12),
-                    Expanded(
+        const SizedBox(height: 10),
+        Expanded(
+          child: isLoading && programmes.isEmpty
+              ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+              : programmes.isEmpty
+                  ? Center(
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            channel.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w900),
-                          ),
-                          if (channel.hasCatchup)
-                            const Text(
-                              'Archivio disponibile',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: LelegColors.accent,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                              ),
+                            'Nessun programma per ${_formatGuideDayLabel(dayStart)}',
+                            style: const TextStyle(
+                              color: LelegColors.muted,
+                              fontSize: 16,
                             ),
+                          ),
+                          const SizedBox(height: 14),
+                          OutlinedButton(
+                            onPressed: onRetry,
+                            child: const Text('Riprova'),
+                          ),
                         ],
                       ),
+                    )
+                  : ListView.separated(
+                      controller: controller,
+                      padding: const EdgeInsets.only(bottom: 24),
+                      itemCount: programmes.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) {
+                        final programme = programmes[index];
+                        final isCurrentLive = selectedDayOffset == 0 &&
+                            liveProgrammeIndex >= 0 &&
+                            index == liveProgrammeIndex;
+                        final selected = selectedProgrammeIndex != null &&
+                            selectedProgrammeIndex == index;
+                        return Column(
+                          children: [
+                            if (isCurrentLive) const _GuideLiveMarker(),
+                            _GuideProgrammeCard(
+                              channel: activeChannel,
+                              programme: programme,
+                              selected: selected,
+                              isCurrentLive: isCurrentLive,
+                              canReplay:
+                                  canReplayProgramme(activeChannel, programme),
+                              onTap: () =>
+                                  onProgrammeTap(activeChannel, programme),
+                            ),
+                          ],
+                        );
+                      },
                     ),
-                  ],
-                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GuideLiveMarker extends StatelessWidget {
+  const _GuideLiveMarker();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(color: LelegColors.line, height: 1)),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              '▶  IN ONDA ADESSO',
+              style: TextStyle(
+                color: LelegColors.accent,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
               ),
             ),
           ),
-          const VerticalDivider(width: 1, color: LelegColors.line),
-          SizedBox(
-            width: hourWidth * visibleHours,
-            height: rowHeight,
-            child: Stack(
-              children: [
-                for (var i = 1; i <= visibleHours * 2; i++)
-                  Positioned(
-                    left: (i * 30 * hourWidth) / 60,
-                    top: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 1,
-                      color: LelegColors.line.withValues(
-                        alpha: i.isEven ? 0.8 : 0.35,
-                      ),
-                    ),
-                  ),
-                if (visibleProgrammes.isEmpty)
-                  const Positioned.fill(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Padding(
-                        padding: EdgeInsets.all(14),
-                        child: Text(
-                          'Nessun programma in questa finestra.',
-                          style: TextStyle(color: LelegColors.muted),
-                        ),
-                      ),
-                    ),
-                  ),
-                for (var i = 0; i < visibleProgrammes.length; i++)
-                  _TimelineProgrammeCell(
-                    channel: channel,
-                    programme: visibleProgrammes[i],
-                    selected:
-                        active &&
-                        (_sameProgramme(
-                              visibleProgrammes[i],
-                              selectedProgramme,
-                            ) ||
-                            selectedProgrammeIndex == i),
-                    viewStart: viewStart,
-                    hourWidth: hourWidth,
-                    visibleHours: visibleHours,
-                    onWatch: onWatchProgramme,
-                  ),
-                _NowLine(
-                  viewStart: viewStart,
-                  hourWidth: hourWidth,
-                  visibleHours: visibleHours,
-                ),
-              ],
-            ),
-          ),
+          const Expanded(child: Divider(color: LelegColors.line, height: 1)),
         ],
       ),
     );
   }
-
-  List<EpgProgramme> _withoutVisualOverlaps(List<EpgProgramme> source) {
-    final sorted = [...source]..sort((a, b) => a.start!.compareTo(b.start!));
-    final result = <EpgProgramme>[];
-    DateTime? lastEnd;
-    for (final programme in sorted) {
-      final start = programme.start!;
-      final end = programme.end!;
-      if (lastEnd != null && start.isBefore(lastEnd)) {
-        final previous = result.isEmpty ? null : result.last;
-        final previousEnd = previous?.end;
-        if (previous != null &&
-            previousEnd != null &&
-            end.difference(start) > previousEnd.difference(previous.start!)) {
-          result[result.length - 1] = programme;
-          lastEnd = end;
-        }
-        continue;
-      }
-      result.add(programme);
-      lastEnd = end;
-    }
-    return result;
-  }
-
-  bool _sameProgramme(EpgProgramme programme, EpgProgramme? selected) {
-    if (selected == null) return false;
-    return programme.title == selected.title &&
-        programme.start == selected.start &&
-        programme.end == selected.end;
-  }
-
-  String _cleanTitle(String value) {
-    final title = value.trim();
-    if (title.isEmpty) return '';
-    final normalized = title.replaceAll(RegExp(r'[\s.·-]+'), '');
-    if (normalized.length < 2) return '';
-    return title;
-  }
-
-  bool _isLive(EpgProgramme programme) {
-    final now = DateTime.now();
-    final start = programme.start;
-    final end = programme.end;
-    return start != null &&
-        end != null &&
-        start.isBefore(now) &&
-        end.isAfter(now);
-  }
-
-  bool _canReplay(LiveChannel channel, EpgProgramme programme) {
-    final now = DateTime.now();
-    final start = programme.start;
-    final end = programme.end;
-    if (!channel.hasCatchup || start == null || end == null) return false;
-    if (end.isAfter(now) || !end.isAfter(start)) return false;
-    final days = channel.catchupDays > 0 ? channel.catchupDays : 7;
-    return start.isAfter(now.subtract(Duration(days: days)));
-  }
 }
 
-class _TimelineProgrammeCell extends StatelessWidget {
-  const _TimelineProgrammeCell({
+class _GuideProgrammeCard extends StatelessWidget {
+  const _GuideProgrammeCard({
     required this.channel,
     required this.programme,
     required this.selected,
-    required this.viewStart,
-    required this.hourWidth,
-    required this.visibleHours,
-    required this.onWatch,
+    required this.isCurrentLive,
+    required this.canReplay,
+    required this.onTap,
   });
 
   final LiveChannel channel;
   final EpgProgramme programme;
   final bool selected;
-  final DateTime viewStart;
-  final double hourWidth;
-  final int visibleHours;
-  final void Function(LiveChannel channel, EpgProgramme programme) onWatch;
+  final bool isCurrentLive;
+  final bool canReplay;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final start = programme.start!;
-    final end = programme.end!;
-    final viewEnd = viewStart.add(Duration(hours: visibleHours));
-    final left = _offsetFor(start.isBefore(viewStart) ? viewStart : start);
-    final right = _offsetFor(end.isAfter(viewEnd) ? viewEnd : end);
-    final width = (right - left)
-        .clamp(44.0, hourWidth * visibleHours)
-        .toDouble();
-    final live = _isLive(programme);
-    final replayable = _canReplay(channel, programme);
-    final color = live || replayable
-        ? LelegColors.accent.withValues(alpha: 0.18)
-        : LelegColors.bg;
-    final borderColor = selected
-        ? Colors.white.withValues(alpha: 0.92)
-        : live || replayable
-        ? LelegColors.accent.withValues(alpha: 0.55)
-        : LelegColors.line;
-    return Positioned(
-      left: left,
-      top: 8,
-      width: width,
-      height: _EpgTimelineRow.rowHeight - 18,
-      child: Tooltip(
-        richMessage: WidgetSpan(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  programme.title.trim(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _timeRange(programme),
-                  style: const TextStyle(color: LelegColors.accent),
-                ),
-                if (programme.description.trim().isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    programme.description.trim(),
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: LelegColors.muted),
-                  ),
-                ],
-              ],
+    final now = DateTime.now();
+    final start = programme.start;
+    final end = programme.end;
+    final isPast = end != null && !end.isAfter(now);
+    final durationMin = start != null && end != null
+        ? end.difference(start).inMinutes.clamp(1, 9999)
+        : 0;
+    final eyebrow = StringBuffer()
+      ..write(_formatGuideClock(start))
+      ..write(' - ')
+      ..write(_formatGuideClock(end));
+    if (isCurrentLive) {
+      eyebrow.write('  •  LIVE');
+    } else if (isPast && canReplay) {
+      eyebrow.write('  •  ARCHIVIO');
+    } else if (isPast) {
+      eyebrow.write('  •  TERMINATO');
+    }
+
+    return Material(
+      color: isCurrentLive
+          ? LelegColors.accent.withValues(alpha: 0.12)
+          : LelegColors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: (isCurrentLive || canReplay) ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected || isCurrentLive
+                  ? LelegColors.accent.withValues(alpha: 0.85)
+                  : LelegColors.line,
+              width: selected || isCurrentLive ? 1.5 : 1,
             ),
           ),
-        ),
-        waitDuration: const Duration(milliseconds: 250),
-        child: Material(
-          color: color,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: live || replayable
-                ? () => onWatch(channel, programme)
-                : null,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: borderColor, width: selected ? 2 : 1),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    [
-                      if (live) 'LIVE',
-                      if (!live && replayable) 'REC',
-                      _timeRange(programme),
-                    ].join('  '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: live || replayable
-                          ? LelegColors.accent
-                          : LelegColors.muted,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _GuideChannelLogo(channel: channel),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      eyebrow.toString(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isCurrentLive || canReplay
+                            ? LelegColors.accent
+                            : LelegColors.muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    programme.title.trim(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
+                    const SizedBox(height: 4),
+                    Text(
+                      programme.title.trim().isEmpty
+                          ? 'Programma senza titolo'
+                          : programme.title.trim(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                  ),
-                ],
+                    if (programme.description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        programme.description.trim(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: LelegColors.muted,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-            ),
+              const SizedBox(width: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: LelegColors.surface2,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: LelegColors.line),
+                ),
+                child: Text(
+                  '$durationMin min',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: LelegColors.muted,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
-
-  double _offsetFor(DateTime value) {
-    final minutes = value.difference(viewStart).inMinutes;
-    return (minutes / 60) * hourWidth;
-  }
-
-  String _timeRange(EpgProgramme programme) {
-    String format(DateTime? value) {
-      if (value == null) return '--:--';
-      return '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
-    }
-
-    return '${format(programme.start)} - ${format(programme.end)}';
-  }
-
-  bool _isLive(EpgProgramme programme) {
-    final now = DateTime.now();
-    final start = programme.start;
-    final end = programme.end;
-    return start != null &&
-        end != null &&
-        start.isBefore(now) &&
-        end.isAfter(now);
-  }
-
-  bool _canReplay(LiveChannel channel, EpgProgramme programme) {
-    final now = DateTime.now();
-    final start = programme.start;
-    final end = programme.end;
-    if (!channel.hasCatchup || start == null || end == null) return false;
-    if (end.isAfter(now) || !end.isAfter(start)) return false;
-    final days = channel.catchupDays > 0 ? channel.catchupDays : 7;
-    return start.isAfter(now.subtract(Duration(days: days)));
-  }
 }
 
-class _NowLine extends StatelessWidget {
-  const _NowLine({
-    required this.viewStart,
-    required this.hourWidth,
-    required this.visibleHours,
-  });
+class _GuideChannelLogo extends StatelessWidget {
+  const _GuideChannelLogo({required this.channel});
 
-  final DateTime viewStart;
-  final double hourWidth;
-  final int visibleHours;
+  final LiveChannel channel;
 
   @override
   Widget build(BuildContext context) {
-    final minutes = DateTime.now().difference(viewStart).inMinutes;
-    final left = (minutes / 60) * hourWidth;
-    if (left < 0 || left > hourWidth * visibleHours) {
-      return const SizedBox.shrink();
-    }
-    return Positioned(
-      left: left,
-      top: 0,
-      bottom: 0,
-      child: Container(width: 2, color: LelegColors.accent),
+    final logo = channel.logo.trim();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 72,
+        height: 48,
+        color: LelegColors.surface2,
+        child: logo.isEmpty
+            ? const Icon(Icons.live_tv, color: LelegColors.muted, size: 22)
+            : Image.network(
+                logo,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.live_tv,
+                  color: LelegColors.muted,
+                  size: 22,
+                ),
+              ),
+      ),
     );
   }
 }
@@ -10222,10 +10547,17 @@ class _PlayerCardState extends State<PlayerCard> {
   bool _showControls = false;
   Timer? _hideControlsTimer;
 
-  bool get _pinControlsInFocusMode {
-    if (!widget.focusMode) return false;
-    if (widget.pinControlsOnFocus) return true;
-    return !(Platform.isAndroid || Platform.isIOS);
+  bool get _pinControlsInFocusMode =>
+      widget.focusMode && widget.pinControlsOnFocus;
+
+  @override
+  void didUpdateWidget(PlayerCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.focusMode &&
+        !oldWidget.focusMode &&
+        !widget.pinControlsOnFocus) {
+      _revealControls();
+    }
   }
 
   @override
@@ -10239,11 +10571,17 @@ class _PlayerCardState extends State<PlayerCard> {
     if (!_showControls && mounted) {
       setState(() => _showControls = true);
     }
-    _hideControlsTimer = Timer(const Duration(milliseconds: 1100), () {
-      if (mounted && !_pinControlsInFocusMode) {
-        setState(() => _showControls = false);
-      }
-    });
+    _hideControlsTimer = Timer(
+      Duration(
+        milliseconds:
+            widget.focusMode && !widget.pinControlsOnFocus ? 3000 : 1100,
+      ),
+      () {
+        if (mounted && !_pinControlsInFocusMode) {
+          setState(() => _showControls = false);
+        }
+      },
+    );
   }
 
   void _hideControls() {
@@ -10358,7 +10696,9 @@ class _PlayerCardState extends State<PlayerCard> {
       onDoubleTap: widget.onToggleFocusMode,
       child: MouseRegion(
         onEnter: (_) => _revealControls(),
-        onHover: (_) => _revealControls(),
+        onHover: widget.focusMode && !widget.pinControlsOnFocus
+            ? null
+            : (_) => _revealControls(),
         onExit: (_) => _hideControls(),
         child: widget.focusMode
             ? playerBody
@@ -12801,7 +13141,6 @@ class _FullscreenLiveOverlayState extends State<_FullscreenLiveOverlay> {
   Widget build(BuildContext context) {
     final currentChannel = widget.channel;
     final ordered = _orderedProgrammes(currentChannel);
-    final liveProgramme = _firstWhereOrNull(ordered, _isLive);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.78),
@@ -12816,56 +13155,11 @@ class _FullscreenLiveOverlayState extends State<_FullscreenLiveOverlay> {
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                IconButton.filledTonal(
-                  tooltip: 'Canale precedente',
-                  onPressed: widget.onPreviousChannel,
-                  icon: const Icon(Icons.keyboard_arrow_up),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        currentChannel?.name ?? 'Live TV',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        liveProgramme == null
-                            ? 'Su/Giu canale · Sin/Des guida · OK riproduci'
-                            : '${_timeRange(liveProgramme)}  ${liveProgramme.title}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: LelegColors.muted,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                IconButton.filledTonal(
-                  tooltip: 'Canale successivo',
-                  onPressed: widget.onNextChannel,
-                  icon: const Icon(Icons.keyboard_arrow_down),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
             if (widget.loading)
               const LinearProgressIndicator(minHeight: 3)
             else if (currentChannel == null || ordered.isEmpty)
@@ -12934,16 +13228,6 @@ class _FullscreenLiveOverlayState extends State<_FullscreenLiveOverlay> {
     if (liveIndex < 0) return items.take(12).toList();
     final start = (liveIndex - 4).clamp(0, items.length - 12).toInt();
     return items.skip(start).take(12).toList();
-  }
-
-  EpgProgramme? _firstWhereOrNull(
-    List<EpgProgramme> source,
-    bool Function(EpgProgramme programme) test,
-  ) {
-    for (final programme in source) {
-      if (test(programme)) return programme;
-    }
-    return null;
   }
 
   bool _isLive(EpgProgramme programme) {
@@ -13111,16 +13395,18 @@ class _EpgProgrammeListState extends State<_EpgProgrammeList> {
       );
     }
     final orderedProgrammes = widget.programmes;
+    final liveIndex = _epgLiveOrNextIndex(orderedProgrammes);
     return ListView.separated(
       controller: _controller,
       itemCount: orderedProgrammes.length,
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (_, index) {
         final programme = orderedProgrammes[index];
-        final live = _isLive(programme);
+        final highlight =
+            index == liveIndex && _epgIsLiveNow(programme);
         return KeyedSubtree(
-          key: live ? _liveTileKey : null,
-          child: _programmeTile(programme, highlight: live),
+          key: highlight ? _liveTileKey : null,
+          child: _programmeTile(programme, highlight: highlight),
         );
       },
     );

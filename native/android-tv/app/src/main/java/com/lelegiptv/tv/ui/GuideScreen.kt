@@ -108,8 +108,8 @@ fun GuideScreen(
     val lookbackDays = remember(selectedChannel) {
         selectedChannel?.let { channel ->
             when {
-                channel.catchupDays > 0 -> channel.catchupDays.coerceAtMost(14)
-                channel.hasCatchup -> DefaultLookbackDays
+                channel.catchupDays > DefaultLookbackDays ->
+                    channel.catchupDays.coerceAtMost(14)
                 else -> DefaultLookbackDays
             }
         } ?: DefaultLookbackDays

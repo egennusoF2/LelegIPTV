@@ -86,6 +86,18 @@ class XtreamClient {
   final XtreamProfile profile;
   final http.Client _http;
 
+  static String? _xmlTvProfileKey;
+  static String? _xmlTvBody;
+  static Map<String, List<EpgProgramme>>? _xmlTvProgrammeIndex;
+  static String? _xmlTvIndexKey;
+
+  static void clearXmlTvCache() {
+    _xmlTvProfileKey = null;
+    _xmlTvBody = null;
+    _xmlTvProgrammeIndex = null;
+    _xmlTvIndexKey = null;
+  }
+
   Map<String, String> get _headers => {
     'Accept': 'application/json,text/plain,*/*',
     'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
@@ -166,6 +178,31 @@ class XtreamClient {
       }),
       timeout: const Duration(seconds: 45),
     );
+    return _parseEpgListings(json);
+  }
+
+  /// Full EPG table for a channel (includes previous days when available).
+  Future<List<EpgProgramme>> simpleEpg(LiveChannel channel) async {
+    for (final action in const [
+      'get_simple_data_table',
+      'get_simple_date_table',
+    ]) {
+      try {
+        final json = await _getJson(
+          action,
+          apiUri(action, {'stream_id': channel.id.toString()}),
+          timeout: const Duration(seconds: 45),
+        );
+        final programmes = _parseEpgListings(json);
+        if (programmes.isNotEmpty) return programmes;
+      } catch (_) {
+        // Try the next provider action.
+      }
+    }
+    return const [];
+  }
+
+  List<EpgProgramme> _parseEpgListings(dynamic json) {
     final map = json is Map ? json : const {};
     final raw =
         map['epg_listings'] ??
@@ -187,18 +224,11 @@ class XtreamClient {
   Future<Map<int, List<EpgProgramme>>> xmlTvEpgForChannels(
     List<LiveChannel> channels, {
     int limit = 16,
+    int lookbackDays = 7,
   }) async {
     if (channels.isEmpty) return const {};
-    final body = await _getText(
-      'xmltv',
-      Uri.parse('${profile.baseUrl}/xmltv.php').replace(
-        queryParameters: {
-          'username': profile.username,
-          'password': profile.password,
-        },
-      ),
-      timeout: const Duration(seconds: 120),
-    );
+    final body = await _loadXmlTvBody();
+    if (body.isEmpty) return const {};
     // ignore: avoid_print
     print('[leleg:epg] xmltv bytes=${body.length} channels=${channels.length}');
     final document = XmlDocument.parse(body);
@@ -234,31 +264,21 @@ class XtreamClient {
     for (final entry in keysByChannelId.entries) {
       channelIdByKey.putIfAbsent(entry.value, () => entry.key);
     }
-    final byKey = <String, List<EpgProgramme>>{};
-    for (final node in document.findAllElements('programme')) {
-      final key = node.getAttribute('channel')?.trim().toLowerCase() ?? '';
-      if (!wantedKeys.contains(key)) continue;
-      final programme = EpgProgramme.fromXml(node);
-      if (programme.title.isEmpty) continue;
-      final end = programme.end;
-      final channelId = channelIdByKey[key];
-      final channel = channelId == null ? null : channelById[channelId];
-      if (end != null &&
-          end.isBefore(now.subtract(const Duration(minutes: 30))) &&
-          !_canReplayProgramme(channel, programme, now)) {
-        continue;
-      }
-      byKey.putIfAbsent(key, () => []).add(programme);
-    }
+    final byKey = _xmlTvProgrammeIndexFor(body);
 
     final result = <int, List<EpgProgramme>>{};
     for (final entry in keysByChannelId.entries) {
       final channel = channelById[entry.key];
-      final replayDays = channel == null || channel.catchupDays <= 0
-          ? 1
-          : channel.catchupDays;
-      final lowerBound = now.subtract(Duration(hours: replayDays > 1 ? 24 : 8));
-      final upperBound = now.add(const Duration(hours: 24));
+      final replayDays = switch (channel) {
+        null => lookbackDays,
+        final item when item.catchupDays > 0 =>
+          item.catchupDays > lookbackDays ? item.catchupDays : lookbackDays,
+        final item when item.hasCatchup =>
+          lookbackDays > 7 ? lookbackDays : 7,
+        _ => lookbackDays,
+      };
+      final lowerBound = now.subtract(Duration(days: replayDays));
+      final upperBound = now.add(const Duration(days: 1));
       final programmes =
           (byKey[entry.value] ?? const <EpgProgramme>[]).where((programme) {
             final start = programme.start;
@@ -273,7 +293,9 @@ class XtreamClient {
             if (bStart == null) return -1;
             return aStart.compareTo(bStart);
           });
-      result[entry.key] = programmes.take(limit).toList();
+      if (programmes.isNotEmpty) {
+        result[entry.key] = programmes.take(limit.clamp(1, 500)).toList();
+      }
     }
     final totalProgrammes = result.values.fold<int>(
       0,
@@ -362,20 +384,115 @@ class XtreamClient {
         '${Uri.encodeComponent(profile.password)}/${channel.id}.$ext';
   }
 
-  String? catchupUrl(LiveChannel channel, EpgProgramme programme) {
-    if (!_canReplayProgramme(channel, programme, DateTime.now())) return null;
+  Future<String> _loadXmlTvBody() async {
+    final key = '${profile.baseUrl}|${profile.username}';
+    final cached = _xmlTvBody;
+    if (_xmlTvProfileKey == key && cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+    final body = await _getText(
+      'xmltv',
+      Uri.parse('${profile.baseUrl}/xmltv.php').replace(
+        queryParameters: {
+          'username': profile.username,
+          'password': profile.password,
+        },
+      ),
+      timeout: const Duration(seconds: 120),
+    );
+    _xmlTvProfileKey = key;
+    _xmlTvBody = body;
+    _xmlTvProgrammeIndex = null;
+    _xmlTvIndexKey = null;
+    return body;
+  }
+
+  Map<String, List<EpgProgramme>> _xmlTvProgrammeIndexFor(String body) {
+    final indexKey = '${body.length}:${body.hashCode}';
+    final cached = _xmlTvProgrammeIndex;
+    if (_xmlTvIndexKey == indexKey && cached != null) {
+      return cached;
+    }
+    final document = XmlDocument.parse(body);
+    final byKey = <String, List<EpgProgramme>>{};
+    for (final node in document.findAllElements('programme')) {
+      final key = node.getAttribute('channel')?.trim().toLowerCase() ?? '';
+      if (key.isEmpty) continue;
+      final programme = EpgProgramme.fromXml(node);
+      if (programme.title.isEmpty) continue;
+      byKey.putIfAbsent(key, () => []).add(programme);
+    }
+    _xmlTvIndexKey = indexKey;
+    _xmlTvProgrammeIndex = byKey;
+    return byKey;
+  }
+
+  List<String> catchupUrls(LiveChannel channel, EpgProgramme programme) {
+    if (!_canReplayProgramme(channel, programme, DateTime.now())) {
+      return const [];
+    }
     final start = programme.start;
     final end = programme.end;
-    if (start == null || end == null) return null;
+    if (start == null || end == null) return const [];
+
+    final urls = <String>[];
+    final mode = channel.catchup.trim().toLowerCase();
+    final liveBase = channel.directSource.trim().isNotEmpty
+        ? channel.directSource.trim()
+        : liveUrl(channel);
+
+    if (mode == 'append' ||
+        mode == 'default' ||
+        mode == 'shift' ||
+        mode == 'flussonic' ||
+        (mode.isEmpty && channel.catchupDays > 0)) {
+      final startSec = start.millisecondsSinceEpoch ~/ 1000;
+      final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final separator = liveBase.contains('?') ? '&' : '?';
+      urls.add('$liveBase${separator}utc=$startSec&lutc=$nowSec');
+    }
+
+    if (mode == 'xtream' || channel.catchupDays > 0 || mode.isEmpty) {
+      urls.addAll(_xtreamTimeshiftUrls(channel, programme));
+    }
+
+    return urls.toSet().toList(growable: false);
+  }
+
+  List<String> _xtreamTimeshiftUrls(
+    LiveChannel channel,
+    EpgProgramme programme,
+  ) {
+    final start = programme.start;
+    final end = programme.end;
+    if (start == null || end == null) return const [];
     final durationMinutes = (end.difference(start).inSeconds / 60).ceil();
     final safeDuration = durationMinutes < 1 ? 1 : durationMinutes;
-    final ext = profile.liveContainer == 'ts' ? 'ts' : 'm3u8';
-    return '${profile.baseUrl}/timeshift/'
+    final stamp = _formatXtreamCatchupStart(start);
+    final primary = profile.liveContainer == 'ts' ? 'ts' : 'm3u8';
+    final alternate = primary == 'ts' ? 'm3u8' : 'ts';
+    final user = profile.username;
+    final pass = profile.password;
+    final base =
+        '${profile.baseUrl}/timeshift/$user/$pass/$safeDuration/$stamp/${channel.id}';
+    final encodedBase =
+        '${profile.baseUrl}/timeshift/'
         '${Uri.encodeComponent(profile.username)}/'
         '${Uri.encodeComponent(profile.password)}/'
         '$safeDuration/'
-        '${Uri.encodeComponent(_formatXtreamCatchupStart(start))}/'
-        '${channel.id}.$ext';
+        '${Uri.encodeComponent(stamp)}/'
+        '${Uri.encodeComponent(channel.id.toString())}';
+    return {
+      '$base.$primary',
+      '$base.$alternate',
+      '$encodedBase.$primary',
+      '$encodedBase.$alternate',
+    }.toList(growable: false);
+  }
+
+  String? catchupUrl(LiveChannel channel, EpgProgramme programme) {
+    final urls = catchupUrls(channel, programme);
+    return urls.isEmpty ? null : urls.first;
   }
 
   String vodUrl(VodMovie movie) {
@@ -561,7 +678,10 @@ class XtreamClient {
     final end = programme.end;
     if (start == null || end == null) return false;
     if (end.isAfter(now) || !end.isAfter(start)) return false;
-    final windowDays = channel.catchupDays > 0 ? channel.catchupDays : 7;
+    final windowDays = channel.catchupDays > 0
+        ? channel.catchupDays
+        : (channel.hasCatchup ? 7 : 0);
+    if (windowDays <= 0) return false;
     return start.isAfter(now.subtract(Duration(days: windowDays)));
   }
 
@@ -636,6 +756,7 @@ class LiveChannel {
     required this.tvgId,
     required this.catchup,
     required this.catchupDays,
+    this.directSource = '',
   });
 
   final int id;
@@ -645,6 +766,7 @@ class LiveChannel {
   final String tvgId;
   final String catchup;
   final int catchupDays;
+  final String directSource;
 
   bool get hasCatchup => catchup.isNotEmpty || catchupDays > 0;
 
@@ -658,12 +780,8 @@ class LiveChannel {
             ?.toString() ??
         '',
     catchup: _parseCatchupMode(json),
-    catchupDays:
-        int.tryParse(
-          (json['tv_archive_duration'] ?? json['catchupDays'])?.toString() ??
-              '',
-        ) ??
-        0,
+    catchupDays: _parseCatchupDays(json),
+    directSource: json['direct_source']?.toString() ?? '',
   );
 
   Map<String, dynamic> toJson() => {
@@ -675,6 +793,7 @@ class LiveChannel {
     'catchup': catchup,
     'tv_archive': catchup == 'xtream' ? 1 : 0,
     'tv_archive_duration': catchupDays,
+    'direct_source': directSource,
   };
 
   static String _parseCatchupMode(Map<String, dynamic> json) {
@@ -682,6 +801,15 @@ class LiveChannel {
     if (explicit.isNotEmpty) return explicit;
     final archive = int.tryParse(json['tv_archive']?.toString() ?? '') ?? 0;
     return archive > 0 ? 'xtream' : '';
+  }
+
+  static int _parseCatchupDays(Map<String, dynamic> json) {
+    final explicit = int.tryParse(
+      (json['tv_archive_duration'] ?? json['catchupDays'])?.toString() ?? '',
+    );
+    if (explicit != null && explicit > 0) return explicit;
+    final archive = int.tryParse(json['tv_archive']?.toString() ?? '') ?? 0;
+    return archive > 0 ? 7 : 0;
   }
 }
 
