@@ -164,7 +164,7 @@ fun HomeScreen(
             ) {
                 HubTile(
                     title = "Film",
-                    subtitle = movieCount?.let { "$it titoli nel catalogo." } ?: "Apri il catalogo film.",
+                    subtitle = movieCount?.let { "$it categorie nel catalogo." } ?: "Apri il catalogo film.",
                     icon = TvNavIcons.Movies,
                     onClick = onMovies,
                     compact = hubCompact,
@@ -174,7 +174,7 @@ fun HomeScreen(
                 )
                 HubTile(
                     title = "Serie",
-                    subtitle = seriesCount?.let { "$it serie e stagioni complete." }
+                    subtitle = seriesCount?.let { "$it categorie nel catalogo." }
                         ?: "Apri il catalogo serie.",
                     icon = TvNavIcons.Series,
                     onClick = onSeries,
@@ -250,38 +250,40 @@ fun MovieBrowserScreen(
     state: VodState,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
+    onCategorySelect: (String) -> Unit,
     onMovie: (VodMovie) -> Unit,
 ) {
     when (state) {
-        VodState.Idle, VodState.Loading -> LibraryLoading("Caricamento film...")
         is VodState.Failed -> LibraryError(state.message)
+        VodState.Idle, VodState.Loading -> LibraryLoading("Caricamento categorie film...")
         is VodState.Ready -> {
-            var categoryId by remember { mutableStateOf("") }
+            if (state.categories.isEmpty()) {
+                LibraryError("Nessuna categoria film disponibile")
+            } else if (state.categoryLoading && state.movies.isEmpty()) {
+                LibraryLoading("Caricamento titoli...")
+            } else {
             val categories = remember(state.categories) {
-                listOf("" to "Tutti i film") + state.categories.map { it.id to it.name }
+                state.categories.map { it.id to it.name }
             }
-            val moviesByCategory = remember(state.movies) {
-                state.movies.groupBy(VodMovie::categoryId)
-            }
-            val movies = remember(state.movies, moviesByCategory, categoryId) {
-                if (categoryId.isBlank()) state.movies
-                else moviesByCategory[categoryId].orEmpty()
+            val selectedCategory = state.selectedCategoryId.ifBlank {
+                state.categories.firstOrNull()?.id.orEmpty()
             }
             LibraryBrowser(
                 title = "Film",
-                countLabel = "${movies.size} di ${state.movies.size} titoli",
+                countLabel = "${state.movies.size} titoli in questa categoria",
                 categories = categories,
-                selectedCategory = categoryId,
-                onCategory = { categoryId = it },
+                selectedCategory = selectedCategory,
+                onCategory = onCategorySelect,
                 firstFocusRequester = firstFocusRequester,
                 onMoveLeftToMenu = onMoveLeftToMenu,
-                entries = movies,
+                entries = state.movies,
                 entryKey = { it.id },
                 entryTitle = { it.name },
                 entrySubtitle = { listOf(it.year, it.rating).filter(String::isNotBlank).joinToString("  •  ") },
                 entryImage = { it.logo },
                 onEntry = onMovie,
             )
+            }
         }
     }
 }
@@ -291,38 +293,40 @@ fun SeriesBrowserScreen(
     state: SeriesState,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
+    onCategorySelect: (String) -> Unit,
     onShow: (SeriesShow) -> Unit,
 ) {
     when (state) {
-        SeriesState.Idle, SeriesState.Loading -> LibraryLoading("Caricamento serie...")
         is SeriesState.Failed -> LibraryError(state.message)
+        SeriesState.Idle, SeriesState.Loading -> LibraryLoading("Caricamento categorie serie...")
         is SeriesState.Ready -> {
-            var categoryId by remember { mutableStateOf("") }
+            if (state.categories.isEmpty()) {
+                LibraryError("Nessuna categoria serie disponibile")
+            } else if (state.categoryLoading && state.shows.isEmpty()) {
+                LibraryLoading("Caricamento titoli...")
+            } else {
             val categories = remember(state.categories) {
-                listOf("" to "Tutte le serie") + state.categories.map { it.id to it.name }
+                state.categories.map { it.id to it.name }
             }
-            val showsByCategory = remember(state.shows) {
-                state.shows.groupBy(SeriesShow::categoryId)
-            }
-            val shows = remember(state.shows, showsByCategory, categoryId) {
-                if (categoryId.isBlank()) state.shows
-                else showsByCategory[categoryId].orEmpty()
+            val selectedCategory = state.selectedCategoryId.ifBlank {
+                state.categories.firstOrNull()?.id.orEmpty()
             }
             LibraryBrowser(
                 title = "Serie",
-                countLabel = "${shows.size} di ${state.shows.size} titoli",
+                countLabel = "${state.shows.size} titoli in questa categoria",
                 categories = categories,
-                selectedCategory = categoryId,
-                onCategory = { categoryId = it },
+                selectedCategory = selectedCategory,
+                onCategory = onCategorySelect,
                 firstFocusRequester = firstFocusRequester,
                 onMoveLeftToMenu = onMoveLeftToMenu,
-                entries = shows,
+                entries = state.shows,
                 entryKey = { it.id },
                 entryTitle = { it.name },
                 entrySubtitle = { listOf(it.year, it.rating).filter(String::isNotBlank).joinToString("  •  ") },
                 entryImage = { it.logo },
                 onEntry = onShow,
             )
+            }
         }
     }
 }
@@ -974,35 +978,74 @@ sealed interface SearchResult {
     data class Show(val value: SeriesShow) : SearchResult
 }
 
+private enum class SearchFilter {
+    ALL,
+    LIVE,
+    VOD,
+    SERIES,
+}
+
 @Composable
 fun SearchScreen(
     channels: List<LiveChannel>,
-    vodState: VodState,
-    seriesState: SeriesState,
+    movies: List<VodMovie>,
+    shows: List<SeriesShow>,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
     onResult: (SearchResult) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val movies = (vodState as? VodState.Ready)?.movies.orEmpty()
-    val shows = (seriesState as? SeriesState.Ready)?.shows.orEmpty()
-    val results = remember(query, channels, movies, shows) {
+    var filter by remember { mutableStateOf(SearchFilter.ALL) }
+    val channelResults = remember(query, channels) {
         val needle = query.trim()
         if (needle.length < 2) emptyList()
-        else buildList {
-            channels.asSequence().filter { it.name.contains(needle, true) }.take(40)
-                .forEach { add(SearchResult.Channel(it)) }
-            movies.asSequence().filter { it.name.contains(needle, true) }.take(40)
-                .forEach { add(SearchResult.Movie(it)) }
-            shows.asSequence().filter { it.name.contains(needle, true) }.take(40)
-                .forEach { add(SearchResult.Show(it)) }
-        }.take(100)
+        else channels.asSequence().filter { it.name.contains(needle, true) }.take(40).toList()
     }
+    val movieResults = remember(query, movies) {
+        val needle = query.trim()
+        if (needle.length < 2) emptyList()
+        else movies.asSequence().filter { it.name.contains(needle, true) }.take(40).toList()
+    }
+    val showResults = remember(query, shows) {
+        val needle = query.trim()
+        if (needle.length < 2) emptyList()
+        else shows.asSequence().filter { it.name.contains(needle, true) }.take(40).toList()
+    }
+    val results = remember(channelResults, movieResults, showResults, filter) {
+        buildList {
+            if (filter == SearchFilter.ALL || filter == SearchFilter.LIVE) {
+                channelResults.forEach { add(SearchResult.Channel(it)) }
+            }
+            if (filter == SearchFilter.ALL || filter == SearchFilter.VOD) {
+                movieResults.forEach { add(SearchResult.Movie(it)) }
+            }
+            if (filter == SearchFilter.ALL || filter == SearchFilter.SERIES) {
+                showResults.forEach { add(SearchResult.Show(it)) }
+            }
+        }
+    }
+    val filters = SearchFilter.entries
+    val filterRequester = remember { FocusRequester() }
     val resultsRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
+    val gridState = rememberLazyGridState()
+    val subtitle = remember(query, channelResults, movieResults, showResults, results, filter) {
+        val needle = query.trim()
+        when {
+            needle.length < 2 -> "Canali, film e serie"
+            filter == SearchFilter.ALL ->
+                "${results.size} risultati • ${channelResults.size} live • ${movieResults.size} film • ${showResults.size} serie"
+            else -> "${results.size} risultati"
+        }
+    }
 
-    Column(Modifier.fillMaxSize().padding(32.dp)) {
-        ScreenHeading("Cerca", "Canali, film e serie")
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ScreenHeading("Cerca", subtitle)
         BasicTextField(
             value = query,
             onValueChange = { query = it },
@@ -1026,34 +1069,86 @@ fun SearchScreen(
                             true
                         }
                         Key.DirectionDown -> {
-                            if (results.isNotEmpty()) {
-                                scope.launch { resultsRequester.safeRequestFocus() }
-                                true
-                            } else {
-                                false
-                            }
+                            scope.launch { filterRequester.safeRequestFocus() }
+                            true
                         }
                         else -> false
                     }
                 }
                 .padding(horizontal = 16.dp, vertical = 13.dp),
         )
-        Spacer(Modifier.height(14.dp))
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().focusRestorer(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 24.dp),
-        ) {
-            items(
-                count = results.size,
-                key = { index -> searchResultKey(results[index]) },
-            ) { index ->
-                val result = results[index]
-                SearchResultCard(
-                    result = result,
-                    onClick = { onResult(result) },
-                    focusRequester = if (index == 0) resultsRequester else null,
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(filters.size) { index ->
+                val item = filters[index]
+                val label = when (item) {
+                    SearchFilter.ALL -> "Tutti"
+                    SearchFilter.LIVE -> "Live"
+                    SearchFilter.VOD -> "Film"
+                    SearchFilter.SERIES -> "Serie"
+                }
+                FocusCard(
+                    onClick = { filter = item },
+                    selected = filter == item,
+                    focusRequester = if (index == 0) filterRequester else null,
+                    modifier = if (index == 0) {
+                        Modifier.onPreviewKeyEvent {
+                            if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
+                                onMoveLeftToMenu()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    } else {
+                        Modifier
+                    },
+                ) {
+                    ItemTitle(label)
+                }
+            }
+        }
+        when {
+            query.trim().length < 2 -> {
+                BasicText(
+                    "Digita almeno 2 caratteri",
+                    style = TextStyle(color = TvColors.Muted, fontSize = TvTypography.body),
                 )
+            }
+            results.isEmpty() -> {
+                BasicText(
+                    when (filter) {
+                        SearchFilter.LIVE -> "Nessun canale trovato"
+                        SearchFilter.VOD -> "Nessun film trovato nelle categorie caricate"
+                        SearchFilter.SERIES -> "Nessuna serie trovata nelle categorie caricate"
+                        SearchFilter.ALL -> "Nessun risultato"
+                    },
+                    style = TextStyle(color = TvColors.Muted, fontSize = TvTypography.body),
+                )
+            }
+            else -> {
+                LazyVerticalGrid(
+                    state = gridState,
+                    columns = GridCells.Adaptive(TvTypography.posterWidth),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusRestorer(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                ) {
+                    items(
+                        count = results.size,
+                        key = { index -> searchResultKey(results[index]) },
+                    ) { index ->
+                        val result = results[index]
+                        SearchResultCard(
+                            result = result,
+                            onClick = { onResult(result) },
+                            focusRequester = if (index == 0) resultsRequester else null,
+                            onMoveLeftToMenu = onMoveLeftToMenu,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1064,55 +1159,124 @@ private fun SearchResultCard(
     result: SearchResult,
     onClick: () -> Unit,
     focusRequester: FocusRequester?,
+    onMoveLeftToMenu: () -> Unit,
 ) {
+    val imageUrl: String
+    val imageLabel: String
+    val eyebrow: String
+    val title: String
+    val subtitle: String
+    val cardAspectRatio: Float
     when (result) {
-        is SearchResult.Channel -> HorizontalMediaCard(
-            onClick = onClick,
-            imageUrl = result.value.logo,
-            imageContentDescription = result.value.name,
-            eyebrow = "CANALE  •  LIVE TV",
-            title = result.value.name,
+        is SearchResult.Channel -> {
+            val channel = result.value
+            imageUrl = channel.logo
+            imageLabel = channel.name
+            eyebrow = "CANALE"
+            title = channel.name
             subtitle = buildString {
-                append("Canale #${result.value.id}")
-                if (result.value.hasCatchup) {
-                    append("  •  Archivio ${result.value.catchupDays.coerceAtLeast(1)}g")
+                append("Live TV")
+                if (channel.hasCatchup) {
+                    append("  •  Archivio ${channel.catchupDays.coerceAtLeast(1)}g")
                 }
-            },
-            focusRequester = focusRequester,
-        )
+            }
+            cardAspectRatio = 16f / 9f
+        }
         is SearchResult.Movie -> {
             val movie = result.value
-            HorizontalMediaCard(
-                onClick = onClick,
-                imageUrl = movie.logo,
-                imageContentDescription = movie.name,
-                eyebrow = "FILM",
-                title = movie.name,
-                badge = movie.year.ifBlank { movie.rating }.takeIf { it.isNotBlank() },
-                subtitle = listOf(movie.year, movie.rating)
-                    .filter(String::isNotBlank)
-                    .joinToString("  •  ")
-                    .ifBlank { null },
-                description = movie.plot,
-                focusRequester = focusRequester,
-            )
+            imageUrl = movie.logo
+            imageLabel = movie.name
+            eyebrow = "FILM"
+            title = movie.name
+            subtitle = listOf(movie.year, movie.rating).filter(String::isNotBlank).joinToString("  •  ")
+            cardAspectRatio = 2f / 3f
         }
         is SearchResult.Show -> {
             val show = result.value
-            HorizontalMediaCard(
-                onClick = onClick,
-                imageUrl = show.logo,
-                imageContentDescription = show.name,
-                eyebrow = "SERIE TV",
-                title = show.name,
-                badge = show.year.ifBlank { show.rating }.takeIf { it.isNotBlank() },
-                subtitle = listOf(show.year, show.rating)
-                    .filter(String::isNotBlank)
-                    .joinToString("  •  ")
-                    .ifBlank { null },
-                description = show.plot,
-                focusRequester = focusRequester,
-            )
+            imageUrl = show.logo
+            imageLabel = show.name
+            eyebrow = "SERIE"
+            title = show.name
+            subtitle = listOf(show.year, show.rating).filter(String::isNotBlank).joinToString("  •  ")
+            cardAspectRatio = 2f / 3f
+        }
+    }
+
+    FocusCard(
+        onClick = onClick,
+        focusRequester = focusRequester,
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(cardAspectRatio)
+            .onPreviewKeyEvent {
+                if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (it.key == Key.DirectionLeft) {
+                    onMoveLeftToMenu()
+                    true
+                } else {
+                    false
+                }
+            },
+        padding = PaddingValues(0.dp),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            if (imageUrl.isNotBlank()) {
+                AsyncImage(
+                    model = imageUrl,
+                    contentDescription = imageLabel,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(TvColors.SurfaceDeep),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BasicText(
+                        title.take(1).uppercase(),
+                        style = TextStyle(
+                            color = TvColors.Muted,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(Color(0xDD081017))
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                BasicText(
+                    eyebrow,
+                    style = TvTypography.accentCaptionStyle,
+                    maxLines = 1,
+                )
+                BasicText(
+                    title,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        color = TvColors.Text,
+                        fontSize = TvTypography.cardTitle,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = TvTypography.fontFamily,
+                    ),
+                )
+                if (subtitle.isNotBlank()) {
+                    BasicText(
+                        subtitle,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = TvTypography.listMetaStyle,
+                    )
+                }
+            }
         }
     }
 }

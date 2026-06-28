@@ -81,9 +81,17 @@ class XtreamClient {
             parseVodCategories(request(profile, "get_vod_categories"))
         }
 
-    suspend fun loadVodMovies(profile: XtreamProfile): List<VodMovie> =
+    suspend fun loadVodMovies(profile: XtreamProfile, categoryId: String? = null): List<VodMovie> =
         withContext(Dispatchers.IO) {
-            streamArray(profile, "get_vod_streams", "movies", "streams", "vod_streams") {
+            val parameters = categoryId?.takeIf { it.isNotBlank() }
+                ?.let { mapOf("category_id" to it) }
+                .orEmpty()
+            streamArray(
+                profile = profile,
+                action = "get_vod_streams",
+                parameters = parameters,
+                objectArrayNames = arrayOf("movies", "streams", "vod_streams"),
+            ) {
                 readVodMovie(it)
             }
         }
@@ -106,9 +114,17 @@ class XtreamClient {
             parseSeriesCategories(request(profile, "get_series_categories"))
         }
 
-    suspend fun loadSeries(profile: XtreamProfile): List<SeriesShow> =
+    suspend fun loadSeries(profile: XtreamProfile, categoryId: String? = null): List<SeriesShow> =
         withContext(Dispatchers.IO) {
-            streamArray(profile, "get_series", "series", "shows", "streams") {
+            val parameters = categoryId?.takeIf { it.isNotBlank() }
+                ?.let { mapOf("category_id" to it) }
+                .orEmpty()
+            streamArray(
+                profile = profile,
+                action = "get_series",
+                parameters = parameters,
+                objectArrayNames = arrayOf("series", "shows", "streams"),
+            ) {
                 readSeriesShow(it)
             }
         }
@@ -159,7 +175,7 @@ class XtreamClient {
             connection.connectTimeout = 30_000
             connection.readTimeout = when (action) {
                 "get_live_streams" -> 90_000
-                "get_vod_streams", "get_series" -> 150_000
+                "get_vod_streams", "get_series" -> if (parameters.containsKey("category_id")) 90_000 else 150_000
                 "get_series_info" -> 75_000
                 "get_short_epg" -> 12_000
                 "get_simple_data_table" -> 15_000
@@ -188,14 +204,19 @@ class XtreamClient {
     private fun <T : Any> streamArray(
         profile: XtreamProfile,
         action: String,
-        vararg objectArrayNames: String,
+        parameters: Map<String, String> = emptyMap(),
+        objectArrayNames: Array<String>,
         readItem: (JsonReader) -> T?,
     ): List<T> {
         val connection =
-            URI(apiUrl(profile, action)).toURL().openConnection() as HttpURLConnection
+            URI(apiUrl(profile, action, parameters)).toURL().openConnection() as HttpURLConnection
         return try {
             connection.connectTimeout = 30_000
-            connection.readTimeout = 180_000
+            connection.readTimeout = when {
+                parameters.containsKey("category_id") -> 90_000
+                action == "get_vod_streams" || action == "get_series" -> 180_000
+                else -> 90_000
+            }
             connection.setRequestProperty("Accept", "application/json,text/plain,*/*")
             connection.setRequestProperty("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
             connection.setRequestProperty("Referer", "${profile.baseUrl}/")
@@ -254,7 +275,6 @@ class XtreamClient {
         var extension = "mp4"
         var rating = ""
         var year = ""
-        var plot = ""
         reader.beginObject()
         while (reader.hasNext()) {
             when (reader.nextName()) {
@@ -266,7 +286,7 @@ class XtreamClient {
                     extension = reader.nextText()
                 "rating", "rating_5based", "tmdb_rating" -> rating = reader.nextText()
                 "year", "releaseDate", "release_date", "releasedate" -> year = reader.nextText()
-                "plot", "description", "overview" -> plot = reader.nextText()
+                "plot", "description", "overview" -> reader.skipValue()
                 else -> reader.skipValue()
             }
         }
@@ -280,7 +300,7 @@ class XtreamClient {
             containerExtension = extension.trim().trimStart('.').ifBlank { "mp4" },
             rating = rating,
             year = year,
-            plot = plot,
+            plot = "",
         )
     }
 
@@ -291,7 +311,6 @@ class XtreamClient {
         var categoryId = ""
         var rating = ""
         var year = ""
-        var plot = ""
         reader.beginObject()
         while (reader.hasNext()) {
             when (reader.nextName()) {
@@ -301,13 +320,13 @@ class XtreamClient {
                 "category_id" -> categoryId = reader.nextText()
                 "rating", "rating_5based", "tmdb_rating" -> rating = reader.nextText()
                 "year", "releaseDate", "release_date" -> year = reader.nextText()
-                "plot", "description", "overview" -> plot = reader.nextText()
+                "plot", "description", "overview" -> reader.skipValue()
                 else -> reader.skipValue()
             }
         }
         reader.endObject()
         if (id <= 0) return null
-        return SeriesShow(id, name.ifBlank { "Serie $id" }, logo, categoryId, rating, year, plot)
+        return SeriesShow(id, name.ifBlank { "Serie $id" }, logo, categoryId, rating, year, plot = "")
     }
 
     private fun JsonReader.nextText(): String = when (peek()) {

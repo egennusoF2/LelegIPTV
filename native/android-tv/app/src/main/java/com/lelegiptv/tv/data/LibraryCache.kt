@@ -12,7 +12,21 @@ import java.security.MessageDigest
 class LibraryCache(context: Context) {
     private val directory = File(context.cacheDir, "libraries").apply { mkdirs() }
 
-    fun readVod(profile: XtreamProfile, maxAgeMillis: Long): VodSnapshot? = runCatching {
+    fun readVod(profile: XtreamProfile, maxAgeMillis: Long): VodSnapshot? =
+        readVodSnapshot(profile)?.takeIf { snapshot ->
+            snapshot.ageMillis in 0..maxAgeMillis
+        }
+
+    fun readVodAny(profile: XtreamProfile): VodSnapshot? = readVodSnapshot(profile)
+
+    fun readSeries(profile: XtreamProfile, maxAgeMillis: Long): SeriesSnapshot? =
+        readSeriesSnapshot(profile)?.takeIf { snapshot ->
+            snapshot.ageMillis in 0..maxAgeMillis
+        }
+
+    fun readSeriesAny(profile: XtreamProfile): SeriesSnapshot? = readSeriesSnapshot(profile)
+
+    private fun readVodSnapshot(profile: XtreamProfile): VodSnapshot? = runCatching {
         val categories = mutableListOf<VodCategory>()
         val movies = mutableListOf<VodMovie>()
         var savedAt = 0L
@@ -30,11 +44,11 @@ class LibraryCache(context: Context) {
             }
             reader.endObject()
         }
-        val age = System.currentTimeMillis() - savedAt
-        VodSnapshot(categories, movies).takeIf { age in 0..maxAgeMillis }
+        val age = if (savedAt > 0L) System.currentTimeMillis() - savedAt else Long.MAX_VALUE
+        VodSnapshot(categories, movies, age)
     }.getOrNull()
 
-    fun readSeries(profile: XtreamProfile, maxAgeMillis: Long): SeriesSnapshot? = runCatching {
+    private fun readSeriesSnapshot(profile: XtreamProfile): SeriesSnapshot? = runCatching {
         val categories = mutableListOf<SeriesCategory>()
         val shows = mutableListOf<SeriesShow>()
         var savedAt = 0L
@@ -54,8 +68,8 @@ class LibraryCache(context: Context) {
             }
             reader.endObject()
         }
-        val age = System.currentTimeMillis() - savedAt
-        SeriesSnapshot(categories, shows).takeIf { age in 0..maxAgeMillis }
+        val age = if (savedAt > 0L) System.currentTimeMillis() - savedAt else Long.MAX_VALUE
+        SeriesSnapshot(categories, shows, age)
     }.getOrNull()
 
     fun writeVod(
@@ -224,9 +238,11 @@ class LibraryCache(context: Context) {
 data class VodSnapshot(
     val categories: List<VodCategory>,
     val movies: List<VodMovie>,
+    val ageMillis: Long = 0L,
 )
 
 data class SeriesSnapshot(
     val categories: List<SeriesCategory>,
     val shows: List<SeriesShow>,
+    val ageMillis: Long = 0L,
 )

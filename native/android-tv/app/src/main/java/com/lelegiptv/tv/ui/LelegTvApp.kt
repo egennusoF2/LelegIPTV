@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -256,12 +258,13 @@ fun LelegTvApp(viewModel: TvViewModel) {
 
     fun openRoute(next: TvRoute) {
         route = next
-        ready?.profile?.let { profile ->
+        val profile = ready?.profile ?: viewModel.activeProfile()
+        profile?.let { activeProfile ->
             if (next == TvRoute.Movies || next == TvRoute.Search || next == TvRoute.Favorites) {
-                viewModel.ensureVod(profile)
+                viewModel.ensureVod(activeProfile)
             }
             if (next == TvRoute.Series || next == TvRoute.Search || next == TvRoute.Favorites) {
-                viewModel.ensureSeries(profile)
+                viewModel.ensureSeries(activeProfile)
             }
         }
     }
@@ -356,7 +359,8 @@ fun LelegTvApp(viewModel: TvViewModel) {
     }
 
     fun resumeContinueMovie(movieId: Int) {
-        val movie = (vodState as? VodState.Ready)?.movies?.firstOrNull { it.id == movieId }
+        val movie = viewModel.allCachedVodMovies().firstOrNull { it.id == movieId }
+            ?: (vodState as? VodState.Ready)?.movies?.firstOrNull { it.id == movieId }
             ?: libraryState.movieProgress[movieId]?.let { entry ->
                 VodMovie(movieId, entry.name, entry.logo, "", "", "", "", "")
             }
@@ -426,6 +430,12 @@ fun LelegTvApp(viewModel: TvViewModel) {
         }
     }
 
+    LaunchedEffect(ready?.profile?.baseUrl, ready?.profile?.username) {
+        val profile = ready?.profile ?: viewModel.activeProfile() ?: return@LaunchedEffect
+        viewModel.ensureVod(profile)
+        viewModel.ensureSeries(profile)
+    }
+
     LaunchedEffect(route, libraryState.movieProgress, libraryState.episodeProgress, ready?.profile) {
         if (route == TvRoute.Home && ready != null && libraryState.continueWatching().isNotEmpty()) {
             viewModel.ensureVod(ready.profile)
@@ -463,8 +473,8 @@ fun LelegTvApp(viewModel: TvViewModel) {
             TvRoute.Home -> HomeScreen(
                 firstFocusRequester = contentRequester,
                 liveCount = ready?.channels?.size ?: 0,
-                movieCount = (vodState as? VodState.Ready)?.movies?.size,
-                seriesCount = (seriesState as? SeriesState.Ready)?.shows?.size,
+                movieCount = (vodState as? VodState.Ready)?.categories?.size,
+                seriesCount = (seriesState as? SeriesState.Ready)?.categories?.size,
                 continueWatching = libraryState.continueWatching(),
                 onContinueMovie = ::resumeContinueMovie,
                 onContinueEpisode = ::resumeContinueEpisode,
@@ -511,6 +521,11 @@ fun LelegTvApp(viewModel: TvViewModel) {
                 state = vodState,
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
+                onCategorySelect = { categoryId ->
+                    viewModel.activeProfile()?.let { profile ->
+                        viewModel.loadVodCategory(profile, categoryId)
+                    }
+                },
                 onMovie = {
                     ready?.profile?.let { profile -> viewModel.loadVodDetail(profile, it) }
                     route = TvRoute.MovieDetail
@@ -520,6 +535,11 @@ fun LelegTvApp(viewModel: TvViewModel) {
                 state = seriesState,
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
+                onCategorySelect = { categoryId ->
+                    viewModel.activeProfile()?.let { profile ->
+                        viewModel.loadSeriesCategory(profile, categoryId)
+                    }
+                },
                 onShow = {
                     ready?.profile?.let { profile -> viewModel.loadSeriesDetail(profile, it) }
                     route = TvRoute.SeriesDetail
@@ -544,8 +564,12 @@ fun LelegTvApp(viewModel: TvViewModel) {
             )
             TvRoute.Search -> SearchScreen(
                 channels = ready?.channels.orEmpty(),
-                vodState = vodState,
-                seriesState = seriesState,
+                movies = viewModel.allCachedVodMovies().ifEmpty {
+                    (vodState as? VodState.Ready)?.movies.orEmpty()
+                },
+                shows = viewModel.allCachedSeriesShows().ifEmpty {
+                    (seriesState as? SeriesState.Ready)?.shows.orEmpty()
+                },
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
                 onResult = { result ->
@@ -1150,7 +1174,8 @@ private fun LiveEpgPanel(
             channel = channel,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(220.dp),
+                .aspectRatio(16f / 9f)
+                .heightIn(max = 230.dp),
         )
         Column(
             modifier = Modifier.fillMaxWidth(),

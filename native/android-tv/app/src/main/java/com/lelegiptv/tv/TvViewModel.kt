@@ -1,13 +1,13 @@
 package com.lelegiptv.tv
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lelegiptv.tv.data.CatalogState
 import com.lelegiptv.tv.data.CatalogCache
 import com.lelegiptv.tv.data.EpgProgramme
 import com.lelegiptv.tv.data.LiveChannel
-import com.lelegiptv.tv.data.LibraryCache
 import com.lelegiptv.tv.data.SeriesCategory
 import com.lelegiptv.tv.data.SeriesInfo
 import com.lelegiptv.tv.data.SeriesShow
@@ -36,8 +36,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -47,7 +47,6 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private val store = ProfileStore(application)
     private val libraryStore = UserLibraryStore(application)
     private val cache = CatalogCache(application)
-    private val libraryCache = LibraryCache(application)
     private val client = XtreamClient()
     private val mutableState = MutableStateFlow<CatalogState>(CatalogState.Empty)
     private val mutableEpgState = MutableStateFlow<EpgState>(EpgState.Idle)
@@ -71,6 +70,12 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private var epgRequestSeq = 0
     private var guideWarmJob: Job? = null
     private var guideChannelJob: Job? = null
+    private var vodLoadJob: Job? = null
+    private var seriesLoadJob: Job? = null
+    private var vodCategoryJob: Job? = null
+    private var seriesCategoryJob: Job? = null
+    private val vodCategoryCache = mutableMapOf<String, List<VodMovie>>()
+    private val seriesCategoryCache = mutableMapOf<String, List<SeriesShow>>()
     private val guideFullLoadChannels = mutableSetOf<Int>()
 
     val state: StateFlow<CatalogState> = mutableState.asStateFlow()
@@ -238,6 +243,16 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         guideWarmJob?.cancel()
         guideChannelJob?.cancel()
         guideFullLoadChannels.clear()
+        vodLoadJob?.cancel()
+        seriesLoadJob?.cancel()
+        vodCategoryJob?.cancel()
+        seriesCategoryJob?.cancel()
+        vodCategoryCache.clear()
+        seriesCategoryCache.clear()
+        mutableVodState.value = VodState.Idle
+        mutableSeriesState.value = SeriesState.Idle
+        ensureVod(profile)
+        ensureSeries(profile)
         mutableState.value = CatalogState.Loading("Caricamento categorie e canali...")
         viewModelScope.launch {
             if (!forceRefresh) {
@@ -305,8 +320,204 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         mutableGuideState.value = GuideState.Idle
         mutableVodState.value = VodState.Idle
         mutableSeriesState.value = SeriesState.Idle
+        vodCategoryCache.clear()
+        seriesCategoryCache.clear()
         mutableVodDetailState.value = VodDetailState.Idle
         mutableSeriesDetailState.value = SeriesDetailState.Idle
+    }
+
+    fun activeProfile(): XtreamProfile? {
+        (mutableState.value as? CatalogState.Ready)?.profile?.let { return it }
+        val activeId = store.loadActiveId() ?: return null
+        return store.loadAll().firstOrNull { it.id == activeId }?.profile
+    }
+
+    fun allCachedVodMovies(): List<VodMovie> =
+        vodCategoryCache.values.flatten().distinctBy(VodMovie::id)
+
+    fun allCachedSeriesShows(): List<SeriesShow> =
+        seriesCategoryCache.values.flatten().distinctBy(SeriesShow::id)
+
+    fun ensureVod(profile: XtreamProfile) {
+        when (val current = mutableVodState.value) {
+            is VodState.Loading -> return
+            is VodState.Ready -> if (!current.refreshing && current.categories.isNotEmpty()) return
+            else -> Unit
+        }
+        vodLoadJob?.cancel()
+        vodLoadJob = viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            mutableVodState.value = VodState.Loading
+            try {
+                val categories = withContext(Dispatchers.IO) {
+                    client.loadVodCategories(profile)
+                }
+                if (!isActive) return@launch
+                val firstCategoryId = categories.firstOrNull()?.id.orEmpty()
+                Log.i(
+                    TAG,
+                    "VOD ${categories.size} categorie in ${System.currentTimeMillis() - startedAt}ms",
+                )
+                mutableVodState.value = VodState.Ready(
+                    categories = categories,
+                    movies = emptyList(),
+                    selectedCategoryId = firstCategoryId,
+                    categoryLoading = firstCategoryId.isNotBlank(),
+                )
+                if (firstCategoryId.isNotBlank()) {
+                    loadVodCategory(profile, firstCategoryId, fromBootstrap = true)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "VOD categories failed", error)
+                mutableVodState.value =
+                    VodState.Failed(error.message ?: "Catalogo film non disponibile")
+            }
+        }
+    }
+
+    fun loadVodCategory(profile: XtreamProfile, categoryId: String, fromBootstrap: Boolean = false) {
+        require(categoryId.isNotBlank()) { "categoryId richiesto" }
+        vodCategoryCache[categoryId]?.let { cached ->
+            val current = mutableVodState.value as? VodState.Ready ?: return
+            mutableVodState.value = current.copy(
+                movies = cached,
+                selectedCategoryId = categoryId,
+                categoryLoading = false,
+            )
+            return
+        }
+        val current = mutableVodState.value as? VodState.Ready ?: return
+        if (current.selectedCategoryId == categoryId && current.categoryLoading && !fromBootstrap) {
+            return
+        }
+        vodCategoryJob?.cancel()
+        mutableVodState.value = current.copy(
+            selectedCategoryId = categoryId,
+            movies = emptyList(),
+            categoryLoading = true,
+        )
+        vodCategoryJob = viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            try {
+                val movies = withContext(Dispatchers.IO) {
+                    client.loadVodMovies(profile, categoryId)
+                }
+                if (!isActive) return@launch
+                vodCategoryCache[categoryId] = movies
+                val latest = mutableVodState.value as? VodState.Ready ?: return@launch
+                if (latest.selectedCategoryId != categoryId) return@launch
+                Log.i(
+                    TAG,
+                    "VOD categoria $categoryId: ${movies.size} film in ${System.currentTimeMillis() - startedAt}ms",
+                )
+                mutableVodState.value = latest.copy(
+                    movies = movies,
+                    categoryLoading = false,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "VOD category $categoryId failed", error)
+                val latest = mutableVodState.value as? VodState.Ready ?: return@launch
+                if (latest.selectedCategoryId != categoryId) return@launch
+                mutableVodState.value = latest.copy(categoryLoading = false)
+            }
+        }
+    }
+
+    fun ensureSeries(profile: XtreamProfile) {
+        when (val current = mutableSeriesState.value) {
+            is SeriesState.Loading -> return
+            is SeriesState.Ready -> if (!current.refreshing && current.categories.isNotEmpty()) return
+            else -> Unit
+        }
+        seriesLoadJob?.cancel()
+        seriesLoadJob = viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            mutableSeriesState.value = SeriesState.Loading
+            try {
+                val categories = withContext(Dispatchers.IO) {
+                    client.loadSeriesCategories(profile)
+                }
+                if (!isActive) return@launch
+                val firstCategoryId = categories.firstOrNull()?.id.orEmpty()
+                Log.i(
+                    TAG,
+                    "Series ${categories.size} categorie in ${System.currentTimeMillis() - startedAt}ms",
+                )
+                mutableSeriesState.value = SeriesState.Ready(
+                    categories = categories,
+                    shows = emptyList(),
+                    selectedCategoryId = firstCategoryId,
+                    categoryLoading = firstCategoryId.isNotBlank(),
+                )
+                if (firstCategoryId.isNotBlank()) {
+                    loadSeriesCategory(profile, firstCategoryId, fromBootstrap = true)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Series categories failed", error)
+                mutableSeriesState.value =
+                    SeriesState.Failed(error.message ?: "Catalogo serie non disponibile")
+            }
+        }
+    }
+
+    fun loadSeriesCategory(
+        profile: XtreamProfile,
+        categoryId: String,
+        fromBootstrap: Boolean = false,
+    ) {
+        require(categoryId.isNotBlank()) { "categoryId richiesto" }
+        seriesCategoryCache[categoryId]?.let { cached ->
+            val current = mutableSeriesState.value as? SeriesState.Ready ?: return
+            mutableSeriesState.value = current.copy(
+                shows = cached,
+                selectedCategoryId = categoryId,
+                categoryLoading = false,
+            )
+            return
+        }
+        val current = mutableSeriesState.value as? SeriesState.Ready ?: return
+        if (current.selectedCategoryId == categoryId && current.categoryLoading && !fromBootstrap) {
+            return
+        }
+        seriesCategoryJob?.cancel()
+        mutableSeriesState.value = current.copy(
+            selectedCategoryId = categoryId,
+            shows = emptyList(),
+            categoryLoading = true,
+        )
+        seriesCategoryJob = viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            try {
+                val shows = withContext(Dispatchers.IO) {
+                    client.loadSeries(profile, categoryId)
+                }
+                if (!isActive) return@launch
+                seriesCategoryCache[categoryId] = shows
+                val latest = mutableSeriesState.value as? SeriesState.Ready ?: return@launch
+                if (latest.selectedCategoryId != categoryId) return@launch
+                Log.i(
+                    TAG,
+                    "Series categoria $categoryId: ${shows.size} titoli in ${System.currentTimeMillis() - startedAt}ms",
+                )
+                mutableSeriesState.value = latest.copy(
+                    shows = shows,
+                    categoryLoading = false,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e(TAG, "Series category $categoryId failed", error)
+                val latest = mutableSeriesState.value as? SeriesState.Ready ?: return@launch
+                if (latest.selectedCategoryId != categoryId) return@launch
+                mutableSeriesState.value = latest.copy(categoryLoading = false)
+            }
+        }
     }
 
     fun loadEpg(profile: XtreamProfile, streamId: Int, channel: LiveChannel? = null) {
@@ -563,63 +774,6 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         return ready.channels.firstOrNull { it.id == streamId }
     }
 
-    fun ensureVod(profile: XtreamProfile) {
-        if (mutableVodState.value is VodState.Ready || mutableVodState.value is VodState.Loading) {
-            return
-        }
-        viewModelScope.launch {
-            mutableVodState.value = VodState.Loading
-            mutableVodState.value = try {
-                val snapshot = withContext(Dispatchers.IO) {
-                    libraryCache.readVod(profile, CATALOG_TTL_MILLIS)
-                }
-                if (snapshot != null) {
-                    return@launch mutableVodState.emit(
-                        VodState.Ready(snapshot.categories, snapshot.movies),
-                    )
-                }
-                val categories = withContext(Dispatchers.IO) { client.loadVodCategories(profile) }
-                val movies = withContext(Dispatchers.IO) { client.loadVodMovies(profile) }
-                withContext(Dispatchers.IO) {
-                    libraryCache.writeVod(profile, categories, movies)
-                }
-                VodState.Ready(categories, movies)
-            } catch (error: Exception) {
-                VodState.Failed(error.message ?: "Catalogo film non disponibile")
-            }
-        }
-    }
-
-    fun ensureSeries(profile: XtreamProfile) {
-        if (
-            mutableSeriesState.value is SeriesState.Ready ||
-            mutableSeriesState.value is SeriesState.Loading
-        ) {
-            return
-        }
-        viewModelScope.launch {
-            mutableSeriesState.value = SeriesState.Loading
-            mutableSeriesState.value = try {
-                val snapshot = withContext(Dispatchers.IO) {
-                    libraryCache.readSeries(profile, CATALOG_TTL_MILLIS)
-                }
-                if (snapshot != null) {
-                    return@launch mutableSeriesState.emit(
-                        SeriesState.Ready(snapshot.categories, snapshot.shows),
-                    )
-                }
-                val categories = withContext(Dispatchers.IO) { client.loadSeriesCategories(profile) }
-                val shows = withContext(Dispatchers.IO) { client.loadSeries(profile) }
-                withContext(Dispatchers.IO) {
-                    libraryCache.writeSeries(profile, categories, shows)
-                }
-                SeriesState.Ready(categories, shows)
-            } catch (error: Exception) {
-                SeriesState.Failed(error.message ?: "Catalogo serie non disponibile")
-            }
-        }
-    }
-
     fun loadVodDetail(profile: XtreamProfile, movie: VodMovie) {
         viewModelScope.launch {
             mutableVodDetailState.value = VodDetailState.Loading(movie)
@@ -643,6 +797,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private companion object {
+        const val TAG = "LelegCatalog"
         const val CATALOG_TTL_MILLIS = 24L * 60L * 60L * 1000L
         const val EPG_CACHE_MAX_CHANNELS = 12
         const val EPG_SHORT_TIMEOUT_MS = 10_000L
@@ -674,7 +829,13 @@ sealed interface EpgState {
 sealed interface VodState {
     data object Idle : VodState
     data object Loading : VodState
-    data class Ready(val categories: List<VodCategory>, val movies: List<VodMovie>) : VodState
+    data class Ready(
+        val categories: List<VodCategory>,
+        val movies: List<VodMovie>,
+        val selectedCategoryId: String = "",
+        val categoryLoading: Boolean = false,
+        val refreshing: Boolean = false,
+    ) : VodState
     data class Failed(val message: String) : VodState
 }
 
@@ -684,6 +845,9 @@ sealed interface SeriesState {
     data class Ready(
         val categories: List<SeriesCategory>,
         val shows: List<SeriesShow>,
+        val selectedCategoryId: String = "",
+        val categoryLoading: Boolean = false,
+        val refreshing: Boolean = false,
     ) : SeriesState
     data class Failed(val message: String) : SeriesState
 }
