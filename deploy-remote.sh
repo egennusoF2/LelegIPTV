@@ -77,6 +77,8 @@ if command -v rsync &> /dev/null; then
         --exclude='src-tauri/' \
         --exclude='.astro/' \
         --exclude='tools/flutter-tizen/' \
+        --exclude='native/android-tv/.gradle/' \
+        --exclude='native/android-tv/app/build/' \
         --exclude='native/flutter/leleg_iptv/.dart_tool/' \
         --exclude='native/flutter/leleg_iptv/build/' \
         --exclude='native/flutter/leleg_iptv/android/.gradle/' \
@@ -96,6 +98,8 @@ else
         --exclude='src-tauri' \
         --exclude='.astro' \
         --exclude='tools/flutter-tizen' \
+        --exclude='native/android-tv/.gradle' \
+        --exclude='native/android-tv/app/build' \
         --exclude='native/flutter/leleg_iptv/.dart_tool' \
         --exclude='native/flutter/leleg_iptv/build' \
         --exclude='native/flutter/leleg_iptv/android/.gradle' \

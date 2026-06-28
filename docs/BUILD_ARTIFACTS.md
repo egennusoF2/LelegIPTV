@@ -67,20 +67,12 @@ hdiutil create -volname LelegIPTV \
   www/downloads/current/LelegIPTV-macos-arm64-release.dmg
 ```
 
-## Android smartphone, tablet, Android TV
+## Android smartphone e tablet
 
 ```bash
 cd native/flutter/leleg_iptv
 flutter build apk --release --flavor mobile
 ```
-
-Per Android TV:
-
-```bash
-flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true
-```
-
-Oppure entrambi con `bash scripts/package-flutter-android-apks.sh` dalla root.
 
 Output:
 
@@ -110,13 +102,26 @@ Nota operativa:
 
 - `LelegIPTV-android-universal-release.apk` e' il flavor **mobile** (telefono/tablet).
 - `LelegIPTV-android-tv-release.apk` e' il flavor **tv**: launcher solo Leanback,
-  layout TV fisso (sidebar + telecomando) anche se il display riporta dimensioni
-  logiche da telefono (Fire TV, Chromecast, ecc.).
 - Evitare copie versionate parallele: in passato hanno creato confusione tra
   build vecchie e nuove.
 - Su Android smartphone/tablet il download offline e' demandato al
   `DownloadManager` di sistema: per la validazione manuale bisogna verificare
   la notifica Android oltre alla sezione `Download` dell'app.
+
+## Android TV, Google TV, Chromecast e Fire TV
+
+La versione TV non deriva più dal flavor Flutter. È un'app nativa separata
+basata su Kotlin, Compose for TV e Media3:
+
+```bash
+bash scripts/package-native-android-tv.sh
+```
+
+Output:
+
+```text
+www/downloads/current/LelegIPTV-android-tv-release.apk
+```
 
 ## iOS unsigned IPA per Scarlet / Sideloadly / AltStore
 

@@ -20,14 +20,16 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: flutter build apk --release --flavor mobile
-      - run: flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true
+      - name: Build native Android TV APK
+        working-directory: native/android-tv
+        run: ./gradlew assembleRelease
       - name: Package Android APK
         working-directory: .
         run: |
           mkdir -p www/downloads/current
           cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-mobile-release.apk \
             www/downloads/current/LelegIPTV-android-universal-release.apk
-          cp native/flutter/leleg_iptv/build/app/outputs/flutter-apk/app-tv-release.apk \
+          cp native/android-tv/app/build/outputs/apk/release/app-release.apk \
             www/downloads/current/LelegIPTV-android-tv-release.apk
       - uses: actions/upload-artifact@v4
         with:
@@ -149,8 +151,8 @@ jobs:
           tag_name: native-latest
           name: LelegIPTV native latest
           body: |
-            Artefatti nativi generati dal workflow Flutter installable artifacts.
-            Android TV, Chromecast e Fire TV usano LelegIPTV-android-tv-release.apk.
+            Artefatti installabili LelegIPTV.
+            Android TV, Chromecast e Fire TV usano il modulo Kotlin/Compose TV nativo.
             Windows x64 e Linux x64 sono prodotti dalla CI; Windows ARM64 va generato da Parallels se necessario.
           make_latest: true
           files: release-assets/*

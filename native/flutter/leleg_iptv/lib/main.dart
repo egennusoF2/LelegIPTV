@@ -3633,10 +3633,7 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         url,
         httpHeaders: _profile == null
             ? const {}
-            : {
-                'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-                'Referer': '${_profile!.baseUrl}/',
-              },
+            : _mediaHttpHeaders(url, _profile),
       ),
       play: true,
     );
@@ -4087,13 +4084,15 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
       _fullscreenOverlayTimer?.cancel();
     }
     if (Platform.isAndroid || Platform.isIOS) {
-      unawaited(
-        _applyMobileOrientationPolicy(fullscreen: next).catchError((error) {
-          if (mounted) {
-            setState(() => _status = 'Fullscreen non disponibile: $error');
-          }
-        }),
-      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(
+          _applyMobileOrientationPolicy(fullscreen: next).catchError((error) {
+            if (mounted) {
+              setState(() => _status = 'Fullscreen non disponibile: $error');
+            }
+          }),
+        );
+      });
       return;
     }
     if (Platform.isMacOS || Platform.isWindows) {
@@ -4320,28 +4319,31 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
         onKeyEvent: (_, event) => _handleShellKey(event),
         child: Scaffold(
           backgroundColor: Colors.black,
-          body: SafeArea(
-            child: Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: PlayerCard(
-                    title: _playerTitle,
-                    controller: _videoController,
-                    player: _player,
-                    appleController: _appleVideoController,
-                    tizenController: _tizenVideoController,
-                    rate: _rate,
-                    labelFor: _trackLabel,
-                    onAudioChanged: _selectAudioTrack,
-                    onSubtitleChanged: _selectSubtitleTrack,
-                    onRateChanged: _setRate,
-                    focusMode: true,
-                    pinControlsOnFocus: _isAndroidTv,
-                    onToggleFocusMode: _togglePlayerFocusMode,
-                    onPictureInPicture: _showPictureInPictureUnavailable,
-                  ),
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned.fill(
+                child: PlayerCard(
+                  title: _playerTitle,
+                  controller: _videoController,
+                  player: _player,
+                  appleController: _appleVideoController,
+                  tizenController: _tizenVideoController,
+                  rate: _rate,
+                  labelFor: _trackLabel,
+                  onAudioChanged: _selectAudioTrack,
+                  onSubtitleChanged: _selectSubtitleTrack,
+                  onRateChanged: _setRate,
+                  focusMode: true,
+                  pinControlsOnFocus: _isAndroidTv,
+                  onToggleFocusMode: _togglePlayerFocusMode,
+                  onPictureInPicture: _showPictureInPictureUnavailable,
                 ),
+              ),
+              SafeArea(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
                 if (_isAndroidTv && !_livePlayerActive)
                   Positioned(
                     left: 24,
@@ -4405,8 +4407,10 @@ class _LelegNativeShellState extends State<LelegNativeShell> {
                     ),
                   ),
                 ),
-              ],
-            ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -10220,9 +10224,20 @@ class _PlayerCardState extends State<PlayerCard> {
                                   style: TextStyle(color: LelegColors.muted),
                                 ),
                               )
-                            : Video(
-                                controller: mediaController,
-                                controls: NoVideoControls,
+                            : LayoutBuilder(
+                                builder: (context, constraints) {
+                                  return Video(
+                                    key: ValueKey(
+                                      'video-${constraints.maxWidth.round()}x'
+                                      '${constraints.maxHeight.round()}-'
+                                      '${widget.focusMode}',
+                                    ),
+                                    controller: mediaController,
+                                    controls: NoVideoControls,
+                                    fit: BoxFit.contain,
+                                    fill: Colors.black,
+                                  );
+                                },
                               ),
                       ),
                       Positioned(
