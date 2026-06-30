@@ -3684,7 +3684,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       );
       if (playbackId != _livePlaybackGeneration) return;
       if (opened) {
-        _enterMobilePlaybackFullscreen();
+        _enterLivePlaybackFullscreen();
         if (mounted) {
           setState(() {
             _status =
@@ -3792,7 +3792,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     }
     if (playbackId != _livePlaybackGeneration) return;
     if (opened) {
-      _enterMobilePlaybackFullscreen();
+      _enterLivePlaybackFullscreen();
       if (mounted) {
         setState(() => _status = 'Archivio in riproduzione: ${resolved.title}');
       }
@@ -4378,6 +4378,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
   /// Fullscreen landscape player on phone and tablet (mobile flavor only).
   void _enterMobilePlaybackFullscreen() {
     _enterFullscreenOnPhonePlayback(force: _isMobileHandheld);
+  }
+
+  /// Live TV stays inline on tablets and enters fullscreen directly on phones.
+  void _enterLivePlaybackFullscreen() {
+    _enterFullscreenOnPhonePlayback();
   }
 
   Future<bool> _openMedia(
@@ -4978,10 +4983,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     if (_playerFocusMode == next) return;
     setState(() {
       _playerFocusMode = next;
-      _fullscreenOverlayVisible = next && _isAndroidTv;
+      _fullscreenOverlayVisible = next;
       _vodToolbarIndex = -1;
     });
-    if (next && _isAndroidTv) {
+    if (next) {
       _scheduleFullscreenOverlayHide();
     } else {
       _fullscreenOverlayTimer?.cancel();
@@ -5059,6 +5064,16 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         setState(() => _fullscreenOverlayVisible = false);
       }
     });
+  }
+
+  void _setFullscreenChromeVisible(bool visible) {
+    if (!_playerFocusMode || _fullscreenOverlayVisible == visible) return;
+    setState(() => _fullscreenOverlayVisible = visible);
+    if (visible) {
+      _scheduleFullscreenOverlayHide();
+    } else {
+      _fullscreenOverlayTimer?.cancel();
+    }
   }
 
   Future<void> _playAdjacentLiveChannel(int direction) async {
@@ -5559,6 +5574,9 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                     onRateChanged: _setRate,
                     focusMode: true,
                     pinControlsOnFocus: _isAndroidTv,
+                    onControlsVisibilityChanged: _isAndroidTv
+                        ? null
+                        : _setFullscreenChromeVisible,
                     onToggleFocusMode: _togglePlayerFocusMode,
                     onPictureInPicture: _showPictureInPictureUnavailable,
                   ),
@@ -5626,13 +5644,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                         top: 20,
                         right: 20,
                         child: AnimatedOpacity(
-                          opacity: (!_isAndroidTv || _fullscreenOverlayVisible)
-                              ? 1
-                              : 0,
+                          opacity: _fullscreenOverlayVisible ? 1 : 0,
                           duration: const Duration(milliseconds: 180),
                           child: IgnorePointer(
-                            ignoring:
-                                _isAndroidTv && !_fullscreenOverlayVisible,
+                            ignoring: !_fullscreenOverlayVisible,
                             child: Material(
                               color: Colors.black.withValues(alpha: 0.72),
                               shape: const CircleBorder(),
@@ -7232,7 +7247,7 @@ class _HomeHeroGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = _useCompactAdaptiveConstraints(constraints);
+        final compact = constraints.maxWidth < 700;
         if (compact) {
           return Column(
             children: [
@@ -11640,6 +11655,7 @@ class PlayerCard extends StatefulWidget {
     required this.onPictureInPicture,
     this.focusMode = false,
     this.pinControlsOnFocus = false,
+    this.onControlsVisibilityChanged,
     super.key,
   });
 
@@ -11657,6 +11673,7 @@ class PlayerCard extends StatefulWidget {
   final VoidCallback onPictureInPicture;
   final bool focusMode;
   final bool pinControlsOnFocus;
+  final ValueChanged<bool>? onControlsVisibilityChanged;
 
   @override
   State<PlayerCard> createState() => _PlayerCardState();
@@ -11690,6 +11707,7 @@ class _PlayerCardState extends State<PlayerCard> {
     if (!_showControls && mounted) {
       setState(() => _showControls = true);
     }
+    widget.onControlsVisibilityChanged?.call(true);
     _hideControlsTimer = Timer(
       Duration(
         milliseconds: widget.focusMode && !widget.pinControlsOnFocus
@@ -11699,6 +11717,7 @@ class _PlayerCardState extends State<PlayerCard> {
       () {
         if (mounted && !_pinControlsInFocusMode) {
           setState(() => _showControls = false);
+          widget.onControlsVisibilityChanged?.call(false);
         }
       },
     );
@@ -11708,6 +11727,7 @@ class _PlayerCardState extends State<PlayerCard> {
     _hideControlsTimer?.cancel();
     if (mounted && !_pinControlsInFocusMode) {
       setState(() => _showControls = false);
+      widget.onControlsVisibilityChanged?.call(false);
     }
   }
 
