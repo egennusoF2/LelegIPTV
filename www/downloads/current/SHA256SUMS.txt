@@ -1,9 +1,10 @@
 7006152c1b1c5e8aaf03e3583fb340c88ca692f2e2f814e3eef8e3e9084eb68b  ./LelegIPTV-macos-arm64-release.zip
 f8d674225f8fe0a6be980d01574991a93b8932a23129000e56eab0f1c276e091  ./LelegIPTV-android-mobile-release.apk
-2282d9015f2e3e872e2c5c30e61abc52191a40d9c0fb901139eaea24632e04de  ./LelegIPTV-android-tv-release.apk.sha256
-e9ef8b7c16a3c25f9fd064b00607a9044a37e4c3b61c784a46aa559f47cf85e7  ./LelegIPTV-android-tv-release.apk
+919f13b99e130fd4ea484ad03d6aa889b75ba87f2df88ec58c61566595e6bfb5  ./LelegIPTV-android-tv-release.apk.sha256
+6b0708204d6e9436667b6e6685e6b132dce13fd2cb2c12e0342393da072140fe  ./LelegIPTV-android-tv-release.apk
 eb5538581182eae3b98f9d7a5607bec17c5c3771cdaa8a154ca7bcc714e2aca3  ./downloader-urls.txt
 c6492e073dc99e9eab67d3c055368f8df95910aac2f4a583b96bf3e4f1dcf41f  ./tizen-dev-config.xml
+15e2ae52769aa61f90a473a26d503a8ae7986a827335e2e92ec700d8b834ba11  ./SHA256SUMS-android-tv.txt
 4580beb99d6a25e6b9398a35350637ac3ba0c9393ce85740a78be7af5fa3769f  ./LelegIPTV-ios-unsigned.ipa
 e85384d16c637d8e9cfce8f1cadd3aaecc274b5d4e4af5fdb878cbbd56774af5  ./LelegIPTV-macos-arm64-release.dmg
 a518b828a8c801f1ea9db3ae3985344d0fe07f1b5d124e7458c8a77a18a78fe3  ./LelegIPTV-tizen-tv-release.tpk
