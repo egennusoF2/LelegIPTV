@@ -49,6 +49,21 @@ class MainActivity : FlutterActivity() {
                     result.success(BuildConfig.LELEG_TV_FLAVOR || fromManifest)
                 }
 
+                "isTablet" -> {
+                    val config = resources.configuration
+                    val screenSize = config.screenLayout and Configuration.SCREENLAYOUT_SIZE_MASK
+                    val smallestWidth = config.smallestScreenWidthDp
+                    // LARGE+ covers most tablets; 480dp catches 7–8" devices mis-reported as phones.
+                    val isTablet =
+                        screenSize >= Configuration.SCREENLAYOUT_SIZE_LARGE ||
+                            smallestWidth >= 480
+                    result.success(isTablet)
+                }
+
+                "smallestScreenWidthDp" -> {
+                    result.success(resources.configuration.smallestScreenWidthDp)
+                }
+
                 "setRemoteKeyPassthrough" -> {
                     remoteKeyPassthrough = call.argument<Boolean>("enabled") == true
                     result.success(true)

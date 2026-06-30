@@ -608,8 +608,8 @@ private fun GuideProgrammeColumn(
                                     val isPast = programme.endTimeMillis <= nowMillis
                                     val canReplay = EpgReplay.canReplay(channel, programme, nowMillis)
                                     when {
+                                        programme.isLiveAt(nowMillis) -> onOpenChannel(channel)
                                         isPast && canReplay -> onCatchup(channel, programme)
-                                        programme.startTimeMillis <= nowMillis -> onOpenChannel(channel)
                                     }
                                 },
                             )
@@ -667,36 +667,55 @@ private fun GuideProgrammeCard(
     val canReplay = EpgReplay.canReplay(channel, programme, nowMillis)
     val durationMin =
         ((programme.endTimeMillis - programme.startTimeMillis) / 60_000L).coerceAtLeast(1L)
+    val liveFraction =
+        if (isLive) {
+            val total = (programme.endTimeMillis - programme.startTimeMillis).coerceAtLeast(1L)
+            ((nowMillis - programme.startTimeMillis).toFloat() / total).coerceIn(0f, 1f)
+        } else {
+            null
+        }
 
-    HorizontalMediaCard(
-        onClick = onClick,
-        imageUrl = channel.logo,
-        imageContentDescription = channel.name,
-        eyebrow = buildString {
-            append(formatClock(programme.startTimeMillis))
-            append(" - ")
-            append(formatClock(programme.endTimeMillis))
-            when {
-                isLive -> append("  •  LIVE")
-                isPast && canReplay -> append("  •  ARCHIVIO")
-                isPast -> append("  •  TERMINATO")
-            }
-        },
-        title = programme.title,
-        badge = "$durationMin min",
-        subtitle = formatProgrammeDate(programme.startTimeMillis),
-        description = programme.description,
-        selected = isLive,
-        focusRequester = focusRequester,
-        modifier = Modifier.onPreviewKeyEvent {
-            if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
-                onMoveLeft()
-                true
-            } else {
-                false
-            }
-        },
-    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        HorizontalMediaCard(
+            onClick = onClick,
+            imageUrl = channel.logo,
+            imageContentDescription = channel.name,
+            eyebrow = buildString {
+                append(formatClock(programme.startTimeMillis))
+                append(" - ")
+                append(formatClock(programme.endTimeMillis))
+                when {
+                    isLive -> append("  •  LIVE")
+                    isPast && canReplay -> append("  •  ARCHIVIO")
+                    isPast -> append("  •  TERMINATO")
+                }
+            },
+            title = programme.title,
+            badge = "$durationMin min",
+            subtitle = formatProgrammeDate(programme.startTimeMillis),
+            description = programme.description,
+            selected = isLive,
+            focusRequester = focusRequester,
+            modifier = Modifier.onPreviewKeyEvent {
+                if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
+                    onMoveLeft()
+                    true
+                } else {
+                    false
+                }
+            },
+        )
+        if (liveFraction != null) {
+            androidx.compose.material3.LinearProgressIndicator(
+                progress = { liveFraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp),
+                color = TvColors.Accent,
+                trackColor = TvColors.Line,
+            )
+        }
+    }
 }
 
 @Composable

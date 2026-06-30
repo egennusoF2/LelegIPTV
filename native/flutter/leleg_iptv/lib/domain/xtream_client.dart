@@ -4,6 +4,8 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart';
 
+import 'catchup.dart';
+
 class XtreamProfile {
   const XtreamProfile({
     required this.serverUrl,
@@ -208,7 +210,10 @@ class XtreamClient {
         map['epg_listings'] ??
         map['epg_list'] ??
         map['epg'] ??
-        map['programmes'];
+        map['programmes'] ??
+        map['programs'] ??
+        map['listings'] ??
+        map['data'];
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
@@ -273,8 +278,7 @@ class XtreamClient {
         null => lookbackDays,
         final item when item.catchupDays > 0 =>
           item.catchupDays > lookbackDays ? item.catchupDays : lookbackDays,
-        final item when item.hasCatchup =>
-          lookbackDays > 7 ? lookbackDays : 7,
+        final item when item.hasCatchup => lookbackDays > 7 ? lookbackDays : 7,
         _ => lookbackDays,
       };
       final lowerBound = now.subtract(Duration(days: replayDays));
@@ -346,11 +350,7 @@ class XtreamClient {
     if (rawEpisodes is Map) {
       for (final entry in rawEpisodes.entries) {
         final seasonNumber = _parseSeasonMapKey(entry.key.toString());
-        _collectSeasonEpisodes(
-          episodes,
-          entry.value,
-          seasonNumber,
-        );
+        _collectSeasonEpisodes(episodes, entry.value, seasonNumber);
       }
     } else if (rawEpisodes is List) {
       for (final item in rawEpisodes.whereType<Map>()) {
@@ -428,66 +428,12 @@ class XtreamClient {
   }
 
   List<String> catchupUrls(LiveChannel channel, EpgProgramme programme) {
-    if (!_canReplayProgramme(channel, programme, DateTime.now())) {
-      return const [];
-    }
-    final start = programme.start;
-    final end = programme.end;
-    if (start == null || end == null) return const [];
-
-    final urls = <String>[];
-    final mode = channel.catchup.trim().toLowerCase();
-    final liveBase = channel.directSource.trim().isNotEmpty
-        ? channel.directSource.trim()
-        : liveUrl(channel);
-
-    if (mode == 'append' ||
-        mode == 'default' ||
-        mode == 'shift' ||
-        mode == 'flussonic' ||
-        (mode.isEmpty && channel.catchupDays > 0)) {
-      final startSec = start.millisecondsSinceEpoch ~/ 1000;
-      final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final separator = liveBase.contains('?') ? '&' : '?';
-      urls.add('$liveBase${separator}utc=$startSec&lutc=$nowSec');
-    }
-
-    if (mode == 'xtream' || channel.catchupDays > 0 || mode.isEmpty) {
-      urls.addAll(_xtreamTimeshiftUrls(channel, programme));
-    }
-
-    return urls.toSet().toList(growable: false);
-  }
-
-  List<String> _xtreamTimeshiftUrls(
-    LiveChannel channel,
-    EpgProgramme programme,
-  ) {
-    final start = programme.start;
-    final end = programme.end;
-    if (start == null || end == null) return const [];
-    final durationMinutes = (end.difference(start).inSeconds / 60).ceil();
-    final safeDuration = durationMinutes < 1 ? 1 : durationMinutes;
-    final stamp = _formatXtreamCatchupStart(start);
-    final primary = profile.liveContainer == 'ts' ? 'ts' : 'm3u8';
-    final alternate = primary == 'ts' ? 'm3u8' : 'ts';
-    final user = profile.username;
-    final pass = profile.password;
-    final base =
-        '${profile.baseUrl}/timeshift/$user/$pass/$safeDuration/$stamp/${channel.id}';
-    final encodedBase =
-        '${profile.baseUrl}/timeshift/'
-        '${Uri.encodeComponent(profile.username)}/'
-        '${Uri.encodeComponent(profile.password)}/'
-        '$safeDuration/'
-        '${Uri.encodeComponent(stamp)}/'
-        '${Uri.encodeComponent(channel.id.toString())}';
-    return {
-      '$base.$primary',
-      '$base.$alternate',
-      '$encodedBase.$primary',
-      '$encodedBase.$alternate',
-    }.toList(growable: false);
+    return Catchup.buildStreamUrls(
+      profile,
+      channel,
+      programme,
+      liveUrl: liveUrl,
+    );
   }
 
   String? catchupUrl(LiveChannel channel, EpgProgramme programme) {
@@ -667,29 +613,6 @@ class XtreamClient {
         .replaceAll(RegExp(r'\|[^|]*\|'), ' ')
         .replaceAll(RegExp(r'[^a-z0-9]+'), '');
   }
-
-  bool _canReplayProgramme(
-    LiveChannel? channel,
-    EpgProgramme programme,
-    DateTime now,
-  ) {
-    if (channel == null || !channel.hasCatchup) return false;
-    final start = programme.start;
-    final end = programme.end;
-    if (start == null || end == null) return false;
-    if (end.isAfter(now) || !end.isAfter(start)) return false;
-    final windowDays = channel.catchupDays > 0
-        ? channel.catchupDays
-        : (channel.hasCatchup ? 7 : 0);
-    if (windowDays <= 0) return false;
-    return start.isAfter(now.subtract(Duration(days: windowDays)));
-  }
-
-  String _formatXtreamCatchupStart(DateTime value) {
-    String pad(int number) => number.toString().padLeft(2, '0');
-    return '${value.year}-${pad(value.month)}-${pad(value.day)}:'
-        '${pad(value.hour)}-${pad(value.minute)}';
-  }
 }
 
 class XtreamException implements Exception {
@@ -757,6 +680,7 @@ class LiveChannel {
     required this.catchup,
     required this.catchupDays,
     this.directSource = '',
+    this.catchupSource = '',
   });
 
   final int id;
@@ -767,8 +691,9 @@ class LiveChannel {
   final String catchup;
   final int catchupDays;
   final String directSource;
+  final String catchupSource;
 
-  bool get hasCatchup => catchup.isNotEmpty || catchupDays > 0;
+  bool get hasCatchup => Catchup.channelHasCatchup(this);
 
   factory LiveChannel.fromJson(Map<String, dynamic> json) => LiveChannel(
     id: int.tryParse(json['stream_id']?.toString() ?? '') ?? 0,
@@ -782,6 +707,8 @@ class LiveChannel {
     catchup: _parseCatchupMode(json),
     catchupDays: _parseCatchupDays(json),
     directSource: json['direct_source']?.toString() ?? '',
+    catchupSource:
+        (json['catchup_source'] ?? json['catchupSource'])?.toString() ?? '',
   );
 
   Map<String, dynamic> toJson() => {
@@ -794,6 +721,7 @@ class LiveChannel {
     'tv_archive': catchup == 'xtream' ? 1 : 0,
     'tv_archive_duration': catchupDays,
     'direct_source': directSource,
+    'catchup_source': catchupSource,
   };
 
   static String _parseCatchupMode(Map<String, dynamic> json) {

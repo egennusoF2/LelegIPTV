@@ -4,6 +4,7 @@ import { profileFromForm, presetCodes } from "./data/profilePresets";
 import type { LiveChannel, VodMovie } from "./data/models";
 import { AvplayPlayer, Html5PreviewPlayer } from "./player/avplay";
 import { CatalogState } from "./state/catalogState";
+import { ensureWebapisLoaded, setVisible } from "./polyfills";
 import {
   clearElement,
   el,
@@ -354,7 +355,7 @@ export class LelegTvApp {
 
   private openFullscreen(url: string, title: string): void {
     this.fullscreen = true;
-    this.playerLayer.hidden = false;
+    setVisible(this.playerLayer, true);
     clearElement(this.playerLayer);
     const overlay = el("div", "player-overlay");
     overlay.innerHTML = `
@@ -362,26 +363,35 @@ export class LelegTvApp {
         <div class="player-title"></div>
         <div class="player-hint">Back per uscire · Play/Pausa · ← → canale (live)</div>
       </div>`;
-    overlay.querySelector(".player-title")!.textContent = title;
-    this.playerLayer.append(overlay);
+    const titleNode = overlay.querySelector(".player-title");
+    if (titleNode) titleNode.textContent = title;
+    this.playerLayer.appendChild(overlay);
 
-    if (this.avplay.isAvailable()) {
-      this.avplay.open(url, title);
-      this.avplay.setFullscreen();
-    } else {
+    const useHtmlPreview = (): void => {
       const box = el("div");
       box.style.width = "100%";
       box.style.height = "100%";
-      this.playerLayer.prepend(box);
+      this.playerLayer.insertBefore(box, this.playerLayer.firstChild);
       this.htmlPreview.mount(box);
       this.htmlPreview.open(url);
-    }
+    };
+
+    void ensureWebapisLoaded()
+      .then(() => {
+        if (this.avplay.isAvailable()) {
+          this.avplay.open(url, title);
+          this.avplay.setFullscreen();
+        } else {
+          useHtmlPreview();
+        }
+      })
+      .catch(() => useHtmlPreview());
   }
 
   private closeFullscreen(): void {
     if (!this.fullscreen) return;
     this.fullscreen = false;
-    this.playerLayer.hidden = true;
+    setVisible(this.playerLayer, false);
     this.avplay.stop();
     this.htmlPreview.stop();
     clearElement(this.playerLayer);

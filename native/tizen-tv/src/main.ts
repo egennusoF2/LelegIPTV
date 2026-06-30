@@ -1,16 +1,18 @@
+import "./polyfills";
+import { setVisible } from "./polyfills";
 import { LelegTvApp } from "./app";
 
 function hideSplash(): void {
-  const splash = document.getElementById("boot-splash");
-  if (splash) splash.hidden = true;
+  setVisible(document.getElementById("boot-splash"), false);
 }
 
 function showBootError(message: string): void {
   hideSplash();
   const panel = document.getElementById("boot-error");
   if (!panel) return;
-  panel.hidden = false;
   panel.textContent = message;
+  setVisible(panel, true);
+  panel.style.display = "flex";
 }
 
 window.addEventListener("error", (event) => {

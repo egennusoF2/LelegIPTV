@@ -23,10 +23,7 @@ html = html
   .replace(/<link rel="stylesheet" href="\.\/assets\/[^"]+\.css">\s*/g, "")
   .replace(/<script type="module" src="\.\/assets\/[^"]+\.js"><\/script>\s*/g, "")
   .replace("</head>", cssTag ? `  ${cssTag}\n  </head>` : "</head>")
-  .replace(
-    "</body>",
-    `    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>\n    ${jsSrc}\n  </body>`,
-  );
+  .replace("</body>", `    ${jsSrc}\n  </body>`);
 
 writeFileSync(indexPath, html);
 console.log("Fixed dist/index.html for Samsung Tizen TV");

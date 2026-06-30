@@ -1,3 +1,5 @@
+import { ensureWebapisLoaded } from "../polyfills";
+
 type AvplayListener = {
   onbufferingstart?: () => void;
   onbufferingcomplete?: () => void;
@@ -52,6 +54,19 @@ export class AvplayPlayer {
   }
 
   open(url: string, title: string, rect?: { x: number; y: number; w: number; h: number }): void {
+    void ensureWebapisLoaded()
+      .then(() => this.openWithAvplay(url, title, rect))
+      .catch(() => {
+        this.setState("error", title);
+        throw new Error("AVPlay non disponibile su questo dispositivo");
+      });
+  }
+
+  private openWithAvplay(
+    url: string,
+    title: string,
+    rect?: { x: number; y: number; w: number; h: number },
+  ): void {
     const player = avplay();
     if (!player) {
       this.setState("error", title);

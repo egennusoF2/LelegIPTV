@@ -1,3 +1,5 @@
+import { safeScrollIntoView } from "../polyfills";
+
 export type FocusDirection = "up" | "down" | "left" | "right";
 
 export interface FocusableElement {
@@ -67,7 +69,7 @@ export class FocusManager {
     if (!current) return;
     current.el.classList.add("focused");
     current.el.setAttribute("aria-selected", "true");
-    current.el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    safeScrollIntoView(current.el);
   }
 }
 
