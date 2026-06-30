@@ -17,11 +17,24 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
@@ -354,36 +367,79 @@ private fun PlayerControls(
             programmes.firstOrNull { now >= it.startTimeMillis && now < it.endTimeMillis }
         }
 
-    Box(
-        modifier = modifier.background(Color(0x33000000)),
-    ) {
-        BasicText(
-            text = buildString {
-                append(title)
-                currentProgramme?.let {
-                    append("\n")
-                    append(it.title)
-                }
-            },
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            style = TextStyle(
-                color = Color.White,
-                fontSize = 25.sp,
-                fontWeight = FontWeight.SemiBold,
-            ),
+    Box(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(160.dp)
+                .align(Alignment.TopCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xE6081017),
+                            Color(0x99081017),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+                .align(Alignment.BottomCenter)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            Color(0xCC081016),
+                            Color(0xF2081016),
+                        ),
+                    ),
+                ),
+        )
+
+        Column(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(horizontal = 38.dp, vertical = 28.dp),
-        )
+                .padding(horizontal = 40.dp, vertical = 30.dp)
+                .fillMaxWidth(0.72f),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (isLive) {
+                LiveBadge()
+            }
+            BasicText(
+                text = title,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = TextStyle(
+                    color = Color.White,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = TvTypography.fontFamily,
+                ),
+            )
+            currentProgramme?.title?.takeIf { it.isNotBlank() }?.let { programmeTitle ->
+                BasicText(
+                    text = programmeTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        color = TvColors.Muted,
+                        fontSize = 17.sp,
+                        fontFamily = TvTypography.fontFamily,
+                    ),
+                )
+            }
+        }
 
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Color(0xD9081017))
-                .padding(horizontal = 38.dp, vertical = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 36.dp, vertical = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (isVod) {
                 Timeline(
@@ -399,17 +455,29 @@ private fun PlayerControls(
                 if (isLive) {
                     BasicText(
                         "↑ Canale precedente    ↓ Canale successivo",
-                        style = TextStyle(color = Color(0xFF9AA4B2), fontSize = 14.sp),
+                        style = TextStyle(
+                            color = TvColors.Muted,
+                            fontSize = 13.sp,
+                            fontFamily = TvTypography.fontFamily,
+                        ),
                     )
                 }
             }
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xCC121A20))
+                    .border(1.dp, Color(0xFF2D3A44), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ControlButton(
-                    label = if (isPlaying) "Pausa" else "Riproduci",
+                ControlChip(
+                    icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    label = if (isPlaying) "Pausa" else "Play",
+                    emphasized = true,
                     onClick = {
                         if (isPlaying) player.pause() else player.play()
                         onInteraction()
@@ -417,15 +485,17 @@ private fun PlayerControls(
                     modifier = Modifier.focusRequester(playFocus),
                 )
                 if (isVod) {
-                    ControlButton(
-                        label = "-10 s",
+                    ControlChip(
+                        icon = Icons.Default.Replay10,
+                        label = "-10s",
                         onClick = {
                             player.seekTo((player.currentPosition - SeekIncrementMs).coerceAtLeast(0L))
                             onInteraction()
                         },
                     )
-                    ControlButton(
-                        label = "+10 s",
+                    ControlChip(
+                        icon = Icons.Default.Forward10,
+                        label = "+10s",
                         onClick = {
                             player.seekTo((player.currentPosition + SeekIncrementMs).coerceAtMost(durationMs))
                             onInteraction()
@@ -433,16 +503,49 @@ private fun PlayerControls(
                     )
                 }
                 Spacer(Modifier.weight(1f))
-                ControlButton(
-                    if (hasAudioTracks) "Audio" else "Audio --",
+                ControlChip(
+                    icon = Icons.AutoMirrored.Filled.VolumeUp,
+                    label = if (hasAudioTracks) "Audio" else "Audio --",
+                    enabled = hasAudioTracks,
                     onClick = { onOpenTracks(TrackMenu.Audio) },
                 )
-                ControlButton(
+                ControlChip(
+                    icon = Icons.Default.Subtitles,
                     label = if (hasSubtitleTracks) "Sottotitoli" else "Sottotitoli --",
+                    enabled = hasSubtitleTracks,
                     onClick = { onOpenTracks(TrackMenu.Subtitles) },
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun LiveBadge() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color(0x332FC8F1))
+            .border(1.dp, TvColors.Accent.copy(alpha = 0.65f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(TvColors.Accent),
+        )
+        BasicText(
+            "LIVE",
+            style = TextStyle(
+                color = TvColors.Accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = TvTypography.fontFamily,
+            ),
+        )
     }
 }
 
@@ -497,10 +600,12 @@ private fun Timeline(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0x66121A20))
             .border(
-                width = if (focused) 2.dp else 0.dp,
-                color = if (focused) TvColors.Accent else Color.Transparent,
-                shape = RoundedCornerShape(6.dp),
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) TvColors.Accent else Color(0xFF2D3A44),
+                shape = RoundedCornerShape(12.dp),
             )
             .onFocusChanged { focused = it.hasFocus }
             .onPreviewKeyEvent {
@@ -518,26 +623,58 @@ private fun Timeline(
                 }
             }
             .focusable()
-            .padding(6.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            BasicText(
+                text = formatTime(positionMs),
+                style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+            )
+            BasicText(
+                text = formatTime(durationMs),
+                style = TextStyle(color = TvColors.Muted, fontSize = 14.sp),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(6.dp)
-                .background(Color(0xFF53606A), RoundedCornerShape(3.dp)),
+                .height(8.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(Color(0xFF2D3A44)),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progress)
-                    .height(6.dp)
-                    .background(TvColors.Accent, RoundedCornerShape(3.dp)),
+                    .height(8.dp)
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(TvColors.Accent.copy(alpha = 0.85f), TvColors.Accent),
+                        ),
+                        RoundedCornerShape(999.dp),
+                    ),
             )
+            if (progress > 0.02f) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .fillMaxWidth(progress)
+                        .padding(end = 2.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                            .border(2.dp, TvColors.Accent, CircleShape),
+                    )
+                }
+            }
         }
-        Spacer(Modifier.height(7.dp))
-        BasicText(
-            text = "${formatTime(positionMs)} / ${formatTime(durationMs)}",
-            style = TextStyle(color = Color.White, fontSize = 14.sp),
-        )
     }
 }
 
@@ -635,6 +772,65 @@ private fun TrackPicker(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ControlChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    emphasized: Boolean = false,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier
+            .defaultMinSize(minWidth = 78.dp)
+            .clip(shape)
+            .background(
+                when {
+                    !enabled -> Color(0xFF1A232B)
+                    focused -> TvColors.Accent
+                    emphasized -> Color(0xFF1F5366)
+                    else -> Color(0xFF172028)
+                },
+                shape,
+            )
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = when {
+                    !enabled -> Color(0xFF2D3A44)
+                    focused -> Color.White
+                    emphasized -> TvColors.Accent.copy(alpha = 0.55f)
+                    else -> Color(0xFF36424C)
+                },
+                shape = shape,
+            )
+            .onFocusChanged { focused = it.hasFocus }
+            .clickable(enabled = enabled, onClick = onClick)
+            .focusable(enabled)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (enabled) Color.White else Color(0xFF7D8992),
+            modifier = Modifier.size(22.dp),
+        )
+        BasicText(
+            text = label,
+            style = TextStyle(
+                color = if (enabled) Color.White else Color(0xFF7D8992),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                fontFamily = TvTypography.fontFamily,
+            ),
+        )
     }
 }
 

@@ -803,14 +803,14 @@ private fun SeriesEpisodes(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(30.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(22.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .width(180.dp)
+                    .width(132.dp)
                     .aspectRatio(2f / 3f)
                     .clip(RoundedCornerShape(10.dp))
                     .background(TvColors.SurfaceDeep),
@@ -847,9 +847,9 @@ private fun SeriesEpisodes(
                 if (info.show.plot.isNotBlank()) {
                     BasicText(
                         info.show.plot,
-                        maxLines = 3,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        style = TvTypography.mutedStyle,
+                        style = TvTypography.mutedStyle.copy(fontSize = TvTypography.body),
                     )
                 }
                 FocusCard(
@@ -868,7 +868,7 @@ private fun SeriesEpisodes(
         }
 
         if (seasonNumbers.isNotEmpty()) {
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(12.dp))
             LazyRow(
                 state = seasonListState,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -918,7 +918,7 @@ private fun SeriesEpisodes(
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
         if (seasonEpisodes.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -933,12 +933,15 @@ private fun SeriesEpisodes(
             LazyColumn(
                 state = episodeListState,
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(seasonEpisodes, key = { it.id }) { episode ->
                     val isFirstEpisode = episode == seasonEpisodes.firstOrNull()
                     val episodeProgress = library.episodeProgress[episode.id]?.progress
                     val progressBadge = episodeProgress?.progressLabel
+                    val durationBadge =
+                        progressBadge ?: episode.duration.takeIf { it.isNotBlank() }
                     HorizontalMediaCard(
                         onClick = { onEpisode(episode, false) },
                         imageUrl = episode.image.ifBlank { imageUrl },
@@ -946,10 +949,9 @@ private fun SeriesEpisodes(
                         eyebrow =
                             "Stagione ${episode.season}  •  Episodio ${episode.episode}",
                         title = episode.title.ifBlank { "Episodio ${episode.episode}" },
-                        subtitle = episode.duration.takeIf { it.isNotBlank() },
-                        description = episode.plot.takeIf { it.isNotBlank() },
-                        badge = progressBadge ?: episode.duration.takeIf { it.isNotBlank() },
+                        badge = durationBadge,
                         progressFraction = episodeProgress?.fraction?.toFloat(),
+                        compact = true,
                         focusRequester = if (isFirstEpisode) episodeFocusRequester else null,
                         modifier = Modifier.onPreviewKeyEvent {
                             if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false

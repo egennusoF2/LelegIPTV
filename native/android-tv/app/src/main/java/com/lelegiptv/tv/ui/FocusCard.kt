@@ -27,6 +27,7 @@ fun FocusCard(
     focusRequester: FocusRequester? = null,
     selected: Boolean = false,
     padding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+    focusScale: Float = 1.02f,
     content: @Composable () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -35,7 +36,7 @@ fun FocusCard(
     Box(
         modifier = modifier
             .then(requesterModifier)
-            .scale(if (focused) 1.02f else 1f)
+            .scale(if (focused) focusScale else 1f)
             .background(
                 when {
                     focused -> TvColors.PanelSelected
