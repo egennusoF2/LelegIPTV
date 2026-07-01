@@ -70,10 +70,15 @@ jobs:
             -Path native/flutter/leleg_iptv/build/windows/x64/runner/Release/* `
             -DestinationPath www/downloads/current/LelegIPTV-windows-x64-release.zip `
             -Force
+          Copy-Item `
+            www/downloads/current/LelegIPTV-windows-x64-release.zip `
+            www/downloads/current/LelegIPTV-windows-x64-v1.0.16.zip
       - uses: actions/upload-artifact@v4
         with:
           name: LelegIPTV-windows-x64-release
-          path: www/downloads/current/LelegIPTV-windows-x64-release.zip
+          path: |
+            www/downloads/current/LelegIPTV-windows-x64-release.zip
+            www/downloads/current/LelegIPTV-windows-x64-v1.0.16.zip
 
   linux:
     name: Linux desktop bundle

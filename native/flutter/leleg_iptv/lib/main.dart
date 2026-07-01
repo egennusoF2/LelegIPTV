@@ -969,7 +969,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         ? null
         : VideoController(
             mediaPlayer,
-            configuration: const VideoControllerConfiguration(
+            configuration: VideoControllerConfiguration(
+              enableHardwareAcceleration: !Platform.isWindows,
               androidAttachSurfaceAfterVideoParameters: true,
             ),
           );
@@ -9748,60 +9749,75 @@ class SeriesDetailScreen extends StatelessWidget {
           : Row(
               children: [
                 SizedBox(
-                  width: 430,
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
-                        child: Row(
+                  width: Platform.isWindows ? 520 : 430,
+                  child: Platform.isWindows
+                      ? _WindowsSeriesDetailPane(
+                          show: show,
+                          description: description,
+                          episodes: episodes,
+                          loading: loading,
+                          canResume: canResume,
+                          onResume: onResume,
+                          onBack: onBack,
+                          episodeProgress: episodeProgress,
+                          onPlay: onPlay,
+                        )
+                      : Column(
                           children: [
-                            OutlinedButton.icon(
-                              onPressed: onBack,
-                              icon: const Icon(Icons.arrow_back),
-                              label: const Text('Serie'),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 14),
+                              child: Row(
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: onBack,
+                                    icon: const Icon(Icons.arrow_back),
+                                    label: const Text('Serie'),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  if (canResume && onResume != null)
+                                    FilledButton.icon(
+                                      onPressed: onResume,
+                                      icon: const Icon(
+                                        Icons.play_circle_outline,
+                                      ),
+                                      label: const Text('Riprendi'),
+                                    ),
+                                  if (loading)
+                                    const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
-                            const SizedBox(width: 12),
-                            if (canResume && onResume != null)
-                              FilledButton.icon(
-                                onPressed: onResume,
-                                icon: const Icon(Icons.play_circle_outline),
-                                label: const Text('Riprendi'),
-                              ),
-                            if (loading)
-                              const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              ),
+                            Expanded(
+                              child: episodes.isEmpty
+                                  ? const _EmptyState(
+                                      message: 'Nessun episodio caricato.',
+                                    )
+                                  : ListView.separated(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        20,
+                                        0,
+                                        20,
+                                        20,
+                                      ),
+                                      itemCount: episodes.length,
+                                      separatorBuilder: (_, _) =>
+                                          const SizedBox(height: 8),
+                                      itemBuilder: (_, index) => _EpisodeTile(
+                                        episode: episodes[index],
+                                        progress:
+                                            episodeProgress[episodes[index].id],
+                                        onPlay: onPlay,
+                                      ),
+                                    ),
+                            ),
                           ],
                         ),
-                      ),
-                      Expanded(
-                        child: episodes.isEmpty
-                            ? const _EmptyState(
-                                message: 'Nessun episodio caricato.',
-                              )
-                            : ListView.separated(
-                                padding: const EdgeInsets.fromLTRB(
-                                  20,
-                                  0,
-                                  20,
-                                  20,
-                                ),
-                                itemCount: episodes.length,
-                                separatorBuilder: (_, _) =>
-                                    const SizedBox(height: 8),
-                                itemBuilder: (_, index) => _EpisodeTile(
-                                  episode: episodes[index],
-                                  progress: episodeProgress[episodes[index].id],
-                                  onPlay: onPlay,
-                                ),
-                              ),
-                      ),
-                    ],
-                  ),
                 ),
                 const VerticalDivider(width: 1, color: LelegColors.line),
                 Expanded(
@@ -14080,6 +14096,126 @@ class _SeriesSeasonList extends StatelessWidget {
               ),
             ),
         ],
+      ],
+    );
+  }
+}
+
+class _WindowsSeriesDetailPane extends StatelessWidget {
+  const _WindowsSeriesDetailPane({
+    required this.show,
+    required this.description,
+    required this.episodes,
+    required this.loading,
+    required this.canResume,
+    required this.onResume,
+    required this.onBack,
+    required this.episodeProgress,
+    required this.onPlay,
+  });
+
+  final SeriesShow show;
+  final String description;
+  final List<SeriesEpisode> episodes;
+  final bool loading;
+  final bool canResume;
+  final VoidCallback? onResume;
+  final VoidCallback onBack;
+  final Map<int, PlaybackProgress> episodeProgress;
+  final ValueChanged<SeriesEpisode> onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+          child: Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: onBack,
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Serie'),
+              ),
+              const SizedBox(width: 12),
+              if (canResume && onResume != null)
+                FilledButton.icon(
+                  onPressed: onResume,
+                  icon: const Icon(Icons.play_circle_outline),
+                  label: const Text('Riprendi'),
+                ),
+              if (loading) ...[
+                const SizedBox(width: 12),
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+          child: Container(
+            height: 156,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: LelegColors.surface2,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: LelegColors.line),
+            ),
+            child: Row(
+              children: [
+                SizedBox(width: 112, child: _Poster(url: show.logo)),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          show.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 7),
+                        Expanded(
+                          child: Text(
+                            description.trim().isEmpty
+                                ? 'Nessuna descrizione disponibile dal provider.'
+                                : description.trim(),
+                            maxLines: 5,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: LelegColors.muted,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: episodes.isEmpty
+              ? const _EmptyState(message: 'Nessun episodio caricato.')
+              : _SeriesSeasonList(
+                  episodes: episodes,
+                  episodeProgress: episodeProgress,
+                  selectedEpisodeIndex: null,
+                  onPlay: onPlay,
+                ),
+        ),
       ],
     );
   }
