@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
@@ -13,6 +13,8 @@ if (!existsSync(dist)) {
   process.exit(1);
 }
 
+rmSync(wgtRoot, { recursive: true, force: true });
+rmSync(outWgt, { force: true });
 mkdirSync(wgtRoot, { recursive: true });
 
 for (const entry of readdirSync(dist)) {
@@ -30,7 +32,7 @@ if (existsSync(iconSrc)) {
 
 const tizenBin = process.env.TIZEN_CLI || "tizen";
 try {
-  execSync(`"${tizenBin}" package -t wgt -s ${process.env.TIZEN_CERT_PROFILE || "public"} -- "${wgtRoot}"`, {
+  execSync(`"${tizenBin}" package -t wgt -s ${process.env.TIZEN_CERT_PROFILE || "DevProfile"} -- "${wgtRoot}"`, {
     stdio: "inherit",
     cwd: root,
   });

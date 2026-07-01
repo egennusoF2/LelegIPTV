@@ -29,6 +29,17 @@ const signedWgt = resolve(tizenRoot, "build/LelegIPTV-tizen-tv.wgt");
 const outWgt = resolve(outDir, "LelegIPTV-tizen-tv-release.wgt");
 const outTpk = resolve(outDir, "LelegIPTV-tizen-tv-release.tpk");
 
+execSync("npm run package:wgt", {
+  cwd: tizenRoot,
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    TIZEN_CLI:
+      process.env.TIZEN_CLI ??
+      resolve(process.env.HOME ?? "", "tizen-studio/tools/ide/bin/tizen"),
+  },
+});
+
 if (existsSync(signedWgt)) {
   cpSync(signedWgt, outWgt);
   cpSync(signedWgt, outTpk);
