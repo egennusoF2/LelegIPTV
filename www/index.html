@@ -387,18 +387,34 @@ URL TV:     https://lelegiptv.ddns.net/dl/tv.apk</code></pre>
           </div>
         </div>
         <div>
-          <span class="badge badge-ok">WGT &middot; Web + AVPlay</span>
+          <span class="badge badge-new">WGT &middot; 3 MB &middot; v0.2.8</span>
         </div>
         <a class="btn-dl" href="downloads/current/LelegIPTV-tizen-tv-release.wgt" download>
           ⬇ Scarica .wgt
         </a>
       </div>
 
+      <!-- Windows -->
+      <div class="dl-card">
+        <div class="dl-card-head">
+          <span class="dl-icon">🖥️</span>
+          <div>
+            <div class="dl-title">Windows PC</div>
+            <div class="dl-sub">Windows 10/11 x64 — archivio portabile</div>
+          </div>
+        </div>
+        <div>
+          <span class="badge badge-ok">ZIP &middot; x64</span>
+        </div>
+        <a class="btn-dl" href="downloads/current/LelegIPTV-windows-x64-release.zip" download>
+          ⬇ Scarica .zip Windows
+        </a>
+      </div>
+
     </div>
 
     <p class="note" style="margin-top:20px">
-      <strong>Windows / Linux:</strong> gli artifact desktop vengono prodotti dalla GitHub Action
-      <code>Flutter installable artifacts</code>. Windows ARM64 per Parallels va generato da Windows locale copiando il progetto su <code>C:\dev</code>.
+      <strong>Windows ARM64:</strong> per Parallels su Apple Silicon va generato da Windows locale copiando il progetto su <code>C:\dev</code>.
     </p>
   </section>
 
@@ -680,14 +696,14 @@ sdb devices</code></pre>
         <tr>
           <td data-label="Piattaforma">Samsung Tizen TV</td>
           <td data-label="File"><a href="downloads/current/LelegIPTV-tizen-tv-release.wgt" download>LelegIPTV-tizen-tv-release.wgt</a></td>
-          <td data-label="Dimensione">~21 KB (dev bundle)</td>
-          <td data-label="Stato"><span class="badge badge-ok">pronto</span></td>
+          <td data-label="Dimensione">3 MB</td>
+          <td data-label="Stato"><span class="badge badge-ok">v0.2.8</span></td>
         </tr>
         <tr>
           <td data-label="Piattaforma">Windows x64</td>
-          <td data-label="File"><a href="https://github.com/egennusoF2/LelegIPTV/releases/latest/download/LelegIPTV-windows-x64-release.zip" download>LelegIPTV-windows-x64-release.zip</a></td>
-          <td data-label="Dimensione">CI</td>
-          <td data-label="Stato"><span class="badge badge-ok">GitHub Actions</span></td>
+          <td data-label="File"><a href="downloads/current/LelegIPTV-windows-x64-release.zip" download>LelegIPTV-windows-x64-release.zip</a></td>
+          <td data-label="Dimensione">circa 34 MB</td>
+          <td data-label="Stato"><span class="badge badge-ok">pronto</span></td>
         </tr>
         <tr>
           <td data-label="Piattaforma">Windows ARM64</td>
@@ -711,7 +727,7 @@ sdb devices</code></pre>
     <ol>
       <li>Rigenera sempre gli artefatti dopo modifiche al codice: non riusare pacchetti vecchi.</li>
       <li>Per Android, firma l'APK/AAB con keystore stabile prima di consegnarlo a utenti finali.</li>
-      <li>Per Samsung, firma il <code>.tpk</code> con Samsung certificate profile e installalo su TV reale.</li>
+      <li>Per Samsung, firma il <code>.wgt</code> con Samsung certificate profile e installalo su TV reale.</li>
       <li>Testa almeno: canale live, VOD, serie, audio, resume e fullscreen per ogni famiglia di dispositivi.</li>
     </ol>
 

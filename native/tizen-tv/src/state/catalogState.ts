@@ -6,6 +6,7 @@ import type {
   LiveChannel,
   SeriesCategory,
   SeriesShow,
+  SeriesInfo,
   VodCategory,
   VodMovie,
   XtreamProfile,
@@ -16,6 +17,7 @@ import {
   saveCatalogCache,
   saveProfile,
 } from "../data/profileStore";
+import { mergeEpgProgrammes } from "../data/models";
 
 export type StatusListener = (message: string, isError?: boolean) => void;
 
@@ -115,7 +117,11 @@ export class CatalogState {
     const cached = this.epgCache.get(channel.id);
     if (cached) return cached;
     try {
-      const programmes = await this.client.loadShortEpg(profile, channel.id);
+      const [shortEpg, fullEpg] = await Promise.all([
+        this.client.loadShortEpg(profile, channel.id).catch(() => []),
+        this.client.loadSimpleEpg(profile, channel.id).catch(() => []),
+      ]);
+      const programmes = mergeEpgProgrammes(fullEpg, shortEpg);
       this.epgCache.set(channel.id, programmes);
       return programmes;
     } catch {
@@ -136,6 +142,16 @@ export class CatalogState {
     return movies;
   }
 
+  async loadMovieInfo(movie: VodMovie): Promise<VodMovie> {
+    const profile = this.profile;
+    if (!profile) return movie;
+    try {
+      return await this.client.loadVodInfo(profile, movie.id, movie);
+    } catch {
+      return movie;
+    }
+  }
+
   async loadSeries(categoryId: string): Promise<SeriesShow[]> {
     const profile = this.profile;
     if (!profile) return [];
@@ -147,5 +163,14 @@ export class CatalogState {
     this.seriesCache.set(key, shows);
     this.status(`${shows.length} serie caricate`);
     return shows;
+  }
+
+  async loadSeriesInfo(seriesId: number): Promise<SeriesInfo> {
+    const profile = this.profile;
+    if (!profile) throw new Error("Nessuna lista attiva");
+    this.status("Caricamento episodi…");
+    const info = await this.client.loadSeriesInfo(profile, seriesId);
+    this.status(`${info.episodes.length} episodi caricati`);
+    return info;
   }
 }

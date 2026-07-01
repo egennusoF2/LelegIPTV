@@ -78,6 +78,25 @@ export function ensureWebapisLoaded(): Promise<void> {
   const global = globalThis as { webapis?: unknown };
   if (global.webapis) return Promise.resolve();
 
+  // On Tizen the script is injected by the runtime; polling avoids a hung onload.
+  if (typeof (globalThis as { tizen?: unknown }).tizen !== "undefined") {
+    return new Promise((resolve, reject) => {
+      const deadline = Date.now() + 8_000;
+      const tick = (): void => {
+        if ((globalThis as { webapis?: unknown }).webapis) {
+          resolve();
+          return;
+        }
+        if (Date.now() >= deadline) {
+          reject(new Error("webapis non disponibile"));
+          return;
+        }
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
+  }
+
   return new Promise((resolve, reject) => {
     const existing = document.querySelector('script[data-leleg-webapis="1"]');
     if (existing) {

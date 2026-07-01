@@ -1,41 +1,115 @@
-import { FocusManager, mapKeyToDirection, registerTvKeys } from "./app/focusManager";
+import {
+  FocusManager,
+  mapKeyFromEvent,
+  registerTvKeys,
+  type FocusableElement,
+} from "./app/focusManager";
 import { NAV_ITEMS, Router, type TvRoute } from "./app/router";
-import { profileFromForm, presetCodes } from "./data/profilePresets";
-import type { LiveChannel, VodMovie } from "./data/models";
+import { profileFromForm, resolvePreset } from "./data/profilePresets";
+import type {
+  EpgProgramme,
+  LiveChannel,
+  SeriesEpisode,
+  SeriesShow,
+  VodMovie,
+} from "./data/models";
+import {
+  canReplayProgramme,
+  catchupStreamUrls,
+  isPlayableChannel,
+  liveStreamUrls,
+  movieUrl,
+  profileBaseUrl,
+  seriesUrl,
+} from "./data/models";
 import { AvplayPlayer, Html5PreviewPlayer } from "./player/avplay";
+import { LiveScreen } from "./screens/liveScreen";
 import { CatalogState } from "./state/catalogState";
+import {
+  canResume,
+  clearProgress,
+  continueWatching,
+  loadProgress,
+  progressFraction,
+  progressKey,
+  saveProgress,
+  type PlaybackResume,
+} from "./state/playbackProgress";
 import { ensureWebapisLoaded, setVisible } from "./polyfills";
 import {
   clearElement,
   el,
-  formatEpgTime,
   pageHeader,
-  playbackUrlForChannel,
   playbackUrlForMovie,
-  renderChannelList,
-  renderEpgList,
   renderPosterRow,
+  renderSeriesPosterRow,
   setElementChildren,
 } from "./ui/renderUtils";
 
 type Zone = "nav" | "content";
+type ProgressMetadata = Omit<
+  PlaybackResume,
+  "positionMs" | "durationMs" | "updatedAt"
+>;
+type PlaybackOptions = {
+  metadata: ProgressMetadata;
+  startPositionMs: number;
+  onClose?: () => void;
+};
+
+function loadFavoriteMovieIds(): Set<number> {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem("leleg.tizen.favorite.movies") ?? "[]",
+    ) as unknown;
+    return new Set(
+      Array.isArray(value)
+        ? value.filter((item): item is number => Number.isInteger(item))
+        : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
 
 export class LelegTvApp {
   private root = document.getElementById("app")!;
   private playerLayer = document.getElementById("player-layer")!;
   private statusBar = el("div", "status-bar");
+  private loadingOverlay = el("div", "catalog-loading");
   private router = new Router();
   private catalog = new CatalogState();
   private navFocus = new FocusManager();
   private contentFocus = new FocusManager();
+  private liveScreen: LiveScreen | null = null;
   private zone: Zone = "nav";
   private avplay = new AvplayPlayer();
   private htmlPreview = new Html5PreviewPlayer();
   private fullscreen = false;
-  private selectedChannel: LiveChannel | null = null;
-  private liveCategoryId = "";
+  private fullscreenControlsVisible = false;
+  private fullscreenControlIndex = 0;
+  private fullscreenAudioIndex = -1;
+  private fullscreenSubtitleIndex = -1;
+  private fullscreenSpeedIndex = 2;
+  private fullscreenUiTimer: number | null = null;
+  private fullscreenProgressTimer: number | null = null;
+  private fullscreenChannel: LiveChannel | null = null;
+  private fullscreenProgressMeta: ProgressMetadata | null = null;
+  private lastProgressSaveAt = 0;
+  private fullscreenOnClose: (() => void) | null = null;
+  private avplayAvailable = false;
   private moviesCategoryId = "";
   private movies: VodMovie[] = [];
+  private moviesRenderGen = 0;
+  private seriesCategoryId = "";
+  private series: SeriesShow[] = [];
+  private seriesRenderGen = 0;
+  private guideCategoryId = "";
+  private guideChannelId = 0;
+  private guideDayOffset = 0;
+  private guideLoadGeneration = 0;
+  private contentBackAction: (() => void) | null = null;
+  private favoriteMovieIds = loadFavoriteMovieIds();
 
   private shell = el("div", "shell");
   private sidebar = el("nav", "sidebar");
@@ -43,23 +117,59 @@ export class LelegTvApp {
 
   constructor() {
     registerTvKeys();
-    document.body.append(this.statusBar);
+    this.loadingOverlay.append(
+      el("div", "catalog-spinner"),
+      el("div", "catalog-loading-text", "Caricamento libreria…"),
+    );
+    setVisible(this.loadingOverlay, false);
+    document.body.append(this.loadingOverlay);
     this.root.append(this.shell);
     this.shell.append(this.sidebar, this.content);
 
     this.catalog.onStatus((message, isError) => {
       this.statusBar.textContent = message;
       this.statusBar.classList.toggle("error", !!isError);
+      const loading = /caricamento|ricarica|preparazione/i.test(message) && !isError;
+      const loadingText = this.loadingOverlay.querySelector<HTMLElement>(
+        ".catalog-loading-text",
+      );
+      if (loadingText) loadingText.textContent = message;
+      setVisible(this.loadingOverlay, loading);
+    });
+
+    this.avplay.setStateListener((state, _title, detail) => {
+      if (state === "error" && detail) {
+        this.statusBar.textContent = `Player: ${detail}`;
+        this.statusBar.classList.add("error");
+        const playerError = this.playerLayer.querySelector<HTMLElement>(".player-error");
+        if (playerError) {
+          playerError.textContent = `Riproduzione non riuscita: ${detail}`;
+          playerError.classList.add("visible");
+        }
+      } else if (state === "playing") {
+        this.statusBar.classList.remove("error");
+        this.playerLayer.querySelector(".player-error")?.classList.remove("visible");
+      }
     });
 
     this.router.subscribe((route) => this.renderRoute(route));
-    document.addEventListener("keydown", (event) => this.onKeyDown(event));
+    document.addEventListener("keydown", (event) => this.onKeyDown(event), true);
 
     void this.bootstrap();
   }
 
+  private useAvplay(): boolean {
+    return this.avplayAvailable && this.avplay.isAvailable();
+  }
+
   private async bootstrap(): Promise<void> {
     this.renderNav();
+    try {
+      await ensureWebapisLoaded();
+      this.avplayAvailable = this.avplay.isAvailable();
+    } catch {
+      this.avplayAvailable = false;
+    }
     if (this.catalog.activeProfile) {
       try {
         await this.catalog.refreshCatalog(false);
@@ -67,9 +177,13 @@ export class LelegTvApp {
         // handled via status
       }
     } else {
+      setVisible(this.loadingOverlay, false);
       this.statusBar.textContent = "Seleziona una lista in Le mie liste";
     }
-    this.router.navigate(this.catalog.activeProfile ? "home" : "settings");
+    const initialRoute = this.catalog.activeProfile ? "home" : "settings";
+    this.router.navigate(initialRoute, { force: true });
+    this.zone = "nav";
+    this.navFocus.focusIndex(NAV_ITEMS.findIndex((i) => i.route === initialRoute));
   }
 
   private renderNav(): void {
@@ -89,23 +203,63 @@ export class LelegTvApp {
       };
     });
     this.navFocus.setItems(items);
-    this.sidebar.append(...items.map((i) => i.el));
+    this.sidebar.append(...items.map((i) => i.el), this.statusBar);
+  }
+
+  private teardownLiveScreen(): void {
+    this.liveScreen?.unmount();
+    this.liveScreen = null;
+  }
+
+  private mountLiveScreen(): void {
+    this.teardownLiveScreen();
+    this.liveScreen = new LiveScreen({
+      catalog: this.catalog,
+      useAvplay: () => this.useAvplay(),
+      avplay: this.avplay,
+      htmlPreview: this.htmlPreview,
+      onFullscreen: (channel) => this.openFullscreenChannel(channel),
+      onProgramme: (channel, programme) =>
+        this.playGuideProgramme(channel, programme),
+      onStatus: (message, isError) => {
+        this.statusBar.textContent = message;
+        this.statusBar.classList.toggle("error", !!isError);
+      },
+    });
+    this.liveScreen.mount(this.content);
+    if (this.zone === "content") {
+      this.liveScreen.focusColumn("categories");
+    }
   }
 
   private renderRoute(route: TvRoute): void {
+    this.contentBackAction = null;
     for (const button of Array.from(this.sidebar.querySelectorAll<HTMLElement>(".nav-item"))) {
       button.classList.toggle("active", button.dataset.route === route);
     }
+    this.teardownLiveScreen();
     clearElement(this.content);
     switch (route) {
       case "home":
         this.renderHome();
         break;
       case "live":
-        void this.renderLive();
+        this.mountLiveScreen();
         break;
       case "movies":
         void this.renderMovies();
+        break;
+      case "series":
+        void this.renderSeries();
+        break;
+      case "search":
+        this.renderSearch();
+        break;
+      case "guide":
+        void this.renderGuide();
+        break;
+      case "favorites":
+        void this.renderFavorites();
         break;
       case "settings":
         this.renderSettings();
@@ -118,15 +272,17 @@ export class LelegTvApp {
   }
 
   private renderHome(): void {
+    const resumable = continueWatching();
     this.content.append(
       pageHeader("Benvenuto", "Leleg IPTV per Samsung TV"),
-      el("p", "", `Canali live: ${this.catalog.liveChannels.length}`),
+      el("p", "hero-copy", `Canali live: ${this.catalog.liveChannels.length}`),
     );
     const grid = el("div", "hub-grid");
+    if (resumable.length) grid.classList.add("compact");
     const tiles = [
       { label: "Live TV", route: "live" as TvRoute },
       { label: "Film", route: "movies" as TvRoute },
-      { label: "Le mie liste", route: "settings" as TvRoute },
+      { label: "Serie", route: "series" as TvRoute },
     ].map((tile) => {
       const node = el("button", "hub-tile panel focusable", tile.label);
       node.type = "button";
@@ -140,77 +296,82 @@ export class LelegTvApp {
     });
     grid.append(...tiles.map((t) => t.el));
     this.content.append(grid);
-    this.contentFocus.setItems(tiles);
+    const continueItems: FocusableElement[] = [];
+    if (resumable.length) {
+      const section = el("section", "continue-section");
+      section.append(el("h2", "section-title", "Continua a guardare"));
+      const row = el("div", "continue-row");
+      for (const progress of resumable) {
+        const card = el("button", "continue-card focusable");
+        card.type = "button";
+        if (progress.logo) {
+          const image = document.createElement("img");
+          image.src = progress.logo;
+          image.alt = "";
+          card.append(image);
+        }
+        const copy = el("div", "continue-copy");
+        copy.append(
+          el("div", "title", progress.title),
+          el(
+            "div",
+            "meta",
+            `${progress.kind === "movie" ? "Film" : "Episodio"} · ${Math.floor(
+              progressFraction(progress) * 100,
+            )}%`,
+          ),
+        );
+        const bar = el("div", "continue-progress");
+        const fill = el("span");
+        fill.style.width = `${progressFraction(progress) * 100}%`;
+        bar.append(fill);
+        copy.append(bar);
+        card.append(copy);
+        row.append(card);
+        continueItems.push({
+          el: card,
+          onActivate: () => this.resumeStoredProgress(progress),
+        });
+      }
+      section.append(row);
+      this.content.append(section);
+    }
+    this.contentFocus.setItems([...tiles, ...continueItems]);
   }
 
-  private async renderLive(): Promise<void> {
-    this.content.append(pageHeader("Live TV", `${this.catalog.liveChannels.length} canali`));
-    const layout = el("div", "live-layout");
-    layout.style.gridTemplateColumns = "240px 380px 1fr 360px";
-
-    const categoriesPanel = el("div", "panel list");
-    const channelsPanel = el("div", "panel list");
-    const previewPanel = el("div", "panel preview-box");
-    const epgPanel = el("div", "panel list");
-    previewPanel.append(el("div", "placeholder", "Anteprima canale"));
-    layout.append(categoriesPanel, channelsPanel, previewPanel, epgPanel);
-    this.content.append(layout);
-
-    const categories = this.catalog.liveCategories;
-    const categoryButtons = categories.map((category, index) => {
-      const btn = el("button", "list-item focusable", category.name);
-      btn.type = "button";
-      if (category.id === this.liveCategoryId) btn.classList.add("active");
-      return {
-        el: btn,
-        onActivate: () => {
-          this.liveCategoryId = category.id;
-          void this.renderLive();
-        },
-        onUp: () => index > 0,
-        onDown: () => index < categories.length - 1,
-      };
+  private resumeStoredProgress(progress: PlaybackResume): void {
+    const profile = this.catalog.activeProfile;
+    if (!profile || !canResume(progress)) return;
+    const url =
+      progress.kind === "movie"
+        ? movieUrl(profile, progress.mediaId, progress.containerExtension)
+        : seriesUrl(profile, progress.mediaId, progress.containerExtension);
+    this.openFullscreenUrl(url, progress.title, null, {
+      metadata: {
+        key: progress.key,
+        kind: progress.kind,
+        mediaId: progress.mediaId,
+        title: progress.title,
+        logo: progress.logo,
+        containerExtension: progress.containerExtension,
+      },
+      startPositionMs: progress.positionMs,
     });
-    categoriesPanel.append(...categoryButtons.map((c) => c.el));
-
-    const channels = this.catalog.channelsForCategory(this.liveCategoryId);
-
-    const onSelectChannel = async (channel: LiveChannel) => {
-      this.selectedChannel = channel;
-      const url = playbackUrlForChannel(this.catalog, channel);
-      if (!url) return;
-      if (this.avplay.isAvailable()) {
-        this.avplay.open(url, channel.name);
-        this.avplay.setPreviewRect(previewPanel);
-      } else {
-        this.htmlPreview.mount(previewPanel);
-        this.htmlPreview.open(url);
-      }
-      const programmes = await this.catalog.loadEpg(channel);
-      renderEpgList(
-        epgPanel,
-        programmes.slice(-12).map((p) => ({
-          title: p.title,
-          start: formatEpgTime(p.startTimeMillis),
-        })),
-      );
-    };
-
-    const channelItems = renderChannelList(channelsPanel, channels, this.selectedChannel?.id ?? null, (channel) => {
-      void onSelectChannel(channel);
-    });
-    setElementChildren(channelsPanel, channelItems.map((i) => i.el));
-
-    this.contentFocus.setItems([...categoryButtons, ...channelItems]);
-    if (!this.selectedChannel && channels[0]) void onSelectChannel(channels[0]);
   }
 
   private async renderMovies(): Promise<void> {
-    this.content.append(pageHeader("Film", "Catalogo on demand"));
-    const top = el("div", "preset-row");
+    const gen = ++this.moviesRenderGen;
+    clearElement(this.content);
+    const header = pageHeader("Film", "Catalogo on demand");
+    const count = el("div", "library-count", "Caricamento titoli…");
+    const browser = el("div", "library-browser");
+    const categoriesHost = el("div", "library-categories panel");
+    const gridHost = el("div", "library-grid-host");
+    browser.append(categoriesHost, gridHost);
+    this.content.append(header, count, browser);
     const categories = this.catalog.vodCategories;
-    const catButtons = categories.slice(0, 24).map((category, index) => {
-      const btn = el("button", "preset-chip focusable panel", category.name);
+    const catButtons = categories.map((category) => {
+      const btn = el("button", "library-category focusable", category.name);
       btn.type = "button";
       if (category.id === this.moviesCategoryId) btn.classList.add("active");
       return {
@@ -219,31 +380,572 @@ export class LelegTvApp {
           this.moviesCategoryId = category.id;
           void this.renderMovies();
         },
-        onLeft: () => index > 0,
-        onRight: () => index < Math.min(categories.length, 24) - 1,
       };
     });
-    top.append(...catButtons.map((c) => c.el));
-    this.content.append(top);
+    categoriesHost.append(...catButtons.map((c) => c.el));
 
-    const rowHost = el("div");
-    this.content.append(rowHost);
+    gridHost.append(el("div", "loading-panel", "Caricamento film…"));
     try {
       this.movies = await this.catalog.loadMovies(this.moviesCategoryId);
     } catch {
       this.movies = [];
     }
-    const posters = renderPosterRow(rowHost, this.movies, (movie) => {
-      const url = playbackUrlForMovie(this.catalog, movie);
-      if (url) this.openFullscreen(url, movie.name);
-    });
+    if (gen !== this.moviesRenderGen) return;
+    count.textContent = `${this.movies.length} titoli in questa categoria`;
+    let posters: FocusableElement[] = [];
+    posters = renderPosterRow(
+      gridHost,
+      this.movies,
+      (movie) => void this.renderMovieDetail(movie),
+      (items) => this.contentFocus.setItems([...catButtons, ...items]),
+    );
     this.contentFocus.setItems([...catButtons, ...posters]);
+  }
+
+  private async renderMovieDetail(movie: VodMovie): Promise<void> {
+    this.contentBackAction = () => {
+      this.contentBackAction = null;
+      void this.renderMovies();
+    };
+    clearElement(this.content);
+    this.content.append(pageHeader("Film", movie.name));
+    const loading = el("div", "loading-panel", "Caricamento dettagli…");
+    this.content.append(loading);
+    const detailedMovie = await this.catalog.loadMovieInfo(movie);
+    if (!loading.isConnected) return;
+    loading.remove();
+    const detail = el("div", "media-detail panel");
+    if (detailedMovie.logo) {
+      const image = document.createElement("img");
+      image.className = "detail-poster";
+      image.src = detailedMovie.logo;
+      image.alt = detailedMovie.name;
+      detail.append(image);
+    }
+    const copy = el("div", "detail-copy");
+    copy.append(
+      el("h2", "detail-title", detailedMovie.name),
+      el(
+        "p",
+        "hero-copy",
+        [detailedMovie.year, detailedMovie.rating].filter(Boolean).join(" · "),
+      ),
+      el("p", "detail-plot", detailedMovie.plot || "Descrizione non disponibile."),
+    );
+    const actions = el("div", "detail-actions");
+    const movieProgressKey = progressKey("movie", detailedMovie.id);
+    const savedProgress = loadProgress(movieProgressKey);
+    const resumable = canResume(savedProgress);
+    const play = el(
+      "button",
+      "settings-btn focusable panel",
+      resumable ? "Riprendi" : "Riproduci",
+    );
+    const restart = resumable
+      ? el("button", "settings-btn focusable panel", "Ricomincia")
+      : null;
+    const favorite = el(
+      "button",
+      "settings-btn focusable panel",
+      this.favoriteMovieIds.has(movie.id) ? "Rimuovi dai preferiti" : "Aggiungi ai preferiti",
+    );
+    play.type = favorite.type = "button";
+    if (restart) restart.type = "button";
+    actions.append(play);
+    if (restart) actions.append(restart);
+    actions.append(favorite);
+    copy.append(actions);
+    detail.append(copy);
+    this.content.append(detail);
+    const progressMetadata: ProgressMetadata = {
+      key: movieProgressKey,
+      kind: "movie",
+      mediaId: detailedMovie.id,
+      title: detailedMovie.name,
+      logo: detailedMovie.logo,
+      containerExtension: detailedMovie.containerExtension,
+    };
+    const focusItems: FocusableElement[] = [
+      {
+        el: play,
+        onActivate: () => {
+          const url = playbackUrlForMovie(this.catalog, detailedMovie);
+          if (url) {
+            this.openFullscreenUrl(url, detailedMovie.name, null, {
+              metadata: progressMetadata,
+              startPositionMs: resumable ? savedProgress?.positionMs ?? 0 : 0,
+              onClose: () => void this.renderMovieDetail(detailedMovie),
+            });
+          }
+        },
+      },
+    ];
+    if (restart) {
+      focusItems.push({
+        el: restart,
+        onActivate: () => {
+          clearProgress(movieProgressKey);
+          const url = playbackUrlForMovie(this.catalog, detailedMovie);
+          if (url) {
+            this.openFullscreenUrl(url, detailedMovie.name, null, {
+              metadata: progressMetadata,
+              startPositionMs: 0,
+              onClose: () => void this.renderMovieDetail(detailedMovie),
+            });
+          }
+        },
+      });
+    }
+    focusItems.push(
+      {
+        el: favorite,
+        onActivate: () => {
+          if (this.favoriteMovieIds.has(movie.id)) this.favoriteMovieIds.delete(movie.id);
+          else this.favoriteMovieIds.add(movie.id);
+          localStorage.setItem(
+            "leleg.tizen.favorite.movies",
+            JSON.stringify([...this.favoriteMovieIds]),
+          );
+          void this.renderMovieDetail(detailedMovie);
+        },
+      },
+    );
+    this.contentFocus.setItems(focusItems);
+  }
+
+  private async renderFavorites(): Promise<void> {
+    clearElement(this.content);
+    this.content.append(pageHeader("Preferiti", "La tua raccolta"));
+    const loading = el("div", "loading-panel", "Caricamento preferiti…");
+    const host = el("div");
+    this.content.append(loading, host);
+    const movies = await this.catalog.loadMovies("").catch(() => []);
+    loading.remove();
+    const favorites = movies.filter((movie) => this.favoriteMovieIds.has(movie.id));
+    const posters = renderPosterRow(host, favorites, (movie) => {
+      void this.renderMovieDetail(movie);
+    });
+    this.contentFocus.setItems(posters);
+  }
+
+  private async renderSeries(): Promise<void> {
+    const gen = ++this.seriesRenderGen;
+    clearElement(this.content);
+    const header = pageHeader("Serie", "Catalogo e stagioni");
+    const count = el("div", "library-count", "Caricamento titoli…");
+    const browser = el("div", "library-browser");
+    const categoriesHost = el("div", "library-categories panel");
+    const gridHost = el("div", "library-grid-host");
+    browser.append(categoriesHost, gridHost);
+    this.content.append(header, count, browser);
+    const categories = this.catalog.seriesCategories;
+    const categoryButtons = categories.map((category) => {
+      const button = el("button", "library-category focusable", category.name);
+      button.type = "button";
+      if (category.id === this.seriesCategoryId) button.classList.add("active");
+      return {
+        el: button,
+        onActivate: () => {
+          this.seriesCategoryId = category.id;
+          void this.renderSeries();
+        },
+      };
+    });
+    categoriesHost.append(...categoryButtons.map((item) => item.el));
+
+    gridHost.append(el("div", "loading-panel", "Caricamento serie…"));
+    try {
+      this.series = await this.catalog.loadSeries(this.seriesCategoryId);
+    } catch {
+      this.series = [];
+    }
+    if (gen !== this.seriesRenderGen) return;
+    count.textContent = `${this.series.length} titoli in questa categoria`;
+    let posters: FocusableElement[] = [];
+    posters = renderSeriesPosterRow(
+      gridHost,
+      this.series,
+      (show) => void this.renderSeriesDetail(show),
+      (items) => this.contentFocus.setItems([...categoryButtons, ...items]),
+    );
+    this.contentFocus.setItems([...categoryButtons, ...posters]);
+  }
+
+  private async renderSeriesDetail(show: SeriesShow): Promise<void> {
+    this.contentBackAction = () => {
+      this.contentBackAction = null;
+      void this.renderSeries();
+    };
+    clearElement(this.content);
+    this.content.append(pageHeader("Serie", show.name));
+    const loading = el("div", "loading-panel", "Caricamento episodi…");
+    this.content.append(loading);
+    try {
+      const info = await this.catalog.loadSeriesInfo(show.id);
+      loading.remove();
+      const detail = el("div", "media-detail");
+      if (show.logo) {
+        const image = document.createElement("img");
+        image.className = "detail-poster";
+        image.src = show.logo;
+        image.alt = show.name;
+        detail.append(image);
+      }
+      const copy = el("div", "detail-copy");
+      copy.append(
+        el("h2", "detail-title", show.name),
+        el("p", "hero-copy", info.show.plot || show.plot || "Descrizione non disponibile."),
+      );
+      detail.append(copy);
+      this.content.append(detail);
+
+      const episodeHost = el("div", "episode-list");
+      const episodeItems = info.episodes.slice(0, 300).map((episode) => {
+        const saved = loadProgress(progressKey("episode", episode.id));
+        const resumeLabel = canResume(saved)
+          ? ` · Riprendi ${Math.floor(progressFraction(saved) * 100)}%`
+          : "";
+        const button = el(
+          "button",
+          "episode-card focusable panel",
+          `${episode.season > 0 ? `S${episode.season} ` : ""}${
+            episode.episode > 0 ? `E${episode.episode} · ` : ""
+          }${episode.title}${resumeLabel}`,
+        );
+        if (canResume(saved)) {
+          const progress = el("span", "episode-progress");
+          progress.style.width = `${progressFraction(saved) * 100}%`;
+          button.append(progress);
+        }
+        button.type = "button";
+        episodeHost.append(button);
+        return {
+          el: button,
+          onActivate: () =>
+            this.playSeriesEpisode(
+              episode,
+              show.name,
+              show.logo,
+            ),
+        };
+      });
+      this.content.append(episodeHost);
+      this.contentFocus.setItems(episodeItems);
+    } catch (error) {
+      loading.textContent = `Episodi non disponibili: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
+  }
+
+  private playSeriesEpisode(
+    episode: SeriesEpisode,
+    showName: string,
+    showLogo = "",
+  ): void {
+    const profile = this.catalog.activeProfile;
+    if (!profile) return;
+    const key = progressKey("episode", episode.id);
+    const saved = loadProgress(key);
+    this.openFullscreenUrl(
+      seriesUrl(profile, episode.id, episode.containerExtension),
+      `${showName} · ${episode.title}`,
+      null,
+      {
+        metadata: {
+          key,
+          kind: "episode",
+          mediaId: episode.id,
+          title: `${showName} · ${episode.title}`,
+          logo: showLogo || episode.image,
+          containerExtension: episode.containerExtension,
+        },
+        startPositionMs: canResume(saved) ? saved.positionMs : 0,
+      },
+    );
+  }
+
+  private renderSearch(): void {
+    this.content.append(pageHeader("Cerca", "Canali, film e serie"));
+    const searchRow = el("div", "search-row panel");
+    const input = document.createElement("input");
+    input.className = "search-input focusable";
+    input.placeholder = "Scrivi cosa vuoi cercare";
+    const searchButton = el("button", "settings-btn focusable panel", "Cerca");
+    searchButton.type = "button";
+    searchRow.append(input, searchButton);
+    const results = el("div", "search-results");
+    this.content.append(searchRow, results);
+
+    const inputItem = {
+      el: input,
+      onActivate: () => input.focus(),
+    };
+    const buttonItem = {
+      el: searchButton,
+      onActivate: () => void this.runSearch(input.value, results, [inputItem, buttonItem]),
+    };
+    this.contentFocus.setItems([inputItem, buttonItem]);
+  }
+
+  private async runSearch(
+    rawQuery: string,
+    host: HTMLElement,
+    fixedItems: Array<{ el: HTMLElement; onActivate?: () => void }>,
+  ): Promise<void> {
+    const query = rawQuery.trim().toLocaleLowerCase();
+    clearElement(host);
+    if (!query) {
+      host.append(el("div", "empty", "Inserisci almeno una parola."));
+      return;
+    }
+    host.append(el("div", "loading-panel", "Ricerca in corso…"));
+    const [movies, series] = await Promise.all([
+      this.catalog.loadMovies("").catch(() => []),
+      this.catalog.loadSeries("").catch(() => []),
+    ]);
+    clearElement(host);
+    const liveMatches = this.catalog.liveChannels
+      .filter((item) => item.name.toLocaleLowerCase().includes(query))
+      .slice(0, 24);
+    const movieMatches = movies
+      .filter((item) => item.name.toLocaleLowerCase().includes(query))
+      .slice(0, 40);
+    const seriesMatches = series
+      .filter((item) => item.name.toLocaleLowerCase().includes(query))
+      .slice(0, 40);
+    const focusItems: Array<{ el: HTMLElement; onActivate?: () => void }> = [...fixedItems];
+
+    if (liveMatches.length) {
+      host.append(el("h2", "section-title", "Live TV"));
+      const row = el("div", "result-row");
+      for (const channel of liveMatches) {
+        const button = el("button", "result-card focusable panel", channel.name);
+        button.type = "button";
+        row.append(button);
+        focusItems.push({
+          el: button,
+          onActivate: () => this.openFullscreenChannel(channel),
+        });
+      }
+      host.append(row);
+    }
+    if (movieMatches.length) {
+      host.append(el("h2", "section-title", "Film"));
+      const rowHost = el("div");
+      host.append(rowHost);
+      focusItems.push(
+        ...renderPosterRow(rowHost, movieMatches, (movie) => {
+          const url = playbackUrlForMovie(this.catalog, movie);
+          if (url) this.openFullscreenUrl(url, movie.name);
+        }),
+      );
+    }
+    if (seriesMatches.length) {
+      host.append(el("h2", "section-title", "Serie"));
+      const rowHost = el("div");
+      host.append(rowHost);
+      focusItems.push(
+        ...renderSeriesPosterRow(rowHost, seriesMatches, (show) => {
+          void this.renderSeriesDetail(show);
+        }),
+      );
+    }
+    if (focusItems.length === fixedItems.length) {
+      host.append(el("div", "empty", "Nessun risultato."));
+    }
+    this.contentFocus.setItems(focusItems);
+  }
+
+  private async renderGuide(): Promise<void> {
+    clearElement(this.content);
+    this.content.append(pageHeader("Guida TV", "Programmi e archivio"));
+    const categories = this.catalog.liveCategories;
+    if (!this.guideCategoryId) {
+      this.guideCategoryId =
+        categories.find((item) => item.name.toLocaleLowerCase().includes("italia"))?.id ??
+        categories[0]?.id ??
+        "";
+    }
+    const categoryHost = el("div", "preset-row category-strip");
+    const categoryButtons = categories.slice(0, 40).map((category) => {
+      const button = el("button", "preset-chip focusable panel", category.name);
+      button.type = "button";
+      if (category.id === this.guideCategoryId) button.classList.add("active");
+      return {
+        el: button,
+        onActivate: () => {
+          this.guideCategoryId = category.id;
+          void this.renderGuide();
+        },
+      };
+    });
+    categoryHost.append(...categoryButtons.map((item) => item.el));
+    const channels = this.catalog
+      .channelsForCategory(this.guideCategoryId)
+      .filter(isPlayableChannel)
+      .slice(0, 160);
+    if (!channels.some((channel) => channel.id === this.guideChannelId)) {
+      this.guideChannelId = channels[0]?.id ?? 0;
+    }
+    const selectedChannel = () =>
+      channels.find((channel) => channel.id === this.guideChannelId) ?? channels[0] ?? null;
+    const lookbackDays = Math.min(
+      14,
+      Math.max(7, selectedChannel()?.catchupDays ?? 0),
+    );
+    if (this.guideDayOffset < -lookbackDays) this.guideDayOffset = -lookbackDays;
+
+    const dayHost = el("div", "guide-day-strip panel");
+    const dayOffsets = Array.from({ length: lookbackDays + 2 }, (_, index) =>
+      index - lookbackDays,
+    );
+    const dayLabel = (offset: number): string => {
+      if (offset === 0) return "Oggi";
+      if (offset === -1) return "Ieri";
+      if (offset === 1) return "Domani";
+      const date = new Date();
+      date.setDate(date.getDate() + offset);
+      return date.toLocaleDateString("it-IT", { weekday: "short", day: "2-digit" });
+    };
+    const dayButtons: FocusableElement[] = dayOffsets.map((offset) => {
+      const button = el("button", "preset-chip focusable panel", dayLabel(offset));
+      button.type = "button";
+      if (offset === this.guideDayOffset) button.classList.add("active");
+      return {
+        el: button,
+        onActivate: () => {
+          this.guideDayOffset = offset;
+          dayButtons.forEach((item, index) => {
+            item.el.classList.toggle("active", dayOffsets[index] === offset);
+          });
+          const channel = selectedChannel();
+          if (channel) void renderProgrammes(channel);
+        },
+      };
+    });
+    dayHost.append(...dayButtons.map((item) => item.el));
+
+    const body = el("div", "guide-layout");
+    const channelsHost = el("div", "guide-channels panel");
+    const programmesHost = el("div", "guide-programmes panel");
+    body.append(channelsHost, programmesHost);
+    this.content.append(categoryHost, dayHost, body);
+
+    const fixedItems: FocusableElement[] = [
+      ...categoryButtons,
+      ...dayButtons,
+    ];
+    const channelItems: FocusableElement[] = [];
+    const renderProgrammes = async (channel: LiveChannel): Promise<void> => {
+      const generation = ++this.guideLoadGeneration;
+      this.guideChannelId = channel.id;
+      channelItems.forEach((item, index) => {
+        item.el.classList.toggle("selected", channels[index]?.id === channel.id);
+      });
+      clearElement(programmesHost);
+      programmesHost.append(el("div", "loading-panel", "Caricamento EPG…"));
+      const programmes = await this.catalog.loadEpg(channel);
+      if (generation !== this.guideLoadGeneration) return;
+      clearElement(programmesHost);
+      const now = Date.now();
+      const dayStart = new Date(now);
+      dayStart.setHours(0, 0, 0, 0);
+      dayStart.setDate(dayStart.getDate() + this.guideDayOffset);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const visibleProgrammes = programmes.filter(
+        (programme) =>
+          programme.endTimeMillis > dayStart.getTime() &&
+          programme.startTimeMillis < dayEnd.getTime(),
+      );
+      programmesHost.append(
+        el(
+          "div",
+          "guide-programme-heading",
+          `${channel.name} · ${dayLabel(this.guideDayOffset)} · ${visibleProgrammes.length} programmi`,
+        ),
+      );
+      if (!visibleProgrammes.length) {
+        programmesHost.append(el("div", "empty", "Nessun programma per questo giorno"));
+      }
+      const programmeItems: FocusableElement[] = visibleProgrammes.map((programme) => {
+        const live = now >= programme.startTimeMillis && now < programme.endTimeMillis;
+        const replay = canReplayProgramme(channel, programme, now);
+        const past = programme.endTimeMillis <= now;
+        const row = el(
+          "button",
+          `guide-programme focusable${live ? " epg-live" : ""}${replay ? " epg-replay" : ""}`,
+        );
+        row.type = "button";
+        row.append(
+          el(
+            "span",
+            "meta",
+            `${new Date(programme.startTimeMillis).toLocaleTimeString("it-IT", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })} - ${new Date(programme.endTimeMillis).toLocaleTimeString("it-IT", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}${live ? " · LIVE" : replay ? " · ARCHIVIO" : past ? " · TERMINATO" : ""}`,
+          ),
+          el("span", "name", programme.title),
+          el("span", "description", programme.description),
+        );
+        programmesHost.append(row);
+        return {
+          el: row,
+          onActivate: () => this.playGuideProgramme(channel, programme),
+        };
+      });
+      this.contentFocus.setItems([...fixedItems, ...channelItems, ...programmeItems]);
+      const liveRow = programmesHost.querySelector<HTMLElement>(".epg-live");
+      if (liveRow && this.guideDayOffset === 0) {
+        liveRow.scrollIntoView({ block: "center" });
+      }
+    };
+    for (const channel of channels) {
+      const button = el("button", "guide-channel focusable", channel.name);
+      button.type = "button";
+      if (channel.id === this.guideChannelId) button.classList.add("selected");
+      channelsHost.append(button);
+      const item: FocusableElement = {
+        el: button,
+        onActivate: () => void renderProgrammes(channel),
+        onFocus: () => {
+          if (this.guideChannelId !== channel.id) void renderProgrammes(channel);
+        },
+      };
+      channelItems.push(item);
+    }
+    this.contentFocus.setItems([...fixedItems, ...channelItems]);
+    const initial = selectedChannel();
+    if (initial) void renderProgrammes(initial);
+  }
+
+  private playGuideProgramme(channel: LiveChannel, programme: EpgProgramme): void {
+    const now = Date.now();
+    if (programme.startTimeMillis <= now && programme.endTimeMillis > now) {
+      this.openFullscreenChannel(channel);
+      return;
+    }
+    const profile = this.catalog.activeProfile;
+    const catchupUrls = profile ? catchupStreamUrls(profile, channel, programme) : [];
+    if (catchupUrls.length) {
+      this.openFullscreenUrl(catchupUrls[0]!, `${channel.name} · ${programme.title}`);
+      return;
+    }
+    this.statusBar.textContent =
+      programme.endTimeMillis < now
+        ? "Archivio: supporto catch-up in completamento"
+        : "Il programma non è ancora iniziato";
   }
 
   private renderSettings(): void {
     this.content.append(pageHeader("Le mie liste", "Configura il provider Xtream"));
     const form = el("div", "settings-form panel");
-    form.style.padding = "24px";
+    form.style.padding = "28px";
 
     const profile = this.catalog.activeProfile;
     const titleInput = document.createElement("input");
@@ -263,41 +965,28 @@ export class LelegTvApp {
     passInput.value = profile?.password ?? "";
     passInput.placeholder = "Password";
 
-    const presetRow = el("div", "preset-row");
-    const presets = presetCodes().map((code, index) => {
-      const chip = el("button", "preset-chip focusable panel", code);
-      chip.type = "button";
-      return {
-        el: chip,
-        onActivate: () => {
-          titleInput.value = code;
-        },
-        onLeft: () => index > 0,
-        onRight: () => index < presetCodes().length - 1,
-      };
-    });
-    presetRow.append(...presets.map((p) => p.el));
+    const applyTypedPreset = (): void => {
+      const preset = resolvePreset(titleInput.value);
+      if (!preset) return;
+      serverInput.value = preset.serverUrl;
+      userInput.value = preset.username;
+      passInput.value = preset.password;
+    };
+    titleInput.addEventListener("input", applyTypedPreset);
+    titleInput.addEventListener("change", applyTypedPreset);
 
-    const connectBtn = el("button", "focusable panel", "Connetti e carica catalogo");
+    const connectBtn = el("button", "focusable panel settings-btn", "Connetti e carica catalogo");
     connectBtn.type = "button";
-    connectBtn.style.padding = "14px 18px";
-    connectBtn.style.fontWeight = "800";
 
-    const reloadBtn = el("button", "focusable panel", "Ricarica dal provider");
+    const reloadBtn = el("button", "focusable panel settings-btn", "Ricarica dal provider");
     reloadBtn.type = "button";
-    reloadBtn.style.padding = "14px 18px";
-    reloadBtn.style.fontWeight = "800";
     reloadBtn.hidden = !profile;
 
     const cacheHint = el(
       "p",
-      "",
-      profile
-        ? "Cache catalogo 24h. Ricarica forza un nuovo download dal provider."
-        : "",
+      "hero-copy",
+      profile ? "Cache catalogo 24h. Ricarica forza un nuovo download dal provider." : "",
     );
-    cacheHint.style.color = "var(--muted)";
-    cacheHint.style.fontSize = "14px";
     cacheHint.hidden = !profile;
 
     const fields: { label: string; input: HTMLInputElement }[] = [
@@ -311,11 +1000,15 @@ export class LelegTvApp {
       block.append(el("label", "", field.label), field.input);
       form.append(block);
     }
-    form.append(el("label", "", "Preset rapidi"), presetRow, connectBtn, reloadBtn, cacheHint);
+    form.append(connectBtn, reloadBtn, cacheHint);
     this.content.append(form);
 
+    const fieldItems = fields.map(({ input }) => ({
+      el: input,
+      onActivate: () => input.focus(),
+    }));
     const items = [
-      ...presets,
+      ...fieldItems,
       {
         el: connectBtn,
         onActivate: () => {
@@ -348,91 +1041,361 @@ export class LelegTvApp {
     const label = NAV_ITEMS.find((i) => i.route === route)?.label ?? route;
     this.content.append(
       pageHeader("In arrivo", label),
-      el("p", "", "Questa sezione verrà allineata alla app Android TV nelle prossime iterazioni."),
+      el("p", "hero-copy", "Questa sezione verrà allineata alla app Android TV nelle prossime iterazioni."),
     );
     this.contentFocus.setItems([]);
   }
 
-  private openFullscreen(url: string, title: string): void {
+  private openFullscreenChannel(channel: LiveChannel): void {
+    const profile = this.catalog.activeProfile;
+    if (!profile) return;
+    const url = liveStreamUrls(profile, channel.id)[0];
+    if (url) this.openFullscreenUrl(url, channel.name, channel);
+  }
+
+  private openFullscreenUrl(
+    url: string,
+    title: string,
+    channel: LiveChannel | null = null,
+    playback: PlaybackOptions | null = null,
+  ): void {
     this.fullscreen = true;
+    this.fullscreenChannel = channel;
+    this.fullscreenProgressMeta = playback?.metadata ?? null;
+    this.fullscreenOnClose = playback?.onClose ?? null;
+    this.lastProgressSaveAt = 0;
+    setVisible(this.root, false);
     setVisible(this.playerLayer, true);
     clearElement(this.playerLayer);
     const overlay = el("div", "player-overlay");
+    const playerHint = channel
+      ? "OK controlli · Su/Giù cambia canale · Back esce"
+      : "OK controlli · Back esce";
     overlay.innerHTML = `
       <div class="top-bar">
         <div class="player-title"></div>
-        <div class="player-hint">Back per uscire · Play/Pausa · ← → canale (live)</div>
+        <div class="player-epg"></div>
+        <div class="player-hint"></div>
+      </div>
+      <div class="player-error"></div>
+      <div class="player-controls">
+        <div class="player-progress"><span></span></div>
+        <div class="player-time">00:00 / 00:00</div>
+        <div class="player-actions">
+          <button>Play/Pausa</button><button>-10s</button><button>+10s</button>
+          <button>Audio</button><button>Sottotitoli</button><button>Velocità 1x</button>
+          <button>Chiudi</button>
+        </div>
       </div>`;
     const titleNode = overlay.querySelector(".player-title");
     if (titleNode) titleNode.textContent = title;
+    const hintNode = overlay.querySelector(".player-hint");
+    if (hintNode) hintNode.textContent = playerHint;
     this.playerLayer.appendChild(overlay);
+    this.fullscreenControlsVisible = false;
+    this.fullscreenControlIndex = 0;
+    this.fullscreenAudioIndex = -1;
+    this.fullscreenSubtitleIndex = -1;
+    this.fullscreenSpeedIndex = 2;
+    this.updateFullscreenControls();
+    if (channel) void this.updateFullscreenEpg(channel);
+    this.fullscreenProgressTimer = window.setInterval(
+      () => this.updateFullscreenProgress(),
+      500,
+    );
 
-    const useHtmlPreview = (): void => {
+    const profile = this.catalog.activeProfile;
+    const referer = profile ? `${profileBaseUrl(profile)}/` : "";
+
+    if (this.useAvplay()) {
+      this.avplay.open(url, title, {
+        referer,
+        live: url.includes("/live/"),
+        startPositionMs: playback?.startPositionMs ?? 0,
+      });
+      this.avplay.setFullscreen();
+    } else {
       const box = el("div");
       box.style.width = "100%";
       box.style.height = "100%";
       this.playerLayer.insertBefore(box, this.playerLayer.firstChild);
       this.htmlPreview.mount(box);
-      this.htmlPreview.open(url);
-    };
-
-    void ensureWebapisLoaded()
-      .then(() => {
-        if (this.avplay.isAvailable()) {
-          this.avplay.open(url, title);
-          this.avplay.setFullscreen();
-        } else {
-          useHtmlPreview();
-        }
-      })
-      .catch(() => useHtmlPreview());
+      this.htmlPreview.open(url, playback?.startPositionMs ?? 0);
+    }
   }
 
   private closeFullscreen(): void {
     if (!this.fullscreen) return;
+    this.persistPlaybackProgress(true);
+    const onClose = this.fullscreenOnClose;
     this.fullscreen = false;
+    this.fullscreenChannel = null;
+    this.fullscreenProgressMeta = null;
+    this.fullscreenOnClose = null;
     setVisible(this.playerLayer, false);
     this.avplay.stop();
     this.htmlPreview.stop();
+    if (this.fullscreenUiTimer !== null) window.clearTimeout(this.fullscreenUiTimer);
+    if (this.fullscreenProgressTimer !== null) window.clearInterval(this.fullscreenProgressTimer);
+    this.fullscreenUiTimer = null;
+    this.fullscreenProgressTimer = null;
     clearElement(this.playerLayer);
+    setVisible(this.root, true);
+    if (onClose) onClose();
+    else if (this.router.current === "home") {
+      clearElement(this.content);
+      this.renderHome();
+    }
+  }
+
+  private showFullscreenControls(): void {
+    this.fullscreenControlsVisible = true;
+    this.updateFullscreenControls();
+    if (this.fullscreenUiTimer !== null) window.clearTimeout(this.fullscreenUiTimer);
+    this.fullscreenUiTimer = window.setTimeout(() => {
+      this.fullscreenControlsVisible = false;
+      this.updateFullscreenControls();
+    }, 5000);
+  }
+
+  private updateFullscreenControls(): void {
+    const controls = this.playerLayer.querySelector<HTMLElement>(".player-controls");
+    if (!controls) return;
+    controls.classList.toggle("visible", this.fullscreenControlsVisible);
+    const actions = Array.from(controls.querySelectorAll<HTMLButtonElement>("button"));
+    actions.forEach((button, index) => {
+      button.classList.toggle(
+        "focused",
+        this.fullscreenControlsVisible && index === this.fullscreenControlIndex,
+      );
+    });
+    this.updateFullscreenTrackLabels(actions);
+  }
+
+  private updateFullscreenTrackLabels(actions?: HTMLButtonElement[]): void {
+    const buttons =
+      actions ??
+      Array.from(
+        this.playerLayer.querySelectorAll<HTMLButtonElement>(".player-actions button"),
+      );
+    const audio = this.avplay.trackLabels("AUDIO");
+    const subtitles = this.avplay.trackLabels("TEXT");
+    if (buttons[3]) {
+      buttons[3].textContent =
+        this.fullscreenAudioIndex >= 0
+          ? audio[this.fullscreenAudioIndex] ?? "Audio"
+          : audio.length
+            ? `Audio · ${audio.length} tracce`
+            : "Audio —";
+    }
+    if (buttons[4]) {
+      buttons[4].textContent =
+        this.fullscreenSubtitleIndex >= 0
+          ? subtitles[this.fullscreenSubtitleIndex] ?? "Sottotitoli"
+          : subtitles.length
+            ? `Sottotitoli off · ${subtitles.length}`
+            : "Sottotitoli —";
+    }
+  }
+
+  private updateFullscreenProgress(): void {
+    const duration = this.avplay.getDuration();
+    const position = this.avplay.getCurrentTime();
+    const progress = this.playerLayer.querySelector<HTMLElement>(".player-progress span");
+    const time = this.playerLayer.querySelector<HTMLElement>(".player-time");
+    if (progress) {
+      progress.style.width = `${duration > 0 ? Math.min(100, (position / duration) * 100) : 0}%`;
+    }
+    if (time) time.textContent = `${this.formatTime(position)} / ${this.formatTime(duration)}`;
+    this.updateFullscreenTrackLabels();
+    this.persistPlaybackProgress();
+  }
+
+  private persistPlaybackProgress(force = false): void {
+    const metadata = this.fullscreenProgressMeta;
+    if (!metadata) return;
+    const now = Date.now();
+    if (!force && now - this.lastProgressSaveAt < 5_000) return;
+    const duration = this.avplay.getDuration();
+    const position = this.avplay.getCurrentTime();
+    if (duration <= 0) return;
+    saveProgress(metadata, position, duration);
+    this.lastProgressSaveAt = now;
+  }
+
+  private async updateFullscreenEpg(channel: LiveChannel): Promise<void> {
+    const programmes = await this.catalog.loadEpg(channel);
+    if (!this.fullscreen || this.fullscreenChannel?.id !== channel.id) return;
+    const now = Date.now();
+    const current = programmes.find(
+      (item) => now >= item.startTimeMillis && now < item.endTimeMillis,
+    );
+    const node = this.playerLayer.querySelector<HTMLElement>(".player-epg");
+    if (!node) return;
+    node.textContent = current
+      ? `${this.formatClock(current.startTimeMillis)}–${this.formatClock(
+          current.endTimeMillis,
+        )} · ${current.title}`
+      : "EPG non disponibile";
+  }
+
+  private formatClock(milliseconds: number): string {
+    return new Date(milliseconds).toLocaleTimeString("it-IT", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  private formatTime(milliseconds: number): string {
+    const total = Math.max(0, Math.floor(milliseconds / 1000));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    const pad = (value: number): string => String(value).padStart(2, "0");
+    return hours > 0
+      ? `${hours}:${pad(minutes)}:${pad(seconds)}`
+      : `${pad(minutes)}:${pad(seconds)}`;
+  }
+
+  private activateFullscreenControl(): void {
+    switch (this.fullscreenControlIndex) {
+      case 0:
+        this.avplay.togglePlayPause();
+        break;
+      case 1:
+        this.avplay.seekBy(-10_000);
+        break;
+      case 2:
+        this.avplay.seekBy(10_000);
+        break;
+      case 3:
+        this.fullscreenAudioIndex = this.avplay.cycleTrack(
+          "AUDIO",
+          this.fullscreenAudioIndex,
+        );
+        break;
+      case 4:
+        this.fullscreenSubtitleIndex = this.avplay.cycleTrack(
+          "TEXT",
+          this.fullscreenSubtitleIndex,
+        );
+        break;
+      case 5: {
+        const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+        this.fullscreenSpeedIndex = (this.fullscreenSpeedIndex + 1) % speeds.length;
+        const speed = speeds[this.fullscreenSpeedIndex]!;
+        this.avplay.setSpeed(speed);
+        const button = this.playerLayer.querySelectorAll<HTMLButtonElement>(
+          ".player-actions button",
+        )[5];
+        if (button) button.textContent = `Velocità ${speed}x`;
+        break;
+      }
+      case 6:
+        this.closeFullscreen();
+        return;
+    }
+    this.showFullscreenControls();
   }
 
   private onKeyDown(event: KeyboardEvent): void {
-    const mapped = mapKeyToDirection(event.key);
+    if (event.repeat) return;
+
+    const mapped = mapKeyFromEvent(event);
     if (!mapped) return;
     event.preventDefault();
+    event.stopPropagation();
 
     if (this.fullscreen) {
       if (mapped === "back") {
+        if (this.fullscreenControlsVisible) {
+          this.fullscreenControlsVisible = false;
+          this.updateFullscreenControls();
+          return;
+        }
         this.closeFullscreen();
         return;
       }
-      if (mapped === "activate") {
+      if (mapped === "play_pause") {
         this.avplay.togglePlayPause();
         return;
       }
-      if (mapped === "left" || mapped === "right") {
-        this.switchChannel(mapped === "right" ? 1 : -1);
+      if (mapped === "activate") {
+        if (!this.fullscreenControlsVisible) {
+          this.showFullscreenControls();
+        } else {
+          this.activateFullscreenControl();
+        }
+        return;
+      }
+      if (this.fullscreenControlsVisible) {
+        if (mapped === "left" || mapped === "right") {
+          const delta = mapped === "right" ? 1 : -1;
+          this.fullscreenControlIndex =
+            (this.fullscreenControlIndex + delta + 7) % 7;
+          this.showFullscreenControls();
+        } else if (mapped === "up") {
+          this.fullscreenControlsVisible = false;
+          this.updateFullscreenControls();
+        }
+        return;
+      }
+      if (mapped === "up" || mapped === "down") {
+        const channel = this.liveScreen?.stepChannel(mapped === "down" ? 1 : -1);
+        if (channel) {
+          this.fullscreenChannel = channel;
+          const profile = this.catalog.activeProfile;
+          const url = profile ? liveStreamUrls(profile, channel.id)[0] : null;
+          if (url) {
+            const referer = profile ? `${profileBaseUrl(profile)}/` : "";
+            if (this.useAvplay()) {
+              this.avplay.open(url, channel.name, { referer, live: true });
+              this.avplay.setFullscreen();
+            } else {
+              this.htmlPreview.open(url);
+            }
+            const title = this.playerLayer.querySelector(".player-title");
+            if (title) title.textContent = channel.name;
+            void this.updateFullscreenEpg(channel);
+          }
+        }
       }
       return;
     }
 
     if (mapped === "back") {
       if (this.zone === "content") {
+        if (this.contentBackAction) {
+          this.contentBackAction();
+          return;
+        }
         this.zone = "nav";
         this.navFocus.focusIndex(NAV_ITEMS.findIndex((i) => i.route === this.router.current));
       }
       return;
     }
 
-    if (mapped === "left" && this.zone === "content") {
-      this.zone = "nav";
-      this.navFocus.focusIndex(NAV_ITEMS.findIndex((i) => i.route === this.router.current));
+    if (this.zone === "content" && this.router.current === "live" && this.liveScreen) {
+      if (mapped === "left" && this.liveScreen.getColumn() === "categories") {
+        this.zone = "nav";
+        this.navFocus.focusIndex(NAV_ITEMS.findIndex((i) => i.route === "live"));
+        return;
+      }
+      if (mapped !== "play_pause") {
+        this.liveScreen.handleKey(mapped);
+      }
       return;
     }
+
     if (mapped === "right" && this.zone === "nav") {
       this.zone = "content";
-      if (!this.contentFocus.current()) this.contentFocus.focusIndex(0);
+      if (this.router.current === "live") {
+        this.liveScreen?.focusColumn("categories");
+      } else if (this.contentFocus.current()) {
+        this.contentFocus.focusCurrent();
+      } else {
+        this.contentFocus.focusIndex(0);
+      }
       return;
     }
 
@@ -442,27 +1405,13 @@ export class LelegTvApp {
       return;
     }
     if (mapped === "up" || mapped === "down" || mapped === "left" || mapped === "right") {
-      manager.move(mapped);
+      const moved = manager.move(mapped);
+      if (!moved && mapped === "left" && this.zone === "content") {
+        this.zone = "nav";
+        this.navFocus.focusIndex(
+          NAV_ITEMS.findIndex((item) => item.route === this.router.current),
+        );
+      }
     }
-  }
-
-  private switchChannel(direction: 1 | -1): void {
-    if (!this.selectedChannel || this.router.current !== "live") return;
-    const channels = this.catalog.channelsForCategory(this.liveCategoryId);
-    const index = channels.findIndex((c) => c.id === this.selectedChannel!.id);
-    if (index < 0) return;
-    const next = channels[Math.max(0, Math.min(channels.length - 1, index + direction))];
-    if (!next || next.id === this.selectedChannel.id) return;
-    const url = playbackUrlForChannel(this.catalog, next);
-    if (!url) return;
-    this.selectedChannel = next;
-    if (this.avplay.isAvailable()) {
-      this.avplay.open(url, next.name);
-      this.avplay.setFullscreen();
-    } else {
-      this.htmlPreview.open(url);
-    }
-    const title = this.playerLayer.querySelector(".player-title");
-    if (title) title.textContent = next.name;
   }
 }

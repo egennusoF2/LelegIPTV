@@ -1,5 +1,5 @@
 import type { FocusableElement } from "../app/focusManager";
-import type { LiveChannel, VodMovie } from "../data/models";
+import type { LiveChannel, SeriesShow, VodMovie } from "../data/models";
 import { liveUrl, movieUrl } from "../data/models";
 import type { CatalogState } from "../state/catalogState";
 
@@ -45,7 +45,7 @@ export function renderChannelList(
     container.append(el("div", "empty", "Nessun canale in questa categoria."));
     return [];
   }
-  return channels.map((channel, index) => {
+  return channels.map((channel) => {
     const row = el("div", "list-item focusable");
     if (channel.id === selectedId) row.classList.add("active");
     if (channel.logo) {
@@ -60,8 +60,6 @@ export function renderChannelList(
     return {
       el: row,
       onActivate: () => onSelect(channel),
-      onUp: () => index > 0,
-      onDown: () => index < channels.length - 1,
     } satisfies FocusableElement;
   });
 }
@@ -94,27 +92,103 @@ export function renderPosterRow(
   container: HTMLElement,
   movies: VodMovie[],
   onSelect: (movie: VodMovie) => void,
+  onItemsChanged?: (items: FocusableElement[]) => void,
 ): FocusableElement[] {
   clearElement(container);
-  const row = el("div", "poster-row");
-  container.append(row);
+  const grid = el("div", "poster-grid");
+  container.append(grid);
   if (!movies.length) {
-    row.append(el("div", "empty", "Nessun titolo in questa categoria."));
+    grid.append(el("div", "empty", "Nessun titolo in questa categoria."));
     return [];
   }
-  return movies.slice(0, 40).map((movie, index) => {
-    const card = el("div", "poster-card focusable");
-    const img = document.createElement("img");
-    img.src = movie.logo || "";
-    img.alt = movie.name;
-    card.append(img, el("div", "title", movie.name));
-    return {
-      el: card,
-      onActivate: () => onSelect(movie),
-      onLeft: () => index > 0,
-      onRight: () => index < Math.min(movies.length, 40) - 1,
-    } satisfies FocusableElement;
-  });
+  const items: FocusableElement[] = [];
+  let rendered = 0;
+  const appendBatch = (): void => {
+    const end = Math.min(movies.length, rendered + 60);
+    for (let index = rendered; index < end; index += 1) {
+      const movie = movies[index]!;
+      const card = createPosterCard(
+        movie.name,
+        movie.logo,
+        [movie.year, movie.rating].filter(Boolean).join(" · "),
+      );
+      const item: FocusableElement = {
+        el: card,
+        onActivate: () => onSelect(movie),
+        onFocus: () => {
+          if (index >= rendered - 12 && rendered < movies.length) {
+            appendBatch();
+            onItemsChanged?.(items);
+          }
+        },
+      };
+      items.push(item);
+      grid.append(card);
+    }
+    rendered = end;
+  };
+  appendBatch();
+  return items;
+}
+
+export function renderSeriesPosterRow(
+  container: HTMLElement,
+  shows: SeriesShow[],
+  onSelect: (show: SeriesShow) => void,
+  onItemsChanged?: (items: FocusableElement[]) => void,
+): FocusableElement[] {
+  clearElement(container);
+  const grid = el("div", "poster-grid");
+  container.append(grid);
+  if (!shows.length) {
+    grid.append(el("div", "empty", "Nessuna serie in questa categoria."));
+    return [];
+  }
+  const items: FocusableElement[] = [];
+  let rendered = 0;
+  const appendBatch = (): void => {
+    const end = Math.min(shows.length, rendered + 60);
+    for (let index = rendered; index < end; index += 1) {
+      const show = shows[index]!;
+      const card = createPosterCard(
+        show.name,
+        show.logo,
+        [show.year, show.rating].filter(Boolean).join(" · "),
+      );
+      const item: FocusableElement = {
+        el: card,
+        onActivate: () => onSelect(show),
+        onFocus: () => {
+          if (index >= rendered - 12 && rendered < shows.length) {
+            appendBatch();
+            onItemsChanged?.(items);
+          }
+        },
+      };
+      items.push(item);
+      grid.append(card);
+    }
+    rendered = end;
+  };
+  appendBatch();
+  return items;
+}
+
+function createPosterCard(
+  title: string,
+  imageUrl: string,
+  subtitle: string,
+): HTMLElement {
+  const card = el("div", "poster-card focusable");
+  card.tabIndex = -1;
+  const image = document.createElement("img");
+  image.src = imageUrl || "";
+  image.alt = title;
+  const overlay = el("div", "poster-copy");
+  overlay.append(el("div", "title", title));
+  if (subtitle) overlay.append(el("div", "meta", subtitle));
+  card.append(image, overlay);
+  return card;
 }
 
 export function playbackUrlForChannel(catalog: CatalogState, channel: LiveChannel): string | null {

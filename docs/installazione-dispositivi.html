@@ -320,10 +320,10 @@
         <article class="download-card">
           <div>
             <h3>Samsung Tizen TV</h3>
-            <p>TPK Flutter nativo per installazione developer su TV Samsung Tizen 6.5+.</p>
-            <p class="meta">16 MB · backend video Samsung AVPlay incluso</p>
+            <p>WGT Tizen nativo web per installazione developer su TV Samsung Tizen 6.0+.</p>
+            <p class="meta">3 MB · backend video Samsung AVPlay incluso</p>
           </div>
-          <a class="button primary" href="../www/downloads/current/LelegIPTV-tizen-tv-release.tpk">Scarica TPK</a>
+          <a class="button primary" href="../www/downloads/current/LelegIPTV-tizen-tv-release.wgt">Scarica WGT</a>
         </article>
 
         <article class="download-card">
@@ -332,7 +332,7 @@
             <p>Zip desktop prodotto dalla CI GitHub Actions per PC Windows Intel/AMD.</p>
             <p class="meta">Se non compare, avvia il workflow Flutter installable artifacts.</p>
           </div>
-          <a class="button primary" href="https://github.com/egennusoF2/LelegIPTV/releases/latest/download/LelegIPTV-windows-x64-release.zip">Scarica ZIP Windows</a>
+          <a class="button primary" href="../www/downloads/current/LelegIPTV-windows-x64-release.zip">Scarica ZIP Windows</a>
         </article>
 
         <article class="download-card">
@@ -423,23 +423,22 @@ adb install -r LelegIPTV-android-tv-release.apk</code></pre>
     <section id="tizen">
       <h2>Samsung Tizen TV</h2>
       <p class="note">
-        La versione Tizen parte dalla app Flutter nativa, non dalla vecchia build web. Il pacchetto pronto e'
-        <a href="../www/downloads/current/LelegIPTV-tizen-tv-release.tpk">LelegIPTV-tizen-tv-release.tpk</a>.
+        La versione Tizen e' una app TV dedicata TypeScript con player Samsung AVPlay. Il pacchetto pronto e'
+        <a href="../www/downloads/current/LelegIPTV-tizen-tv-release.wgt">LelegIPTV-tizen-tv-release.wgt</a>.
       </p>
       <p class="note warnbox">
-        Stato tecnico: il TPK e' generato dalla app Flutter e include il backend Samsung AVPlay tramite
-        <code>video_player_avplay</code>. Su Tizen non viene usato <code>media_kit</code>, perche' richiede
-        <code>libmpv</code> e non e' adatto alle TV Samsung.
+        Stato tecnico: il WGT usa direttamente le API AVPlay della TV per live, VOD, tracce audio,
+        sottotitoli, seek e ripresa della visione.
       </p>
       <ol>
         <li>Abilita <strong>Developer Mode</strong> sulla TV Samsung e inserisci l'IP del computer.</li>
         <li>Collega la TV con Tizen Studio / Device Manager oppure via <code>sdb connect IP_TV:26101</code>.</li>
-        <li>Installa il TPK dalla CLI:</li>
+        <li>Installa il WGT dalla CLI:</li>
       </ol>
       <pre><code>sdb connect IP_TV:26101
-tizen install -n LelegIPTV-tizen-tv-release.tpk -t IP_TV:26101</code></pre>
+tizen install -n LelegIPTV-tizen-tv-release.wgt -t IP_TV:26101</code></pre>
       <p class="note warnbox">
-        Se la TV rifiuta la firma, rigenera il certificato Samsung Developer includendo il DUID della TV e ricompila il TPK.
+        Se la TV rifiuta la firma, rigenera il certificato Samsung Developer includendo il DUID della TV e ricompila il WGT.
       </p>
     </section>
 
@@ -455,7 +454,7 @@ tizen install -n LelegIPTV-tizen-tv-release.tpk -t IP_TV:26101</code></pre>
             <h3>Windows x64</h3>
             <p>Scarica lo zip, estrailo in una cartella locale e avvia <code>leleg_iptv.exe</code>.</p>
           </div>
-          <a class="button primary" href="https://github.com/egennusoF2/LelegIPTV/releases/latest/download/LelegIPTV-windows-x64-release.zip">Scarica ZIP Windows</a>
+          <a class="button primary" href="../www/downloads/current/LelegIPTV-windows-x64-release.zip">Scarica ZIP Windows</a>
         </article>
         <article class="download-card">
           <div>

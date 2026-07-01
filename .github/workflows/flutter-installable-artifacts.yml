@@ -2,6 +2,13 @@ name: Flutter installable artifacts
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "native/flutter/leleg_iptv/**"
+      - "native/android-tv/**"
+      - ".github/workflows/flutter-installable-artifacts.yml"
 
 permissions:
   contents: write
@@ -139,7 +146,6 @@ jobs:
       - windows
       - linux
       - macos-ios
-    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -155,4 +161,5 @@ jobs:
             Android TV, Chromecast e Fire TV usano il modulo Kotlin/Compose TV nativo.
             Windows x64 e Linux x64 sono prodotti dalla CI; Windows ARM64 va generato da Parallels se necessario.
           make_latest: true
+          fail_on_unmatched_files: true
           files: release-assets/*

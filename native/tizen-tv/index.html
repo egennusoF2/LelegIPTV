@@ -2,13 +2,18 @@
 <html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=1920, height=1080, initial-scale=1" />
+    <meta name="viewport" content="width=1920, height=1080, user-scalable=no" />
     <title>Leleg IPTV</title>
+    <script type="text/javascript" src="$WEBAPIS/webapis/webapis.js"></script>
     <link rel="stylesheet" href="/src/ui/theme.css" />
   </head>
   <body>
     <script type="text/javascript">
       window.onerror = function (message, _source, line) {
+        if (window.__lelegTvBooted) {
+          console.error("[Leleg IPTV runtime]", message, _source, line);
+          return false;
+        }
         var splash = document.getElementById("boot-splash");
         if (splash) splash.style.display = "none";
         var panel = document.getElementById("boot-error");
@@ -22,12 +27,13 @@
         return false;
       };
     </script>
-    <div id="boot-splash" style="position:fixed;top:0;left:0;width:1920px;height:1080px;background:#081016;color:#45c7f1;text-align:center;padding-top:480px;font-size:36px;font-weight:800;z-index:9999">
+    <div id="boot-splash" style="position:fixed;top:0;left:0;width:1920px;height:1080px;background:#081016;color:#45c7f1;text-align:center;padding-top:480px;font-size:42px;font-weight:800;z-index:9999">
       LELEG IPTV — avvio…
     </div>
+    <object id="av-player" type="application/avplayer"></object>
     <div id="app"></div>
     <div id="player-layer" hidden style="display:none"></div>
-    <div id="boot-error" hidden style="position:fixed;top:0;left:0;width:1920px;height:1080px;background:#081016;color:#ff7a7a;font:24px/1.4 system-ui,sans-serif;text-align:center;padding:48px;z-index:10000"></div>
+    <div id="boot-error" hidden style="position:fixed;top:0;left:0;width:1920px;height:1080px;background:#081016;color:#ff7a7a;font:28px/1.4 system-ui,sans-serif;text-align:center;padding:48px;z-index:10000"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

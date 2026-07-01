@@ -34,8 +34,8 @@ export class Router {
     return () => this.listeners.delete(listener);
   }
 
-  navigate(route: TvRoute): void {
-    if (this.route === route) return;
+  navigate(route: TvRoute, options?: { force?: boolean }): void {
+    if (!options?.force && this.route === route) return;
     this.route = route;
     for (const listener of this.listeners) listener(route);
   }
