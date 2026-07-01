@@ -159,15 +159,62 @@ bool _isLivePlaybackUrl(String url) {
 }
 
 List<String> _vodPlayUrls(XtreamProfile profile, VodMovie movie) {
-  final urls = <String>[XtreamClient(profile).vodUrl(movie)];
-  final ext = movie.containerExtension.trim().replaceAll('.', '').toLowerCase();
-  if (ext.isNotEmpty && ext != 'mp4') {
-    urls.add(
-      '${profile.baseUrl}/movie/${Uri.encodeComponent(profile.username)}/'
-      '${Uri.encodeComponent(profile.password)}/${movie.id}.mp4',
-    );
+  return _vodMediaCandidates(
+    XtreamClient(profile).vodUrl(movie),
+    fallbackExtension: 'mp4',
+  );
+}
+
+List<String> _vodMediaCandidates(
+  String originalUrl, {
+  String? fallbackExtension,
+}) {
+  final urls = <String>[];
+  void add(String value) {
+    if (value.isNotEmpty && !urls.contains(value)) urls.add(value);
   }
-  return urls.toSet().toList(growable: false);
+
+  String? alternateScheme(String value) {
+    final uri = Uri.tryParse(value);
+    if (uri == null || !uri.hasScheme) return null;
+    if (uri.scheme == 'https') {
+      return uri.replace(scheme: 'http').toString();
+    } else if (uri.scheme == 'http') {
+      return uri.replace(scheme: 'https').toString();
+    }
+    return null;
+  }
+
+  add(originalUrl);
+  final uri = Uri.tryParse(originalUrl);
+  final extension = fallbackExtension?.trim().replaceAll('.', '').toLowerCase();
+  if (uri != null && extension != null && extension.isNotEmpty) {
+    final segments = uri.pathSegments.toList();
+    if (segments.isNotEmpty) {
+      final filename = segments.removeLast();
+      final dot = filename.lastIndexOf('.');
+      final stem = dot > 0 ? filename.substring(0, dot) : filename;
+      segments.add('$stem.$extension');
+      add(uri.replace(pathSegments: segments).toString());
+    }
+  }
+  for (final candidate in List<String>.from(urls)) {
+    final alternate = alternateScheme(candidate);
+    if (alternate != null) add(alternate);
+  }
+  return urls;
+}
+
+List<String> _episodePlayUrls(XtreamProfile profile, SeriesEpisode episode) {
+  final url = XtreamClient(profile).episodeUrl(episode);
+  final ext = episode.containerExtension
+      .trim()
+      .replaceAll('.', '')
+      .toLowerCase();
+  return _vodMediaCandidates(
+    url,
+    fallbackExtension: ext.isNotEmpty && ext != 'mp4' ? 'mp4' : null,
+  );
 }
 
 /// Phones: portrait + bottom nav. Tablets: landscape + drawer.
@@ -3868,8 +3915,9 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         : null;
     _beginPlaybackTracking(movieId: movie.id);
     unawaited(_setLastVodMovie(movie.id));
-    final opened = await _openMedia(
-      XtreamClient(profile).vodUrl(movie),
+    final originalUrl = XtreamClient(profile).vodUrl(movie);
+    final opened = await _openVodMedia(
+      Platform.isWindows ? _vodPlayUrls(profile, movie) : <String>[originalUrl],
       movie.name,
       startAt: startAt,
     );
@@ -4328,8 +4376,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     if (show != null) {
       unawaited(_setLastVodEpisode(seriesId: show.id, episodeId: episode.id));
     }
-    final opened = await _openMedia(
-      XtreamClient(profile).episodeUrl(episode),
+    final originalUrl = XtreamClient(profile).episodeUrl(episode);
+    final opened = await _openVodMedia(
+      Platform.isWindows
+          ? _episodePlayUrls(profile, episode)
+          : <String>[originalUrl],
       show == null ? episode.title : '${show.name} - ${episode.title}',
       startAt: startAt,
     );
@@ -4430,6 +4481,32 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       validationTimeout: validationTimeout,
       autoValidateLivePlayback: autoValidateLivePlayback,
     );
+  }
+
+  Future<bool> _openVodMedia(
+    List<String> candidates,
+    String title, {
+    Duration? startAt,
+  }) async {
+    final uniqueCandidates = candidates.toSet().toList(growable: false);
+    for (var index = 0; index < uniqueCandidates.length; index += 1) {
+      if (mounted && uniqueCandidates.length > 1) {
+        setState(() {
+          _status =
+              'Apertura: $title (${index + 1}/${uniqueCandidates.length})';
+        });
+      }
+      final opened = await _openMedia(
+        uniqueCandidates[index],
+        title,
+        startAt: startAt,
+        validatePlayback: Platform.isWindows,
+        validationTimeout: const Duration(seconds: 12),
+        autoValidateLivePlayback: false,
+      );
+      if (opened) return true;
+    }
+    return false;
   }
 
   Future<bool> _openMediaKitMedia(
