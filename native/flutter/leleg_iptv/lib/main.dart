@@ -9221,7 +9221,9 @@ class MovieDetailScreen extends StatelessWidget {
         ),
       );
     }
-    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final mobile =
+        !Platform.isWindows &&
+        _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: movie.name,
       eyebrow: [
@@ -9675,7 +9677,9 @@ class SeriesDetailScreen extends StatelessWidget {
         ),
       );
     }
-    final mobile = _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
+    final mobile =
+        !Platform.isWindows &&
+        _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: show.name,
       eyebrow: '${episodes.length} episodi',
