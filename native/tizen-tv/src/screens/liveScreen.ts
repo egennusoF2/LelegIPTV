@@ -4,12 +4,11 @@ import type { CatalogState } from "../state/catalogState";
 import type { EpgProgramme, LiveCategory, LiveChannel } from "../data/models";
 import {
   canReplayProgramme,
+  currentProgrammeIndex,
   isPlayableChannel,
   liveStreamUrls,
-  profileBaseUrl,
 } from "../data/models";
 import type { AvplayPlayer, Html5PreviewPlayer } from "../player/avplay";
-import { AvplayPlayer as AvplayPlayerClass } from "../player/avplay";
 import { clearElement, el, formatEpgTime, pageHeader } from "../ui/renderUtils";
 import { VirtualList } from "../ui/virtualList";
 
@@ -17,7 +16,7 @@ const CHANNEL_LIMIT = 400;
 const EPG_DEBOUNCE_MS = 450;
 const PREVIEW_DEBOUNCE_MS = 550;
 
-export type LiveColumn = "categories" | "channels" | "epg";
+export type LiveColumn = "categories" | "channels" | "epg" | "action";
 
 export interface LiveScreenDeps {
   catalog: CatalogState;
@@ -45,8 +44,11 @@ export class LiveScreen {
   private epgProgrammes: EpgProgramme[] = [];
   private epgIndex = 0;
   private mounted = false;
+  private previewSuspended = false;
 
-  private debouncedPreview: (channel: LiveChannel) => void;
+  private debouncedPreview: ((channel: LiveChannel) => void) & {
+    cancel?: () => void;
+  };
   private debouncedEpg: (channel: LiveChannel) => void;
 
   constructor(private deps: LiveScreenDeps) {
@@ -83,7 +85,7 @@ export class LiveScreen {
     this.channelList.setHandlers({
       onFocusChange: (channel) => {
         this.selectedChannel = channel;
-        this.debouncedPreview(channel);
+        if (!this.previewSuspended) this.debouncedPreview(channel);
         this.debouncedEpg(channel);
       },
       onActivate: (channel) => {
@@ -148,11 +150,20 @@ export class LiveScreen {
     return this.selectedChannel;
   }
 
+  setFullscreenActive(active: boolean): void {
+    this.previewSuspended = active;
+    this.previewGeneration += 1;
+    this.debouncedPreview.cancel?.();
+    if (!active && this.mounted && this.selectedChannel) {
+      this.debouncedPreview(this.selectedChannel);
+    }
+  }
+
   focusColumn(column: LiveColumn): void {
     this.column = column;
     this.categoryList.setActive(column === "categories");
     this.channelList.setActive(column === "channels");
-    this.fullscreenBtn.classList.remove("focused");
+    this.fullscreenBtn.classList.toggle("focused", column === "action");
     this.paintEpgFocus();
   }
 
@@ -170,6 +181,10 @@ export class LiveScreen {
         this.focusColumn("channels");
         return true;
       }
+      if (this.column === "action") {
+        this.focusColumn("epg");
+        return true;
+      }
       return false;
     }
     if (direction === "right") {
@@ -181,6 +196,10 @@ export class LiveScreen {
         this.focusColumn("epg");
         return true;
       }
+      if (this.column === "epg") {
+        this.focusColumn("action");
+        return true;
+      }
       return false;
     }
     if (direction === "activate") {
@@ -190,6 +209,10 @@ export class LiveScreen {
         const programme = this.epgProgrammes[this.epgIndex];
         if (programme) this.deps.onProgramme(this.selectedChannel, programme);
         else this.deps.onFullscreen(this.selectedChannel);
+        return true;
+      }
+      if (this.column === "action" && this.selectedChannel) {
+        this.deps.onFullscreen(this.selectedChannel);
         return true;
       }
       return false;
@@ -207,6 +230,7 @@ export class LiveScreen {
       this.paintEpgFocus();
       return true;
     }
+    if (this.column === "action") return true;
     return false;
   }
 
@@ -260,25 +284,18 @@ export class LiveScreen {
     const gen = ++this.previewGeneration;
     const profile = this.deps.catalog.activeProfile;
     if (!profile) return;
-    const url = liveStreamUrls(profile, channel.id)[0];
+    const urls = liveStreamUrls(profile, channel.id);
+    const url = urls.find((candidate) => candidate.toLowerCase().endsWith(".m3u8")) ?? urls[0];
     if (!url) return;
 
     this.previewLabel.textContent = channel.name;
     this.previewLabel.style.display = "";
-    const rect = AvplayPlayerClass.rectForElement(this.previewPanel);
-    const referer = `${profileBaseUrl(profile)}/`;
-
-    if (this.deps.useAvplay()) {
-      this.deps.avplay.open(url, channel.name, { rect, referer, live: true });
-      window.setTimeout(() => {
-        if (gen !== this.previewGeneration) return;
-        this.deps.avplay.setPreviewRect(this.previewPanel);
-        this.previewLabel.style.display = "none";
-      }, 120);
-    } else {
-      this.deps.htmlPreview.mount(this.previewPanel);
-      this.deps.htmlPreview.open(url);
-    }
+    this.deps.avplay.stop();
+    this.deps.htmlPreview.mount(this.previewPanel);
+    this.deps.htmlPreview.open(url);
+    window.setTimeout(() => {
+      if (gen === this.previewGeneration) this.previewLabel.style.display = "none";
+    }, 120);
   }
 
   private async loadEpg(channel: LiveChannel): Promise<void> {
@@ -302,9 +319,7 @@ export class LiveScreen {
     const sorted = [...programmes].sort(
       (a, b) => a.startTimeMillis - b.startTimeMillis,
     );
-    const current = sorted.findIndex(
-      (item) => now >= item.startTimeMillis && now < item.endTimeMillis,
-    );
+    const current = currentProgrammeIndex(sorted, now);
     const future = sorted.findIndex((item) => item.startTimeMillis > now);
     const anchor = current >= 0 ? current : future >= 0 ? future : sorted.length - 1;
     const start = Math.max(0, anchor - 3);
@@ -312,7 +327,7 @@ export class LiveScreen {
     this.epgIndex = Math.max(0, anchor - start);
     for (const item of this.epgProgrammes) {
       const row = el("div", "list-item epg-row");
-      const live = now >= item.startTimeMillis && now < item.endTimeMillis;
+      const live = item === sorted[current];
       const replay = !!this.selectedChannel && canReplayProgramme(this.selectedChannel, item, now);
       if (live) row.classList.add("epg-live");
       if (replay) row.classList.add("epg-replay");

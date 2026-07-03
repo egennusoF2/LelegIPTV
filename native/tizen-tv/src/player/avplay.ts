@@ -78,6 +78,7 @@ export class AvplayPlayer {
   private state: PlayerState = "idle";
   private title = "";
   private pendingRect: { x: number; y: number; w: number; h: number } | null = null;
+  private pendingObjectRect: { x: number; y: number; w: number; h: number } | null = null;
   private referer = "";
   private isLive = false;
   private startPositionMs = 0;
@@ -95,6 +96,7 @@ export class AvplayPlayer {
   open(url: string, title: string, options: AvplayOpenOptions = {}): void {
     const urls = [url, alternateLiveUrl(url)].filter((u): u is string => !!u);
     this.pendingRect = options.rect ?? null;
+    if (!options.rect) this.pendingObjectRect = null;
     this.referer = options.referer ?? "";
     this.isLive = !!options.live;
     this.startPositionMs = Math.max(0, options.startPositionMs ?? 0);
@@ -251,7 +253,8 @@ export class AvplayPlayer {
       const { x, y, w, h } = this.pendingRect;
       if (w > 0 && h > 0) {
         player.setDisplayRect(x, y, w, h);
-        this.setObjectRect(x, y, w, h);
+        const cssRect = this.pendingObjectRect ?? this.pendingRect;
+        this.setObjectRect(cssRect.x, cssRect.y, cssRect.w, cssRect.h);
       }
       return;
     }
@@ -396,6 +399,7 @@ export class AvplayPlayer {
       // ignore
     }
     this.pendingRect = null;
+    this.pendingObjectRect = null;
     this.setObjectVisible(false);
     this.setState("idle", "");
   }
@@ -411,8 +415,10 @@ export class AvplayPlayer {
   /** Samsung AVPlay usa sempre coordinate 1920×1080. */
   static rectForElement(node: HTMLElement): { x: number; y: number; w: number; h: number } {
     const rect = node.getBoundingClientRect();
-    const scaleX = 1920 / Math.max(1, document.documentElement.clientWidth || 1920);
-    const scaleY = 1080 / Math.max(1, document.documentElement.clientHeight || 1080);
+    const viewportWidth = document.documentElement.clientWidth || 1920;
+    const viewportHeight = document.documentElement.clientHeight || 1080;
+    const scaleX = 1920 / viewportWidth;
+    const scaleY = 1080 / viewportHeight;
     return {
       x: Math.round(rect.left * scaleX),
       y: Math.round(rect.top * scaleY),
@@ -422,6 +428,13 @@ export class AvplayPlayer {
   }
 
   setPreviewRect(container: HTMLElement): void {
+    const rect = container.getBoundingClientRect();
+    this.pendingObjectRect = {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      w: Math.max(64, Math.round(rect.width)),
+      h: Math.max(36, Math.round(rect.height)),
+    };
     this.pendingRect = AvplayPlayer.rectForElement(container);
     const player = avplay();
     if (player && this.pendingRect.w > 0 && this.pendingRect.h > 0) {
@@ -431,6 +444,8 @@ export class AvplayPlayer {
         this.pendingRect.w,
         this.pendingRect.h,
       );
+      const cssRect = this.pendingObjectRect;
+      this.setObjectRect(cssRect.x, cssRect.y, cssRect.w, cssRect.h);
     }
   }
 
@@ -445,14 +460,15 @@ export class Html5PreviewPlayer {
   private video: HTMLVideoElement | null = null;
 
   mount(container: HTMLElement): void {
-    if (this.video) return;
-    const video = document.createElement("video");
-    video.style.width = "100%";
-    video.style.height = "100%";
-    video.style.objectFit = "contain";
-    video.playsInline = true;
-    container.appendChild(video);
-    this.video = video;
+    if (!this.video) {
+      const video = document.createElement("video");
+      video.style.width = "100%";
+      video.style.height = "100%";
+      video.style.objectFit = "contain";
+      video.playsInline = true;
+      this.video = video;
+    }
+    if (this.video.parentElement !== container) container.appendChild(this.video);
   }
 
   open(url: string, startPositionMs = 0): void {

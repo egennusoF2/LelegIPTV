@@ -104,7 +104,7 @@ export function renderPosterRow(
   const items: FocusableElement[] = [];
   let rendered = 0;
   const appendBatch = (): void => {
-    const end = Math.min(movies.length, rendered + 60);
+    const end = Math.min(movies.length, rendered + 12);
     for (let index = rendered; index < end; index += 1) {
       const movie = movies[index]!;
       const card = createPosterCard(
@@ -116,7 +116,7 @@ export function renderPosterRow(
         el: card,
         onActivate: () => onSelect(movie),
         onFocus: () => {
-          if (index >= rendered - 12 && rendered < movies.length) {
+          if (index >= rendered - 4 && rendered < movies.length) {
             appendBatch();
             onItemsChanged?.(items);
           }
@@ -147,7 +147,7 @@ export function renderSeriesPosterRow(
   const items: FocusableElement[] = [];
   let rendered = 0;
   const appendBatch = (): void => {
-    const end = Math.min(shows.length, rendered + 60);
+    const end = Math.min(shows.length, rendered + 12);
     for (let index = rendered; index < end; index += 1) {
       const show = shows[index]!;
       const card = createPosterCard(
@@ -159,7 +159,7 @@ export function renderSeriesPosterRow(
         el: card,
         onActivate: () => onSelect(show),
         onFocus: () => {
-          if (index >= rendered - 12 && rendered < shows.length) {
+          if (index >= rendered - 4 && rendered < shows.length) {
             appendBatch();
             onItemsChanged?.(items);
           }
@@ -184,6 +184,8 @@ function createPosterCard(
   const image = document.createElement("img");
   image.src = imageUrl || "";
   image.alt = title;
+  image.loading = "lazy";
+  image.decoding = "async";
   const overlay = el("div", "poster-copy");
   overlay.append(el("div", "title", title));
   if (subtitle) overlay.append(el("div", "meta", subtitle));

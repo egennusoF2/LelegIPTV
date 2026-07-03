@@ -16,6 +16,7 @@ import type {
 import {
   canReplayProgramme,
   catchupStreamUrls,
+  currentProgrammeIndex,
   isPlayableChannel,
   liveStreamUrls,
   movieUrl,
@@ -76,6 +77,7 @@ export class LelegTvApp {
   private root = document.getElementById("app")!;
   private playerLayer = document.getElementById("player-layer")!;
   private statusBar = el("div", "status-bar");
+  private accountBar = el("div", "account-bar");
   private loadingOverlay = el("div", "catalog-loading");
   private router = new Router();
   private catalog = new CatalogState();
@@ -110,6 +112,8 @@ export class LelegTvApp {
   private guideLoadGeneration = 0;
   private contentBackAction: (() => void) | null = null;
   private favoriteMovieIds = loadFavoriteMovieIds();
+  private exitDialog: HTMLElement | null = null;
+  private exitDialogIndex = 1;
 
   private shell = el("div", "shell");
   private sidebar = el("nav", "sidebar");
@@ -135,6 +139,7 @@ export class LelegTvApp {
       );
       if (loadingText) loadingText.textContent = message;
       setVisible(this.loadingOverlay, loading);
+      this.updateAccountBar();
     });
 
     this.avplay.setStateListener((state, _title, detail) => {
@@ -198,12 +203,27 @@ export class LelegTvApp {
         el: button,
         onActivate: () => {
           this.zone = "content";
+          this.navFocus.clearFocus();
           this.router.navigate(item.route);
         },
       };
     });
     this.navFocus.setItems(items);
-    this.sidebar.append(...items.map((i) => i.el), this.statusBar);
+    this.sidebar.append(...items.map((i) => i.el), this.accountBar, this.statusBar);
+    this.updateAccountBar();
+  }
+
+  private updateAccountBar(): void {
+    const profile = this.catalog.activeProfile;
+    if (!profile) {
+      this.accountBar.textContent = "Nessuna lista attiva";
+      return;
+    }
+    const expiresAt = this.catalog.accountExpiresAt;
+    const expiry = expiresAt
+      ? new Date(expiresAt).toLocaleDateString("it-IT")
+      : "scadenza non disponibile";
+    this.accountBar.textContent = `${profile.title || "Lista attiva"} · ${expiry}`;
   }
 
   private teardownLiveScreen(): void {
@@ -392,8 +412,7 @@ export class LelegTvApp {
     }
     if (gen !== this.moviesRenderGen) return;
     count.textContent = `${this.movies.length} titoli in questa categoria`;
-    let posters: FocusableElement[] = [];
-    posters = renderPosterRow(
+    const posters: FocusableElement[] = renderPosterRow(
       gridHost,
       this.movies,
       (movie) => void this.renderMovieDetail(movie),
@@ -561,8 +580,7 @@ export class LelegTvApp {
     }
     if (gen !== this.seriesRenderGen) return;
     count.textContent = `${this.series.length} titoli in questa categoria`;
-    let posters: FocusableElement[] = [];
-    posters = renderSeriesPosterRow(
+    const posters: FocusableElement[] = renderSeriesPosterRow(
       gridHost,
       this.series,
       (show) => void this.renderSeriesDetail(show),
@@ -837,7 +855,10 @@ export class LelegTvApp {
       ...dayButtons,
     ];
     const channelItems: FocusableElement[] = [];
-    const renderProgrammes = async (channel: LiveChannel): Promise<void> => {
+    const renderProgrammes = async (
+      channel: LiveChannel,
+      focusProgrammes = false,
+    ): Promise<void> => {
       const generation = ++this.guideLoadGeneration;
       this.guideChannelId = channel.id;
       channelItems.forEach((item, index) => {
@@ -869,8 +890,13 @@ export class LelegTvApp {
       if (!visibleProgrammes.length) {
         programmesHost.append(el("div", "empty", "Nessun programma per questo giorno"));
       }
-      const programmeItems: FocusableElement[] = visibleProgrammes.map((programme) => {
-        const live = now >= programme.startTimeMillis && now < programme.endTimeMillis;
+      const currentIndex = currentProgrammeIndex(visibleProgrammes, now);
+      const selectedChannelIndex = Math.max(
+        0,
+        channels.findIndex((item) => item.id === channel.id),
+      );
+      const programmeItems: FocusableElement[] = visibleProgrammes.map((programme, index) => {
+        const live = index === currentIndex;
         const replay = canReplayProgramme(channel, programme, now);
         const past = programme.endTimeMillis <= now;
         const row = el(
@@ -897,9 +923,18 @@ export class LelegTvApp {
         return {
           el: row,
           onActivate: () => this.playGuideProgramme(channel, programme),
+          onLeft: () => {
+            this.contentFocus.focusIndex(
+              fixedItems.length + selectedChannelIndex,
+            );
+            return true;
+          },
         };
       });
       this.contentFocus.setItems([...fixedItems, ...channelItems, ...programmeItems]);
+      if (focusProgrammes && programmeItems.length) {
+        this.contentFocus.focusIndex(fixedItems.length + channelItems.length);
+      }
       const liveRow = programmesHost.querySelector<HTMLElement>(".epg-live");
       if (liveRow && this.guideDayOffset === 0) {
         liveRow.scrollIntoView({ block: "center" });
@@ -912,7 +947,11 @@ export class LelegTvApp {
       channelsHost.append(button);
       const item: FocusableElement = {
         el: button,
-        onActivate: () => void renderProgrammes(channel),
+        onActivate: () => void renderProgrammes(channel, true),
+        onRight: () => {
+          void renderProgrammes(channel, true);
+          return true;
+        },
         onFocus: () => {
           if (this.guideChannelId !== channel.id) void renderProgrammes(channel);
         },
@@ -944,25 +983,89 @@ export class LelegTvApp {
 
   private renderSettings(): void {
     this.content.append(pageHeader("Le mie liste", "Configura il provider Xtream"));
+    const savedProfiles = this.catalog.profiles;
+    const savedHost = el("div", "saved-profiles");
+    const savedItems: FocusableElement[] = [];
+    for (const saved of savedProfiles) {
+      const row = el("div", "saved-profile panel");
+      const copy = el("div", "saved-profile-copy");
+      copy.append(
+        el("div", "name", saved.title || saved.serverUrl),
+        el(
+          "div",
+          "meta",
+          saved.serverUrl.replace(/^https?:\/\//i, "").replace(/\/.*$/, ""),
+        ),
+      );
+      const useButton = el("button", "focusable", "Usa");
+      const reloadButton = el("button", "focusable", "Ricarica");
+      const removeButton = el("button", "focusable danger", "Rimuovi");
+      useButton.type = reloadButton.type = removeButton.type = "button";
+      const isActive =
+        this.catalog.activeProfile?.serverUrl === saved.serverUrl &&
+        this.catalog.activeProfile.username === saved.username;
+      if (isActive) row.classList.add("active");
+      if (isActive && this.catalog.accountExpiresAt) {
+        copy.append(
+          el(
+            "div",
+            "expiry",
+            `Scade il ${new Date(
+              this.catalog.accountExpiresAt,
+            ).toLocaleDateString("it-IT")}`,
+          ),
+        );
+      }
+      row.append(copy, useButton, reloadButton, removeButton);
+      savedHost.append(row);
+      savedItems.push(
+        {
+          el: useButton,
+          onActivate: () => {
+            void this.catalog
+              .selectProfile(saved)
+              .then(() => this.router.navigate("home"));
+          },
+        },
+        {
+          el: reloadButton,
+          onActivate: () => {
+            void this.catalog.selectProfile(saved).then(() => {
+              void this.catalog
+                .refreshCatalog(true)
+                .then(() => this.router.navigate("home"));
+            });
+          },
+        },
+        {
+          el: removeButton,
+          onActivate: () => {
+            void this.catalog.deleteProfile(saved).then(() => {
+              this.router.navigate("settings", { force: true });
+            });
+          },
+        },
+      );
+    }
+    if (savedProfiles.length) {
+      this.content.append(savedHost);
+    }
+
     const form = el("div", "settings-form panel");
     form.style.padding = "28px";
 
     const profile = this.catalog.activeProfile;
     const titleInput = document.createElement("input");
-    titleInput.value = profile?.title ?? "";
     titleInput.placeholder = "Codice lista (es. ITALIA1)";
 
     const serverInput = document.createElement("input");
-    serverInput.value = profile?.serverUrl ?? "";
     serverInput.placeholder = "Server";
 
     const userInput = document.createElement("input");
-    userInput.value = profile?.username ?? "";
     userInput.placeholder = "Username";
 
     const passInput = document.createElement("input");
     passInput.type = "password";
-    passInput.value = profile?.password ?? "";
     passInput.placeholder = "Password";
 
     const applyTypedPreset = (): void => {
@@ -1008,6 +1111,7 @@ export class LelegTvApp {
       onActivate: () => input.focus(),
     }));
     const items = [
+      ...savedItems,
       ...fieldItems,
       {
         el: connectBtn,
@@ -1049,6 +1153,7 @@ export class LelegTvApp {
   private openFullscreenChannel(channel: LiveChannel): void {
     const profile = this.catalog.activeProfile;
     if (!profile) return;
+    this.liveScreen?.setFullscreenActive(true);
     const url = liveStreamUrls(profile, channel.id)[0];
     if (url) this.openFullscreenUrl(url, channel.name, channel);
   }
@@ -1072,15 +1177,22 @@ export class LelegTvApp {
       ? "OK controlli · Su/Giù cambia canale · Back esce"
       : "OK controlli · Back esce";
     overlay.innerHTML = `
-      <div class="top-bar">
-        <div class="player-title"></div>
-        <div class="player-epg"></div>
-        <div class="player-hint"></div>
-      </div>
       <div class="player-error"></div>
       <div class="player-controls">
-        <div class="player-progress"><span></span></div>
-        <div class="player-time">00:00 / 00:00</div>
+        <div class="player-context">
+          <div>
+            <div class="player-title"></div>
+            <div class="player-epg">
+              <span class="player-programme-title">Programma in caricamento…</span>
+              <span class="player-programme-time"></span>
+            </div>
+          </div>
+          <div class="player-hint"></div>
+        </div>
+        <div class="player-scrubber">
+          <div class="player-progress"><span></span><i></i></div>
+          <div class="player-time">00:00 / 00:00</div>
+        </div>
         <div class="player-actions">
           <button>Play/Pausa</button><button>-10s</button><button>+10s</button>
           <button>Audio</button><button>Sottotitoli</button><button>Velocità 1x</button>
@@ -1093,12 +1205,13 @@ export class LelegTvApp {
     if (hintNode) hintNode.textContent = playerHint;
     this.playerLayer.appendChild(overlay);
     this.fullscreenControlsVisible = false;
-    this.fullscreenControlIndex = 0;
+    this.fullscreenControlIndex = 1;
     this.fullscreenAudioIndex = -1;
     this.fullscreenSubtitleIndex = -1;
     this.fullscreenSpeedIndex = 2;
     this.updateFullscreenControls();
     if (channel) void this.updateFullscreenEpg(channel);
+    this.showFullscreenControls();
     this.fullscreenProgressTimer = window.setInterval(
       () => this.updateFullscreenProgress(),
       500,
@@ -1132,6 +1245,7 @@ export class LelegTvApp {
     this.fullscreenChannel = null;
     this.fullscreenProgressMeta = null;
     this.fullscreenOnClose = null;
+    this.liveScreen?.setFullscreenActive(false);
     setVisible(this.playerLayer, false);
     this.avplay.stop();
     this.htmlPreview.stop();
@@ -1162,11 +1276,16 @@ export class LelegTvApp {
     const controls = this.playerLayer.querySelector<HTMLElement>(".player-controls");
     if (!controls) return;
     controls.classList.toggle("visible", this.fullscreenControlsVisible);
+    const scrubber = controls.querySelector<HTMLElement>(".player-scrubber");
+    scrubber?.classList.toggle(
+      "focused",
+      this.fullscreenControlsVisible && this.fullscreenControlIndex === 0,
+    );
     const actions = Array.from(controls.querySelectorAll<HTMLButtonElement>("button"));
     actions.forEach((button, index) => {
       button.classList.toggle(
         "focused",
-        this.fullscreenControlsVisible && index === this.fullscreenControlIndex,
+        this.fullscreenControlsVisible && index + 1 === this.fullscreenControlIndex,
       );
     });
     this.updateFullscreenTrackLabels(actions);
@@ -1202,10 +1321,14 @@ export class LelegTvApp {
     const duration = this.avplay.getDuration();
     const position = this.avplay.getCurrentTime();
     const progress = this.playerLayer.querySelector<HTMLElement>(".player-progress span");
+    const thumb = this.playerLayer.querySelector<HTMLElement>(".player-progress i");
     const time = this.playerLayer.querySelector<HTMLElement>(".player-time");
+    const progressPercent =
+      duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
     if (progress) {
-      progress.style.width = `${duration > 0 ? Math.min(100, (position / duration) * 100) : 0}%`;
+      progress.style.width = `${progressPercent}%`;
     }
+    if (thumb) thumb.style.left = `${progressPercent}%`;
     if (time) time.textContent = `${this.formatTime(position)} / ${this.formatTime(duration)}`;
     this.updateFullscreenTrackLabels();
     this.persistPlaybackProgress();
@@ -1227,16 +1350,19 @@ export class LelegTvApp {
     const programmes = await this.catalog.loadEpg(channel);
     if (!this.fullscreen || this.fullscreenChannel?.id !== channel.id) return;
     const now = Date.now();
-    const current = programmes.find(
-      (item) => now >= item.startTimeMillis && now < item.endTimeMillis,
-    );
-    const node = this.playerLayer.querySelector<HTMLElement>(".player-epg");
-    if (!node) return;
-    node.textContent = current
+    const currentIndex = currentProgrammeIndex(programmes, now);
+    const current = currentIndex >= 0 ? programmes[currentIndex] : null;
+    const titleNode =
+      this.playerLayer.querySelector<HTMLElement>(".player-programme-title");
+    const timeNode =
+      this.playerLayer.querySelector<HTMLElement>(".player-programme-time");
+    if (!titleNode || !timeNode) return;
+    titleNode.textContent = current?.title || "Programmazione non disponibile";
+    timeNode.textContent = current
       ? `${this.formatClock(current.startTimeMillis)}–${this.formatClock(
           current.endTimeMillis,
-        )} · ${current.title}`
-      : "EPG non disponibile";
+        )}`
+      : "";
   }
 
   private formatClock(milliseconds: number): string {
@@ -1260,27 +1386,29 @@ export class LelegTvApp {
   private activateFullscreenControl(): void {
     switch (this.fullscreenControlIndex) {
       case 0:
-        this.avplay.togglePlayPause();
         break;
       case 1:
-        this.avplay.seekBy(-10_000);
+        this.avplay.togglePlayPause();
         break;
       case 2:
-        this.avplay.seekBy(10_000);
+        this.avplay.seekBy(-10_000);
         break;
       case 3:
+        this.avplay.seekBy(10_000);
+        break;
+      case 4:
         this.fullscreenAudioIndex = this.avplay.cycleTrack(
           "AUDIO",
           this.fullscreenAudioIndex,
         );
         break;
-      case 4:
+      case 5:
         this.fullscreenSubtitleIndex = this.avplay.cycleTrack(
           "TEXT",
           this.fullscreenSubtitleIndex,
         );
         break;
-      case 5: {
+      case 6: {
         const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
         this.fullscreenSpeedIndex = (this.fullscreenSpeedIndex + 1) % speeds.length;
         const speed = speeds[this.fullscreenSpeedIndex]!;
@@ -1291,20 +1419,81 @@ export class LelegTvApp {
         if (button) button.textContent = `Velocità ${speed}x`;
         break;
       }
-      case 6:
+      case 7:
         this.closeFullscreen();
         return;
     }
     this.showFullscreenControls();
   }
 
-  private onKeyDown(event: KeyboardEvent): void {
-    if (event.repeat) return;
+  private showExitDialog(): void {
+    if (this.exitDialog) return;
+    this.exitDialogIndex = 1;
+    const overlay = el("div", "exit-overlay");
+    const dialog = el("div", "exit-dialog panel");
+    dialog.append(
+      el("h2", "", "Vuoi uscire dall’applicazione?"),
+      el("p", "", "La riproduzione corrente verrà interrotta."),
+    );
+    const actions = el("div", "exit-actions");
+    const exitButton = el("button", "focusable", "Esci");
+    const cancelButton = el("button", "focusable", "Annulla");
+    exitButton.type = cancelButton.type = "button";
+    actions.append(exitButton, cancelButton);
+    dialog.append(actions);
+    overlay.append(dialog);
+    document.body.append(overlay);
+    this.exitDialog = overlay;
+    this.paintExitDialog();
+  }
 
+  private paintExitDialog(): void {
+    const buttons = this.exitDialog?.querySelectorAll<HTMLButtonElement>("button");
+    if (!buttons) return;
+    Array.from(buttons).forEach((button, index) => {
+      button.classList.toggle("focused", index === this.exitDialogIndex);
+    });
+  }
+
+  private closeExitDialog(): void {
+    this.exitDialog?.remove();
+    this.exitDialog = null;
+    this.navFocus.focusCurrent();
+  }
+
+  private exitApplication(): void {
+    const tizenApi = globalThis as {
+      tizen?: {
+        application?: {
+          getCurrentApplication?: () => { exit?: () => void };
+        };
+      };
+    };
+    try {
+      tizenApi.tizen?.application?.getCurrentApplication?.().exit?.();
+    } catch {
+      window.close();
+    }
+  }
+
+  private onKeyDown(event: KeyboardEvent): void {
     const mapped = mapKeyFromEvent(event);
     if (!mapped) return;
     event.preventDefault();
     event.stopPropagation();
+
+    if (this.exitDialog) {
+      if (mapped === "left" || mapped === "right") {
+        this.exitDialogIndex = this.exitDialogIndex === 0 ? 1 : 0;
+        this.paintExitDialog();
+      } else if (mapped === "back") {
+        this.closeExitDialog();
+      } else if (mapped === "activate") {
+        if (this.exitDialogIndex === 0) this.exitApplication();
+        else this.closeExitDialog();
+      }
+      return;
+    }
 
     if (this.fullscreen) {
       if (mapped === "back") {
@@ -1329,14 +1518,38 @@ export class LelegTvApp {
         return;
       }
       if (this.fullscreenControlsVisible) {
-        if (mapped === "left" || mapped === "right") {
+        if (
+          this.fullscreenControlIndex === 0 &&
+          (mapped === "left" || mapped === "right")
+        ) {
+          if (!this.fullscreenChannel) {
+            this.avplay.seekBy(mapped === "right" ? 30_000 : -30_000);
+          }
+          this.showFullscreenControls();
+        } else if (
+          this.fullscreenControlIndex > 0 &&
+          (mapped === "left" || mapped === "right")
+        ) {
           const delta = mapped === "right" ? 1 : -1;
           this.fullscreenControlIndex =
-            (this.fullscreenControlIndex + delta + 7) % 7;
+            1 + ((this.fullscreenControlIndex - 1 + delta + 7) % 7);
           this.showFullscreenControls();
         } else if (mapped === "up") {
-          this.fullscreenControlsVisible = false;
-          this.updateFullscreenControls();
+          if (this.fullscreenControlIndex > 0) {
+            this.fullscreenControlIndex = 0;
+            this.showFullscreenControls();
+          } else {
+            this.fullscreenControlsVisible = false;
+            this.updateFullscreenControls();
+          }
+        } else if (mapped === "down") {
+          if (this.fullscreenControlIndex === 0) {
+            this.fullscreenControlIndex = 1;
+            this.showFullscreenControls();
+          } else {
+            this.fullscreenControlsVisible = false;
+            this.updateFullscreenControls();
+          }
         }
         return;
       }
@@ -1357,6 +1570,7 @@ export class LelegTvApp {
             const title = this.playerLayer.querySelector(".player-title");
             if (title) title.textContent = channel.name;
             void this.updateFullscreenEpg(channel);
+            this.showFullscreenControls();
           }
         }
       }
@@ -1369,8 +1583,12 @@ export class LelegTvApp {
           this.contentBackAction();
           return;
         }
+        this.contentFocus.clearFocus();
         this.zone = "nav";
         this.navFocus.focusIndex(NAV_ITEMS.findIndex((i) => i.route === this.router.current));
+      } else {
+        this.navFocus.clearFocus();
+        this.showExitDialog();
       }
       return;
     }
@@ -1389,6 +1607,7 @@ export class LelegTvApp {
 
     if (mapped === "right" && this.zone === "nav") {
       this.zone = "content";
+      this.navFocus.clearFocus();
       if (this.router.current === "live") {
         this.liveScreen?.focusColumn("categories");
       } else if (this.contentFocus.current()) {
@@ -1407,6 +1626,7 @@ export class LelegTvApp {
     if (mapped === "up" || mapped === "down" || mapped === "left" || mapped === "right") {
       const moved = manager.move(mapped);
       if (!moved && mapped === "left" && this.zone === "content") {
+        this.contentFocus.clearFocus();
         this.zone = "nav";
         this.navFocus.focusIndex(
           NAV_ITEMS.findIndex((item) => item.route === this.router.current),

@@ -58,6 +58,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         MutableStateFlow<SeriesDetailState>(SeriesDetailState.Idle)
     private val mutableProfilesState = MutableStateFlow(ProfilesState())
     private val mutableLibraryState = MutableStateFlow(UserLibrarySnapshot.Empty)
+    private val mutableAccountExpiry = MutableStateFlow<Long?>(null)
     private var lastGuideChannelIds: List<Int>? = null
     private val epgMemoryCache =
         object : LinkedHashMap<Int, List<EpgProgramme>>(16, 0.75f, true) {
@@ -79,6 +80,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private val guideFullLoadChannels = mutableSetOf<Int>()
 
     val state: StateFlow<CatalogState> = mutableState.asStateFlow()
+    val accountExpiry: StateFlow<Long?> = mutableAccountExpiry.asStateFlow()
     val epgState: StateFlow<EpgState> = mutableEpgState.asStateFlow()
     val guideState: StateFlow<GuideState> = mutableGuideState.asStateFlow()
     val vodState: StateFlow<VodState> = mutableVodState.asStateFlow()
@@ -251,9 +253,15 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         seriesCategoryCache.clear()
         mutableVodState.value = VodState.Idle
         mutableSeriesState.value = SeriesState.Idle
+        mutableAccountExpiry.value = null
         ensureVod(profile)
         ensureSeries(profile)
         mutableState.value = CatalogState.Loading("Caricamento categorie e canali...")
+        viewModelScope.launch {
+            mutableAccountExpiry.value = runCatching {
+                client.loadAccountExpiry(profile)
+            }.getOrNull()
+        }
         viewModelScope.launch {
             if (!forceRefresh) {
                 val snapshot = withContext(Dispatchers.IO) {

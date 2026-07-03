@@ -35,6 +35,24 @@ export interface EpgProgramme {
   endTimeMillis: number;
 }
 
+export function currentProgrammeIndex(
+  programmes: EpgProgramme[],
+  now = Date.now(),
+): number {
+  let selected = -1;
+  for (let index = 0; index < programmes.length; index += 1) {
+    const item = programmes[index]!;
+    if (now < item.startTimeMillis || now >= item.endTimeMillis) continue;
+    if (
+      selected < 0 ||
+      item.startTimeMillis > programmes[selected]!.startTimeMillis
+    ) {
+      selected = index;
+    }
+  }
+  return selected;
+}
+
 export interface VodCategory {
   id: string;
   name: string;
@@ -187,6 +205,7 @@ export function mergeEpgProgrammes(...sources: EpgProgramme[][]): EpgProgramme[]
 
 export interface CatalogSnapshot {
   profile: XtreamProfile;
+  accountExpiresAt?: number | null;
   liveCategories: LiveCategory[];
   liveChannels: LiveChannel[];
   vodCategories: VodCategory[];

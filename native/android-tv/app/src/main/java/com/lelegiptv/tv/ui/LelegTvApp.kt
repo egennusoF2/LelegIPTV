@@ -155,6 +155,7 @@ fun LelegTvApp(viewModel: TvViewModel) {
     val seriesDetailState by viewModel.seriesDetailState.collectAsStateWithLifecycle()
     val profilesState by viewModel.profilesState.collectAsStateWithLifecycle()
     val libraryState by viewModel.libraryState.collectAsStateWithLifecycle()
+    val accountExpiry by viewModel.accountExpiry.collectAsStateWithLifecycle()
     var route by remember {
         mutableStateOf(
             if (state is CatalogState.Empty || state is CatalogState.Failed) {
@@ -460,6 +461,7 @@ fun LelegTvApp(viewModel: TvViewModel) {
             route = route,
             sidebarFocus = sidebarFocus,
             activeProfileTitle = activeListTitle,
+            accountExpiry = accountExpiry,
             onRoute = ::openRoute,
             onMoveRight = { scope.launch { contentRequester.safeRequestFocus() } },
         )
@@ -723,6 +725,7 @@ private fun Sidebar(
     route: TvRoute,
     sidebarFocus: SidebarFocusHandles,
     activeProfileTitle: String?,
+    accountExpiry: Long?,
     onRoute: (TvRoute) -> Unit,
     onMoveRight: () -> Unit,
 ) {
@@ -843,6 +846,16 @@ private fun Sidebar(
                 onMoveRight = onMoveRight,
             ),
         )
+        if (accountExpiry != null) {
+            BasicText(
+                text = "Scade il ${
+                    java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.ITALY)
+                        .format(java.util.Date(accountExpiry))
+                }",
+                style = TextStyle(color = TvColors.Muted, fontSize = 12.sp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
+            )
+        }
     }
 }
 

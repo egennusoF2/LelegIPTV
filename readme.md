@@ -67,7 +67,7 @@ prompt on HTTPS or localhost.
 | macOS Apple Silicon | `cd native/flutter/leleg_iptv && flutter build macos --release` | `www/downloads/current/LelegIPTV-macos-arm64-release.dmg` / `.zip` |
 | Android phone / tablet / TV | `cd native/flutter/leleg_iptv && flutter build apk --release` | `www/downloads/current/LelegIPTV-android-universal-release.apk` |
 | iOS / iPhone / iPadOS | `cd native/flutter/leleg_iptv && flutter build ios --release --no-codesign` | `www/downloads/current/LelegIPTV-ios-unsigned.ipa` |
-| Samsung Tizen TV | `pnpm flutter:tizen:build` | `www/downloads/current/LelegIPTV-tizen-tv-release.tpk` |
+| Samsung Tizen TV | `cd native/tizen-tv && npm run build && npm run package:wgt` | `www/downloads/current/LelegIPTV-tizen-tv-release.wgt` |
 | Windows x64 | GitHub Action `Flutter installable artifacts` | GitHub release asset `LelegIPTV-windows-x64-release.zip` |
 | Linux x64 | GitHub Action `Flutter installable artifacts` | GitHub release asset `LelegIPTV-linux-x64-release.tar.gz` |
 
@@ -101,10 +101,15 @@ bash ../../scripts/package-flutter-ios-unsigned-ipa.sh
 
 ### Samsung Tizen TV artifacts
 
-Tizen TV is packaged from the Flutter native app as a `.tpk` and uses Samsung AVPlay.
+Tizen TV uses the dedicated TypeScript TV application in `native/tizen-tv`. It is
+packaged as a signed `.wgt`; Samsung AVPlay handles fullscreen playback while the
+native HTML5/HLS element renders the live preview.
 
 ```bash
-pnpm flutter:tizen:build
+cd native/tizen-tv
+npm install
+npm run build
+npm run package:wgt
 ```
 
 ### macOS: "LelegIPTV.app" cannot be opened

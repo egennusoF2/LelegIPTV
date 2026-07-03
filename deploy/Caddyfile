@@ -41,11 +41,21 @@
         file_server
     }
 
+    handle /dl/tizen.wgt {
+        root * /usr/share/caddy/downloads/current
+        rewrite * /LelegIPTV-tizen-tv-release.wgt
+        header Content-Type "application/octet-stream"
+        header Content-Disposition "attachment; filename=LelegIPTV-tizen-tv-release.wgt"
+        header Cache-Control "no-cache, no-store, must-revalidate"
+        file_server
+    }
+
+    # Compatibilità per eventuali collegamenti salvati alla vecchia estensione.
     handle /dl/tizen.tpk {
         root * /usr/share/caddy/downloads/current
-        rewrite * /LelegIPTV-tizen-tv-release.tpk
-        header Content-Type "application/vnd.android.package-archive"
-        header Content-Disposition "attachment; filename=LelegIPTV-tizen-tv-release.tpk"
+        rewrite * /LelegIPTV-tizen-tv-release.wgt
+        header Content-Type "application/octet-stream"
+        header Content-Disposition "attachment; filename=LelegIPTV-tizen-tv-release.wgt"
         header Cache-Control "no-cache, no-store, must-revalidate"
         file_server
     }

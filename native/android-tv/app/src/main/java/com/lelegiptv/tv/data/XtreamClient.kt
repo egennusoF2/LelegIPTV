@@ -19,9 +19,17 @@ import java.util.Locale
 import java.util.TimeZone
 
 class XtreamClient {
+    suspend fun loadAccountExpiry(profile: XtreamProfile): Long? =
+        withContext(Dispatchers.IO) {
+            val userInfo = requestObject(profile, "get_account_info").optJSONObject("user_info")
+            userInfo?.optString("exp_date")
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+                ?.times(1_000L)
+        }
+
     suspend fun loadLive(profile: XtreamProfile): Pair<List<LiveCategory>, List<LiveChannel>> =
         withContext(Dispatchers.IO) {
-            requestObject(profile, "get_account_info")
             val categories = parseCategories(request(profile, "get_live_categories"))
             val channels = parseChannels(request(profile, "get_live_streams"))
             categories to channels

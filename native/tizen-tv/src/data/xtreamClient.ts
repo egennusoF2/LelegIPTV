@@ -331,14 +331,43 @@ function parseEpisodes(value: unknown): SeriesEpisode[] {
 }
 
 export class XtreamClient {
+  async loadAccountExpiry(profile: XtreamProfile): Promise<number | null> {
+    const account = await request(profile, "get_account_info");
+    const accountRoot =
+      account && typeof account === "object" && !Array.isArray(account)
+        ? (account as Record<string, unknown>)
+        : {};
+    const userInfo = object(accountRoot.user_info) ?? accountRoot;
+    for (const key of ["exp_date", "expiration", "expiry", "expiration_date"]) {
+      const raw = userInfo[key];
+      const seconds =
+        typeof raw === "number" ? raw : Number.parseInt(String(raw ?? ""), 10);
+      if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
+      if (typeof raw === "string") {
+        const parsed = Date.parse(raw);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+    }
+    return null;
+  }
+
   async loadLive(profile: XtreamProfile): Promise<{
     categories: LiveCategory[];
     channels: LiveChannel[];
+    expiresAt: number | null;
   }> {
-    await request(profile, "get_account_info");
-    const categories = parseCategories(await request(profile, "get_live_categories"));
-    const channels = parseChannels(await request(profile, "get_live_streams"));
-    return { categories, channels };
+    const [expiresAt, categoriesRaw, channelsRaw] = await Promise.all([
+      this.loadAccountExpiry(profile),
+      request(profile, "get_live_categories"),
+      request(profile, "get_live_streams"),
+    ]);
+    const categories = parseCategories(categoriesRaw);
+    const channels = parseChannels(channelsRaw);
+    return {
+      categories,
+      channels,
+      expiresAt,
+    };
   }
 
   async loadShortEpg(profile: XtreamProfile, streamId: number, limit = 100): Promise<EpgProgramme[]> {

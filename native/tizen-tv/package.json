@@ -1,7 +1,7 @@
 {
   "name": "leleg-iptv-tizen-tv",
   "private": true,
-  "version": "0.2.9",
+  "version": "0.4.6",
   "type": "module",
   "scripts": {
     "dev": "vite",

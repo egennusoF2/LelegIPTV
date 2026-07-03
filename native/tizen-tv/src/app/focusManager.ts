@@ -17,6 +17,7 @@ export interface FocusableElement {
 export class FocusManager {
   private items: FocusableElement[] = [];
   private index = 0;
+  private focused: FocusableElement | null = null;
 
   setItems(items: FocusableElement[]): void {
     this.items = items;
@@ -36,6 +37,15 @@ export class FocusManager {
 
   focusCurrent(): void {
     this.applyFocus();
+  }
+
+  clearFocus(): void {
+    const item = this.focused;
+    if (!item) return;
+    item.el.classList.remove("focused");
+    item.el.setAttribute("aria-selected", "false");
+    if (document.activeElement === item.el) item.el.blur();
+    this.focused = null;
   }
 
   move(direction: FocusDirection): boolean {
@@ -98,12 +108,14 @@ export class FocusManager {
   }
 
   private applyFocus(): void {
-    for (const item of this.items) {
-      item.el.classList.remove("focused");
-      item.el.setAttribute("aria-selected", "false");
+    const previous = this.focused;
+    const current = this.items[this.index] ?? null;
+    if (previous && previous !== current) {
+      previous.el.classList.remove("focused");
+      previous.el.setAttribute("aria-selected", "false");
     }
-    const current = this.items[this.index];
     if (!current) return;
+    this.focused = current;
     current.el.classList.add("focused");
     current.el.setAttribute("aria-selected", "true");
     try {

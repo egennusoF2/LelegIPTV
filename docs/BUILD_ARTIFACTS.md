@@ -156,54 +156,41 @@ Runtime iOS:
 
 ## Samsung Tizen TV
 
-Tizen deve partire dalla app Flutter nativa, non dalla build web Astro.
-Il formato corretto per Samsung TV in developer mode e' un pacchetto `.tpk`.
+Tizen usa l'app TV TypeScript dedicata in `native/tizen-tv`, separata sia dalla
+web app Astro sia dall'app Flutter condivisa.
+Il formato corretto per Samsung TV in developer mode e' un pacchetto `.wgt`.
 
 Toolchain locale:
 
 ```bash
-git clone https://github.com/flutter-tizen/flutter-tizen.git tools/flutter-tizen
-tools/flutter-tizen/bin/flutter-tizen doctor -v
+export PATH="$HOME/tizen-studio/tools:$PATH"
+tizen version
+sdb version
 ```
 
-Se `doctor` segnala una rootstrap mancante, installa il pacchetto richiesto dal
-Tizen Package Manager. Su questo Mac sono serviti i profili headed 6.0 e 6.5:
+Build e firma:
 
 ```bash
-/Users/emanuelegennuso/tizen-studio/package-manager/package-manager-cli.bin \
-  install IOT-Headed-6.0-NativeAppDevelopment-CLI
-/Users/emanuelegennuso/tizen-studio/package-manager/package-manager-cli.bin \
-  install IOT-Headed-6.5-NativeAppDevelopment-CLI
-```
-
-Generazione e build del TPK Flutter:
-
-```bash
-cd native/flutter/leleg_iptv
-TIZEN_SDK="$HOME/tizen-studio" \
-  ../../../tools/flutter-tizen/bin/flutter-tizen create .
-TIZEN_SDK="$HOME/tizen-studio" \
-  ../../../tools/flutter-tizen/bin/flutter-tizen pub get
-TIZEN_SDK="$HOME/tizen-studio" \
-  ../../../tools/flutter-tizen/bin/flutter-tizen build tpk --device-profile tv
-cp build/tizen/tpk/com.lelegiptv.leleg_iptv-1.0.0.tpk \
-  ../../../www/downloads/current/LelegIPTV-tizen-tv-release.tpk
+cd native/tizen-tv
+npm install
+npm run build
+npm run package:wgt
 ```
 
 Installazione su TV collegata:
 
 ```bash
 sdb connect IP_DELLA_TV:26101
-TIZEN_SDK="$HOME/tizen-studio" \
-  tools/flutter-tizen/bin/flutter-tizen run -d IP_DELLA_TV:26101 --release
+tizen install -n "$PWD/build/LelegIPTV-tizen-tv.wgt" -t NOME_DEVICE
+tizen run -p LelegIPTV1.LelegIPTVTv -t NOME_DEVICE
 ```
 
-Nota player: il TPK usa il backend Samsung AVPlay tramite
-`video_player_avplay`. Il codice Flutter tiene separato Tizen da `media_kit`:
-su Tizen vengono saltati `MediaKit.ensureInitialized()` e la creazione del
-player `media_kit`, per evitare il crash da `libmpv` assente su Samsung TV.
-Il manifest Tizen usa `api-version="6.5"` e privilegi media storage,
-external storage e internet.
+Il pacchetto firmato viene copiato automaticamente in:
+
+`www/downloads/current/LelegIPTV-tizen-tv-release.wgt`.
+
+Il fullscreen usa Samsung AVPlay; l'anteprima Live usa il player HTML5/HLS per
+evitare i limiti di compositing del piano video hardware nei riquadri HTML.
 
 ## Windows da Parallels o GitHub Actions
 
