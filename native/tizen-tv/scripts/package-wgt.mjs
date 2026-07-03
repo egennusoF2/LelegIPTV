@@ -7,6 +7,15 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(root, "dist");
 const wgtRoot = resolve(root, "build", "wgt");
 const outWgt = resolve(root, "build", "LelegIPTV-tizen-tv.wgt");
+const releaseWgt = resolve(
+  root,
+  "..",
+  "..",
+  "www",
+  "downloads",
+  "current",
+  "LelegIPTV-tizen-tv-release.wgt",
+);
 
 if (!existsSync(dist)) {
   console.error("Missing dist/. Run: npm run build");
@@ -45,5 +54,8 @@ const wgts = readdirSync(resolve(root, "build", "wgt")).filter((f) => f.endsWith
 if (wgts.length) {
   const packaged = wgts[0];
   cpSync(resolve(root, "build", "wgt", packaged), outWgt);
+  mkdirSync(dirname(releaseWgt), { recursive: true });
+  cpSync(outWgt, releaseWgt);
   console.log(`Packaged: ${outWgt}`);
+  console.log(`Published artifact: ${releaseWgt}`);
 }

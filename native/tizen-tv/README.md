@@ -1,5 +1,10 @@
 # Leleg IPTV per Samsung Tizen TV
 
+Questo e il target Tizen ufficiale. La cartella Flutter
+`native/flutter/leleg_iptv/tizen` resta nel repository per compatibilita
+storica degli strumenti, ma non deve essere usata per generare la release TV.
+La riproduzione su televisore usa Samsung AVPlay direttamente.
+
 Applicazione TV web nativa per Samsung Smart TV (Tizen 6.0+), separata dal
 vecchio runtime Flutter e allineata all'app Android TV in `native/android-tv/`.
 
@@ -71,6 +76,8 @@ open -na "$HOME/tizen-studio/tools/sec-tv-simulator/nwjs.app" --args \
 ```
 
 Il simulatore web non riproduce fedelmente il piano hardware AVPlay, i codec e
+non supporta AVPlay come un televisore fisico. Va usato per UI e navigazione;
+live, VOD, audio e sottotitoli devono essere verificati su un Samsung reale.
 le differenze tra modelli. La riproduzione finale va quindi confermata su una
 TV Samsung reale. L'emulatore firmware x86_64 non puo essere avviato sui Mac
 Apple Silicon perche richiede virtualizzazione x86 hardware.

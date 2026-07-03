@@ -17,6 +17,7 @@ import 'package:video_player_avplay/video_player_platform_interface.dart'
 import 'package:window_manager/window_manager.dart';
 
 import 'domain/catchup.dart';
+import 'domain/media_candidates.dart';
 import 'domain/xtream_client.dart';
 
 const MethodChannel _storageChannel = MethodChannel(
@@ -159,62 +160,11 @@ bool _isLivePlaybackUrl(String url) {
 }
 
 List<String> _vodPlayUrls(XtreamProfile profile, VodMovie movie) {
-  return _vodMediaCandidates(
-    XtreamClient(profile).vodUrl(movie),
-    fallbackExtension: 'mp4',
-  );
-}
-
-List<String> _vodMediaCandidates(
-  String originalUrl, {
-  String? fallbackExtension,
-}) {
-  final urls = <String>[];
-  void add(String value) {
-    if (value.isNotEmpty && !urls.contains(value)) urls.add(value);
-  }
-
-  String? alternateScheme(String value) {
-    final uri = Uri.tryParse(value);
-    if (uri == null || !uri.hasScheme) return null;
-    if (uri.scheme == 'https') {
-      return uri.replace(scheme: 'http').toString();
-    } else if (uri.scheme == 'http') {
-      return uri.replace(scheme: 'https').toString();
-    }
-    return null;
-  }
-
-  add(originalUrl);
-  final uri = Uri.tryParse(originalUrl);
-  final extension = fallbackExtension?.trim().replaceAll('.', '').toLowerCase();
-  if (uri != null && extension != null && extension.isNotEmpty) {
-    final segments = uri.pathSegments.toList();
-    if (segments.isNotEmpty) {
-      final filename = segments.removeLast();
-      final dot = filename.lastIndexOf('.');
-      final stem = dot > 0 ? filename.substring(0, dot) : filename;
-      segments.add('$stem.$extension');
-      add(uri.replace(pathSegments: segments).toString());
-    }
-  }
-  for (final candidate in List<String>.from(urls)) {
-    final alternate = alternateScheme(candidate);
-    if (alternate != null) add(alternate);
-  }
-  return urls;
+  return vodMediaCandidates(XtreamClient(profile).vodUrl(movie));
 }
 
 List<String> _episodePlayUrls(XtreamProfile profile, SeriesEpisode episode) {
-  final url = XtreamClient(profile).episodeUrl(episode);
-  final ext = episode.containerExtension
-      .trim()
-      .replaceAll('.', '')
-      .toLowerCase();
-  return _vodMediaCandidates(
-    url,
-    fallbackExtension: ext.isNotEmpty && ext != 'mp4' ? 'mp4' : null,
-  );
+  return vodMediaCandidates(XtreamClient(profile).episodeUrl(episode));
 }
 
 /// Phones: portrait + bottom nav. Tablets: landscape + drawer.
@@ -4491,6 +4441,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
   }) async {
     final uniqueCandidates = candidates.toSet().toList(growable: false);
     for (var index = 0; index < uniqueCandidates.length; index += 1) {
+      _traceTv(
+        'open vod title="$title" candidate=${index + 1}/${uniqueCandidates.length} '
+        'url="${uniqueCandidates[index]}"',
+      );
       if (mounted && uniqueCandidates.length > 1) {
         setState(() {
           _status =
