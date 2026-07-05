@@ -72,6 +72,67 @@ import com.lelegiptv.tv.data.VodInfo
 import com.lelegiptv.tv.data.VodMovie
 import coil3.compose.AsyncImage
 
+private enum class CatalogSortMode(val label: String) {
+    RECENT("Più recenti"),
+    TITLE("Titolo A-Z"),
+    RATING("Punteggio"),
+    RECOMMENDED("Consigliati per te");
+
+    fun next(): CatalogSortMode = entries[(ordinal + 1) % entries.size]
+}
+
+private fun rating(value: String): Double =
+    value.replace(',', '.').toDoubleOrNull() ?: 0.0
+
+private fun words(value: String): Set<String> =
+    value.lowercase()
+        .split(Regex("[^a-z0-9à-ÿ]+"))
+        .filterTo(mutableSetOf()) { it.length >= 3 }
+
+private fun sortMovies(
+    source: List<VodMovie>,
+    mode: CatalogSortMode,
+    favorites: Set<Int>,
+): List<VodMovie> {
+    val favoriteItems = source.filter { it.id in favorites }
+    return when (mode) {
+        CatalogSortMode.TITLE -> source.sortedBy { it.name.lowercase() }
+        CatalogSortMode.RATING -> source.sortedByDescending { rating(it.rating) }
+        CatalogSortMode.RECOMMENDED -> source
+            .filterNot { it.id in favorites }
+            .sortedByDescending { movie ->
+                val tokens = words(movie.name)
+                favoriteItems.sumOf { favorite ->
+                    (if (favorite.categoryId == movie.categoryId) 6 else 0) +
+                        tokens.intersect(words(favorite.name)).size * 2
+                } + rating(movie.rating) * 0.1
+            }
+        CatalogSortMode.RECENT -> source.sortedByDescending(VodMovie::id)
+    }
+}
+
+private fun sortShows(
+    source: List<SeriesShow>,
+    mode: CatalogSortMode,
+    favorites: Set<Int>,
+): List<SeriesShow> {
+    val favoriteItems = source.filter { it.id in favorites }
+    return when (mode) {
+        CatalogSortMode.TITLE -> source.sortedBy { it.name.lowercase() }
+        CatalogSortMode.RATING -> source.sortedByDescending { rating(it.rating) }
+        CatalogSortMode.RECOMMENDED -> source
+            .filterNot { it.id in favorites }
+            .sortedByDescending { show ->
+                val tokens = words(show.name)
+                favoriteItems.sumOf { favorite ->
+                    (if (favorite.categoryId == show.categoryId) 6 else 0) +
+                        tokens.intersect(words(favorite.name)).size * 2
+                } + rating(show.rating) * 0.1
+            }
+        CatalogSortMode.RECENT -> source.sortedByDescending(SeriesShow::id)
+    }
+}
+
 @Composable
 fun HomeScreen(
     firstFocusRequester: FocusRequester,
@@ -248,6 +309,7 @@ fun HomeScreen(
 @Composable
 fun MovieBrowserScreen(
     state: VodState,
+    library: UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
     onCategorySelect: (String) -> Unit,
@@ -268,6 +330,10 @@ fun MovieBrowserScreen(
             val selectedCategory = state.selectedCategoryId.ifBlank {
                 state.categories.firstOrNull()?.id.orEmpty()
             }
+            var sortMode by remember { mutableStateOf(CatalogSortMode.RECENT) }
+            val sortedMovies = remember(state.movies, sortMode, library.favoriteVod) {
+                sortMovies(state.movies, sortMode, library.favoriteVod)
+            }
             LibraryBrowser(
                 title = "Film",
                 countLabel = "${state.movies.size} titoli in questa categoria",
@@ -276,7 +342,9 @@ fun MovieBrowserScreen(
                 onCategory = onCategorySelect,
                 firstFocusRequester = firstFocusRequester,
                 onMoveLeftToMenu = onMoveLeftToMenu,
-                entries = state.movies,
+                entries = sortedMovies,
+                sortLabel = sortMode.label,
+                onSortNext = { sortMode = sortMode.next() },
                 entryKey = { it.id },
                 entryTitle = { it.name },
                 entrySubtitle = { listOf(it.year, it.rating).filter(String::isNotBlank).joinToString("  •  ") },
@@ -291,6 +359,7 @@ fun MovieBrowserScreen(
 @Composable
 fun SeriesBrowserScreen(
     state: SeriesState,
+    library: UserLibrarySnapshot,
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
     onCategorySelect: (String) -> Unit,
@@ -311,6 +380,10 @@ fun SeriesBrowserScreen(
             val selectedCategory = state.selectedCategoryId.ifBlank {
                 state.categories.firstOrNull()?.id.orEmpty()
             }
+            var sortMode by remember { mutableStateOf(CatalogSortMode.RECENT) }
+            val sortedShows = remember(state.shows, sortMode, library.favoriteSeries) {
+                sortShows(state.shows, sortMode, library.favoriteSeries)
+            }
             LibraryBrowser(
                 title = "Serie",
                 countLabel = "${state.shows.size} titoli in questa categoria",
@@ -319,7 +392,9 @@ fun SeriesBrowserScreen(
                 onCategory = onCategorySelect,
                 firstFocusRequester = firstFocusRequester,
                 onMoveLeftToMenu = onMoveLeftToMenu,
-                entries = state.shows,
+                entries = sortedShows,
+                sortLabel = sortMode.label,
+                onSortNext = { sortMode = sortMode.next() },
                 entryKey = { it.id },
                 entryTitle = { it.name },
                 entrySubtitle = { listOf(it.year, it.rating).filter(String::isNotBlank).joinToString("  •  ") },
@@ -341,6 +416,8 @@ private fun <T> LibraryBrowser(
     firstFocusRequester: FocusRequester,
     onMoveLeftToMenu: () -> Unit,
     entries: List<T>,
+    sortLabel: String,
+    onSortNext: () -> Unit,
     entryKey: (T) -> Any,
     entryTitle: (T) -> String,
     entrySubtitle: (T) -> String,
@@ -387,11 +464,48 @@ private fun <T> LibraryBrowser(
             modifier = Modifier.fillMaxSize().padding(top = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            LazyColumn(
+            Column(
                 modifier = Modifier.width(220.dp).fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(categories, key = { it.first }) { category ->
+                FocusCard(
+                    onClick = onSortNext,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onPreviewKeyEvent {
+                            if (it.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent false
+                            }
+                            when (it.key) {
+                                Key.DirectionLeft -> {
+                                    onMoveLeftToMenu()
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    focusEntryGrid()
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
+                ) {
+                    Column {
+                        BasicText(
+                            "ORDINA",
+                            style = TextStyle(
+                                color = TvColors.Muted,
+                                fontSize = TvTypography.cardMeta,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                        )
+                        ItemTitle(sortLabel)
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(categories, key = { it.first }) { category ->
                     val itemFocusRequester = when {
                         category == categories.firstOrNull() -> firstFocusRequester
                         category.first == selectedCategory -> categoryFocusRequester
@@ -429,6 +543,7 @@ private fun <T> LibraryBrowser(
                         ItemTitle(category.second)
                     }
                 }
+            }
             }
             if (entries.isEmpty()) {
                 Box(

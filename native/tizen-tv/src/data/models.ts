@@ -67,6 +67,8 @@ export interface VodMovie {
   rating: string;
   year: string;
   plot: string;
+  genre: string;
+  added: number;
 }
 
 export interface SeriesCategory {
@@ -82,6 +84,8 @@ export interface SeriesShow {
   rating: string;
   year: string;
   plot: string;
+  genre: string;
+  added: number;
 }
 
 export interface SeriesEpisode {

@@ -82,9 +82,11 @@ export class VirtualList<T> {
     if (!this.items.length) return false;
     const next = this.focusIndex + delta;
     if (next < 0 || next >= this.items.length) return false;
+    const previousScroll = this.scrollIndex;
     this.focusIndex = next;
-    this.scrollIndex = this.computeScrollFor(this.focusIndex);
-    this.paint();
+    this.scrollIndex = this.ensureVisible(this.focusIndex);
+    if (this.scrollIndex === previousScroll) this.paintFocus();
+    else this.paint();
     this.onFocusChange?.(this.items[this.focusIndex]!, this.focusIndex);
     return true;
   }
@@ -100,6 +102,23 @@ export class VirtualList<T> {
     const maxScroll = Math.max(0, this.items.length - this.visibleRows);
     const centered = index - Math.floor(this.visibleRows / 2);
     return Math.max(0, Math.min(centered, maxScroll));
+  }
+
+  private ensureVisible(index: number): number {
+    if (index < this.scrollIndex || index >= this.scrollIndex + this.visibleRows) {
+      return this.computeScrollFor(index);
+    }
+    return this.scrollIndex;
+  }
+
+  private paintFocus(): void {
+    const rows = this.viewport.querySelectorAll<HTMLElement>(".virtual-row");
+    for (let index = 0; index < rows.length; index += 1) {
+      rows[index]!.classList.toggle(
+        "focused",
+        this.isActive && this.scrollIndex + index === this.focusIndex,
+      );
+    }
   }
 
   private paint(): void {

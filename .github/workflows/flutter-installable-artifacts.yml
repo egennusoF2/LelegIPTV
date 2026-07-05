@@ -60,7 +60,7 @@ jobs:
           channel: stable
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release --dart-define=LELEG_BUILD_ID=${{ github.sha }}
       - name: Package Windows x64 ZIP
         working-directory: .
         shell: pwsh
@@ -72,13 +72,13 @@ jobs:
             -Force
           Copy-Item `
             www/downloads/current/LelegIPTV-windows-x64-release.zip `
-            www/downloads/current/LelegIPTV-windows-x64-v1.0.17.zip
+            www/downloads/current/LelegIPTV-windows-x64-v1.0.18.zip
       - uses: actions/upload-artifact@v4
         with:
           name: LelegIPTV-windows-x64-release
           path: |
             www/downloads/current/LelegIPTV-windows-x64-release.zip
-            www/downloads/current/LelegIPTV-windows-x64-v1.0.17.zip
+            www/downloads/current/LelegIPTV-windows-x64-v1.0.18.zip
 
   linux:
     name: Linux desktop bundle

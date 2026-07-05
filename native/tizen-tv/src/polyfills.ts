@@ -61,16 +61,27 @@ export function setVisible(node: HTMLElement | null, visible: boolean): void {
   }
 }
 
+let pendingScrollNode: HTMLElement | null = null;
+let pendingScrollFrame = 0;
+
 export function safeScrollIntoView(node: HTMLElement): void {
-  try {
-    node.scrollIntoView({ block: "nearest", inline: "nearest" });
-  } catch {
+  pendingScrollNode = node;
+  if (pendingScrollFrame) return;
+  pendingScrollFrame = requestAnimationFrame(() => {
+    pendingScrollFrame = 0;
+    const target = pendingScrollNode;
+    pendingScrollNode = null;
+    if (!target?.isConnected) return;
     try {
-      node.scrollIntoView(false);
+      target.scrollIntoView({ block: "nearest", inline: "nearest" });
     } catch {
-      // ignore
+      try {
+        target.scrollIntoView(false);
+      } catch {
+        // ignore
+      }
     }
-  }
+  });
 }
 
 /** Load Samsung webapis.js on demand (never block app boot). */

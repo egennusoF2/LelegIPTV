@@ -27,6 +27,11 @@ import { AvplayPlayer, Html5PreviewPlayer } from "./player/avplay";
 import { LiveScreen } from "./screens/liveScreen";
 import { CatalogState } from "./state/catalogState";
 import {
+  CATALOG_SORT_OPTIONS,
+  sortCatalog,
+  type CatalogSort,
+} from "./data/catalogSort";
+import {
   canResume,
   clearProgress,
   continueWatching,
@@ -101,10 +106,16 @@ export class LelegTvApp {
   private fullscreenOnClose: (() => void) | null = null;
   private avplayAvailable = false;
   private moviesCategoryId = "";
+  private moviesCategoryInitialized = false;
   private movies: VodMovie[] = [];
+  private moviesSort = (localStorage.getItem("leleg.tizen.sort.movies") ??
+    "recent") as CatalogSort;
   private moviesRenderGen = 0;
   private seriesCategoryId = "";
+  private seriesCategoryInitialized = false;
   private series: SeriesShow[] = [];
+  private seriesSort = (localStorage.getItem("leleg.tizen.sort.series") ??
+    "recent") as CatalogSort;
   private seriesRenderGen = 0;
   private guideCategoryId = "";
   private guideChannelId = 0;
@@ -177,7 +188,8 @@ export class LelegTvApp {
     }
     if (this.catalog.activeProfile) {
       try {
-        await this.catalog.refreshCatalog(false);
+      await this.catalog.refreshCatalog(false);
+      this.catalog.warmInitialMediaCategories();
       } catch {
         // handled via status
       }
@@ -383,13 +395,24 @@ export class LelegTvApp {
     const gen = ++this.moviesRenderGen;
     clearElement(this.content);
     const header = pageHeader("Film", "Catalogo on demand");
+    const toolbar = el("div", "library-toolbar");
     const count = el("div", "library-count", "Caricamento titoli…");
+    const sort = this.catalogSortControl("Film", this.moviesSort, (value) => {
+      this.moviesSort = value;
+      localStorage.setItem("leleg.tizen.sort.movies", value);
+      void this.renderMovies();
+    });
+    toolbar.append(count, sort.el);
     const browser = el("div", "library-browser");
     const categoriesHost = el("div", "library-categories panel");
     const gridHost = el("div", "library-grid-host");
     browser.append(categoriesHost, gridHost);
-    this.content.append(header, count, browser);
+    this.content.append(header, toolbar, browser);
     const categories = this.catalog.vodCategories;
+    if (!this.moviesCategoryInitialized) {
+      this.moviesCategoryId = categories.find((category) => category.id)?.id ?? "";
+      this.moviesCategoryInitialized = true;
+    }
     const catButtons = categories.map((category) => {
       const btn = el("button", "library-category focusable", category.name);
       btn.type = "button";
@@ -406,7 +429,11 @@ export class LelegTvApp {
 
     gridHost.append(el("div", "loading-panel", "Caricamento film…"));
     try {
-      this.movies = await this.catalog.loadMovies(this.moviesCategoryId);
+      this.movies = sortCatalog(
+        await this.catalog.loadMovies(this.moviesCategoryId),
+        this.moviesSort,
+        this.favoriteMovieIds,
+      );
     } catch {
       this.movies = [];
     }
@@ -416,9 +443,12 @@ export class LelegTvApp {
       gridHost,
       this.movies,
       (movie) => void this.renderMovieDetail(movie),
-      (items) => this.contentFocus.setItems([...catButtons, ...items]),
+      (items) => {
+        this.contentFocus.setItems([sort, ...catButtons, ...items]);
+      },
     );
-    this.contentFocus.setItems([...catButtons, ...posters]);
+    this.wireLibraryNavigation([sort, ...catButtons], posters);
+    this.contentFocus.setItems([sort, ...catButtons, ...posters]);
   }
 
   private async renderMovieDetail(movie: VodMovie): Promise<void> {
@@ -447,7 +477,9 @@ export class LelegTvApp {
       el(
         "p",
         "hero-copy",
-        [detailedMovie.year, detailedMovie.rating].filter(Boolean).join(" · "),
+        [detailedMovie.year, detailedMovie.genre, detailedMovie.rating]
+          .filter(Boolean)
+          .join(" · "),
       ),
       el("p", "detail-plot", detailedMovie.plot || "Descrizione non disponibile."),
     );
@@ -551,13 +583,24 @@ export class LelegTvApp {
     const gen = ++this.seriesRenderGen;
     clearElement(this.content);
     const header = pageHeader("Serie", "Catalogo e stagioni");
+    const toolbar = el("div", "library-toolbar");
     const count = el("div", "library-count", "Caricamento titoli…");
+    const sort = this.catalogSortControl("Serie", this.seriesSort, (value) => {
+      this.seriesSort = value;
+      localStorage.setItem("leleg.tizen.sort.series", value);
+      void this.renderSeries();
+    });
+    toolbar.append(count, sort.el);
     const browser = el("div", "library-browser");
     const categoriesHost = el("div", "library-categories panel");
     const gridHost = el("div", "library-grid-host");
     browser.append(categoriesHost, gridHost);
-    this.content.append(header, count, browser);
+    this.content.append(header, toolbar, browser);
     const categories = this.catalog.seriesCategories;
+    if (!this.seriesCategoryInitialized) {
+      this.seriesCategoryId = categories.find((category) => category.id)?.id ?? "";
+      this.seriesCategoryInitialized = true;
+    }
     const categoryButtons = categories.map((category) => {
       const button = el("button", "library-category focusable", category.name);
       button.type = "button";
@@ -574,7 +617,11 @@ export class LelegTvApp {
 
     gridHost.append(el("div", "loading-panel", "Caricamento serie…"));
     try {
-      this.series = await this.catalog.loadSeries(this.seriesCategoryId);
+      this.series = sortCatalog(
+        await this.catalog.loadSeries(this.seriesCategoryId),
+        this.seriesSort,
+        this.favoriteMovieIds,
+      );
     } catch {
       this.series = [];
     }
@@ -584,9 +631,93 @@ export class LelegTvApp {
       gridHost,
       this.series,
       (show) => void this.renderSeriesDetail(show),
-      (items) => this.contentFocus.setItems([...categoryButtons, ...items]),
+      (items) => {
+        this.contentFocus.setItems([sort, ...categoryButtons, ...items]);
+      },
     );
-    this.contentFocus.setItems([...categoryButtons, ...posters]);
+    this.wireLibraryNavigation([sort, ...categoryButtons], posters);
+    this.contentFocus.setItems([sort, ...categoryButtons, ...posters]);
+  }
+
+  private catalogSortControl(
+    kind: string,
+    selected: CatalogSort,
+    onChange: (value: CatalogSort) => void,
+  ): FocusableElement {
+    const button = el(
+      "button",
+      "catalog-sort focusable",
+      `Ordina ${kind}: ${
+        CATALOG_SORT_OPTIONS.find((option) => option.value === selected)?.label ??
+        "Più recenti"
+      }`,
+    );
+    button.type = "button";
+    return {
+      el: button,
+      onActivate: () => {
+        const current = CATALOG_SORT_OPTIONS.findIndex(
+          (option) => option.value === selected,
+        );
+        const next = CATALOG_SORT_OPTIONS[(current + 1) % CATALOG_SORT_OPTIONS.length]!;
+        onChange(next.value);
+      },
+    };
+  }
+
+  private wireLibraryNavigation(
+    categories: FocusableElement[],
+    posters: FocusableElement[],
+  ): void {
+    const categoryCount = categories.length;
+    const columns = 6;
+    const activeCategoryIndex = Math.max(
+      0,
+      categories.findIndex((item) => item.el.classList.contains("active")),
+    );
+    categories.forEach((item, index) => {
+      item.onUp = () => {
+        if (index <= 0) return false;
+        this.contentFocus.focusIndex(index - 1);
+        return true;
+      };
+      item.onDown = () => {
+        if (index >= categoryCount - 1) return false;
+        this.contentFocus.focusIndex(index + 1);
+        return true;
+      };
+      item.onRight = () => {
+        if (!posters.length) return false;
+        this.contentFocus.focusIndex(categoryCount);
+        return true;
+      };
+    });
+    posters.forEach((item, index) => {
+      item.onLeft = () => {
+        if (index % columns === 0) {
+          this.contentFocus.focusIndex(activeCategoryIndex);
+          return true;
+        }
+        this.contentFocus.focusIndex(categoryCount + index - 1);
+        return true;
+      };
+      item.onRight = () => {
+        if (index % columns === columns - 1 || index >= posters.length - 1) return false;
+        this.contentFocus.focusIndex(categoryCount + index + 1);
+        return true;
+      };
+      item.onUp = () => {
+        if (index < columns) return false;
+        this.contentFocus.focusIndex(categoryCount + index - columns);
+        return true;
+      };
+      item.onDown = () => {
+        const next = index + columns;
+        if (next >= posters.length) return false;
+        this.contentFocus.focusIndex(categoryCount + next);
+        return true;
+      };
+    });
   }
 
   private async renderSeriesDetail(show: SeriesShow): Promise<void> {
@@ -612,6 +743,13 @@ export class LelegTvApp {
       const copy = el("div", "detail-copy");
       copy.append(
         el("h2", "detail-title", show.name),
+        el(
+          "p",
+          "hero-copy",
+          [info.show.year || show.year, info.show.genre || show.genre, info.show.rating || show.rating]
+            .filter(Boolean)
+            .join(" · "),
+        ),
         el("p", "hero-copy", info.show.plot || show.plot || "Descrizione non disponibile."),
       );
       detail.append(copy);

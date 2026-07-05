@@ -20,6 +20,11 @@ import 'domain/catchup.dart';
 import 'domain/media_candidates.dart';
 import 'domain/xtream_client.dart';
 
+const String _buildId = String.fromEnvironment(
+  'LELEG_BUILD_ID',
+  defaultValue: 'local',
+);
+
 const MethodChannel _storageChannel = MethodChannel(
   'com.lelegiptv.native/storage',
 );
@@ -770,15 +775,19 @@ class _LelegNativeShellState extends State<LelegNativeShell>
   List<VodMovie> _movies = const [];
   VodMovie? _selectedMovie;
   String _selectedMovieDescription = '';
+  String _selectedMovieGenre = '';
   String _browseHeroDescription = '';
   bool _browseHeroLoading = false;
   bool _browseHeroActionSelected = false;
   int? _browseHeroItemId;
   final Map<int, String> _movieDescriptionCache = {};
+  final Map<int, String> _movieGenreCache = {};
   final Map<int, String> _seriesDescriptionCache = {};
+  final Map<int, String> _seriesGenreCache = {};
   List<SeriesShow> _series = const [];
   SeriesShow? _selectedSeries;
   String _selectedSeriesDescription = '';
+  String _selectedSeriesGenre = '';
   List<SeriesEpisode> _seriesEpisodes = const [];
   final Set<int> _favoriteMovieIds = {};
   final Set<int> _favoriteSeriesIds = {};
@@ -1514,6 +1523,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       _tvContentIndex = 0;
       _selectedMovie = null;
       _selectedMovieDescription = '';
+      _selectedMovieGenre = '';
       _browseHeroDescription = '';
       _browseHeroLoading = false;
       _browseHeroItemId = null;
@@ -1521,6 +1531,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       if (section != AppSection.series) {
         _selectedSeries = null;
         _selectedSeriesDescription = '';
+        _selectedSeriesGenre = '';
         _seriesEpisodes = const [];
       }
       _playerTitle = 'Scegli qualcosa da guardare.';
@@ -2016,11 +2027,12 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       return;
     }
     try {
-      final description = await XtreamClient(profile).vodDescription(movie);
-      _movieDescriptionCache[movie.id] = description;
+      final detail = await XtreamClient(profile).vodDetail(movie);
+      _movieDescriptionCache[movie.id] = detail.description;
+      _movieGenreCache[movie.id] = detail.genre;
       if (!mounted || _browseHeroItemId != movie.id) return;
       setState(() {
-        _browseHeroDescription = description;
+        _browseHeroDescription = detail.description;
         _browseHeroLoading = false;
       });
     } catch (_) {
@@ -2055,6 +2067,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     try {
       final detail = await XtreamClient(profile).seriesDetail(show);
       _seriesDescriptionCache[show.id] = detail.description;
+      _seriesGenreCache[show.id] = detail.genre;
       if (!mounted || _browseHeroItemId != show.id) return;
       setState(() {
         _browseHeroDescription = detail.description;
@@ -3569,9 +3582,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     _movies = const [];
     _selectedMovie = null;
     _selectedMovieDescription = '';
+    _selectedMovieGenre = '';
     _series = const [];
     _selectedSeries = null;
     _selectedSeriesDescription = '';
+    _selectedSeriesGenre = '';
     _seriesEpisodes = const [];
     _liveCategoryId = '';
     _movieCategoryId = '';
@@ -3920,6 +3935,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       _remoteMenuMode = false;
       _selectedMovie = null;
       _selectedMovieDescription = '';
+      _selectedMovieGenre = '';
       _status = 'Download avviato: ${movie.name}';
     });
     _closeCompactDrawerIfNeeded();
@@ -4266,16 +4282,24 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       _selectedMovie = movie;
       _selectedMovieDescription =
           _movieDescriptionCache[movie.id] ?? _browseHeroDescription;
+      _selectedMovieGenre = _movieGenreCache[movie.id] ?? '';
       _playerTitle = movie.name;
       _status = 'Dettaglio film: ${movie.name}';
     });
     if (profile == null) return;
-    if (_selectedMovieDescription.trim().isNotEmpty) return;
+    if (_selectedMovieDescription.trim().isNotEmpty &&
+        _selectedMovieGenre.trim().isNotEmpty) {
+      return;
+    }
     try {
-      final description = await XtreamClient(profile).vodDescription(movie);
-      _movieDescriptionCache[movie.id] = description;
+      final detail = await XtreamClient(profile).vodDetail(movie);
+      _movieDescriptionCache[movie.id] = detail.description;
+      _movieGenreCache[movie.id] = detail.genre;
       if (!mounted || _selectedMovie?.id != movie.id) return;
-      setState(() => _selectedMovieDescription = description);
+      setState(() {
+        _selectedMovieDescription = detail.description;
+        _selectedMovieGenre = detail.genre;
+      });
     } catch (_) {
       // Keep detail page usable even when provider omits VOD metadata.
     }
@@ -4290,6 +4314,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       _selectedSeries = show;
       _selectedSeriesDescription =
           _seriesDescriptionCache[show.id] ?? _browseHeroDescription;
+      _selectedSeriesGenre = _seriesGenreCache[show.id] ?? '';
       _seriesEpisodes = const [];
       _seriesDetailLoading = true;
       _status = 'Caricamento episodi: ${show.name}';
@@ -4297,9 +4322,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     try {
       final detail = await XtreamClient(profile).seriesDetail(show);
       _seriesDescriptionCache[show.id] = detail.description;
+      _seriesGenreCache[show.id] = detail.genre;
       if (!mounted) return;
       setState(() {
         _selectedSeriesDescription = detail.description;
+        _selectedSeriesGenre = detail.genre;
         _seriesEpisodes = detail.episodes;
         _status = 'Episodi caricati: ${show.name} (${detail.episodes.length})';
       });
@@ -5264,6 +5291,22 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     final copy = [...movies];
     if (sort == 'az') {
       copy.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else if (sort == 'rating') {
+      copy.sort(
+        (a, b) => _catalogRating(b.rating).compareTo(_catalogRating(a.rating)),
+      );
+    } else if (sort == 'recommended') {
+      final favorites = movies
+          .where((movie) => _favoriteMovieIds.contains(movie.id))
+          .toList();
+      copy.sort(
+        (a, b) => _movieRecommendationScore(
+          b,
+          favorites,
+        ).compareTo(_movieRecommendationScore(a, favorites)),
+      );
+    } else {
+      copy.sort((a, b) => b.id.compareTo(a.id));
     }
     return copy;
   }
@@ -5272,8 +5315,70 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     final copy = [...shows];
     if (sort == 'az') {
       copy.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    } else if (sort == 'rating') {
+      copy.sort(
+        (a, b) => _catalogRating(b.rating).compareTo(_catalogRating(a.rating)),
+      );
+    } else if (sort == 'recommended') {
+      final favorites = shows
+          .where((show) => _favoriteSeriesIds.contains(show.id))
+          .toList();
+      copy.sort(
+        (a, b) => _seriesRecommendationScore(
+          b,
+          favorites,
+        ).compareTo(_seriesRecommendationScore(a, favorites)),
+      );
+    } else {
+      copy.sort((a, b) => b.id.compareTo(a.id));
     }
     return copy;
+  }
+
+  double _catalogRating(String value) =>
+      double.tryParse(value.replaceAll(',', '.')) ?? 0;
+
+  Set<String> _catalogWords(String value) => value
+      .toLowerCase()
+      .split(RegExp(r'[^a-z0-9à-ÿ]+'))
+      .where((word) => word.length >= 3)
+      .toSet();
+
+  double _movieRecommendationScore(VodMovie movie, List<VodMovie> favorites) {
+    if (favorites.isEmpty) return movie.id.toDouble();
+    var score = _catalogRating(movie.rating) * 0.1;
+    final words = _catalogWords(
+      '${movie.name} ${_movieGenreCache[movie.id] ?? ''}',
+    );
+    for (final favorite in favorites) {
+      if (favorite.categoryId == movie.categoryId) score += 6;
+      final favoriteWords = _catalogWords(
+        '${favorite.name} ${_movieGenreCache[favorite.id] ?? ''}',
+      );
+      score += words.intersection(favoriteWords).length * 2;
+    }
+    if (_favoriteMovieIds.contains(movie.id)) score -= 1000;
+    return score;
+  }
+
+  double _seriesRecommendationScore(
+    SeriesShow show,
+    List<SeriesShow> favorites,
+  ) {
+    if (favorites.isEmpty) return show.id.toDouble();
+    var score = _catalogRating(show.rating) * 0.1;
+    final words = _catalogWords(
+      '${show.name} ${_seriesGenreCache[show.id] ?? ''}',
+    );
+    for (final favorite in favorites) {
+      if (favorite.categoryId == show.categoryId) score += 6;
+      final favoriteWords = _catalogWords(
+        '${favorite.name} ${_seriesGenreCache[favorite.id] ?? ''}',
+      );
+      score += words.intersection(favoriteWords).length * 2;
+    }
+    if (_favoriteSeriesIds.contains(show.id)) score -= 1000;
+    return score;
   }
 
   String _categoryName(List<XtreamCategory> categories, String id) {
@@ -5952,6 +6057,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
             : MovieDetailScreen(
                 movie: _selectedMovie!,
                 description: _selectedMovieDescription,
+                genre: _selectedMovieGenre,
                 category: _categoryName(
                   _movieCategories,
                   _selectedMovie!.categoryId,
@@ -6106,6 +6212,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
             : SeriesDetailScreen(
                 show: _selectedSeries!,
                 description: _selectedSeriesDescription,
+                genre: _selectedSeriesGenre,
                 episodes: _seriesEpisodes,
                 loading: _seriesDetailLoading,
                 canResume: _seriesCanResume(_selectedSeries!),
@@ -8904,6 +9011,7 @@ class MovieDetailScreen extends StatelessWidget {
   const MovieDetailScreen({
     required this.movie,
     required this.description,
+    required this.genre,
     required this.category,
     required this.controller,
     required this.player,
@@ -8932,6 +9040,7 @@ class MovieDetailScreen extends StatelessWidget {
 
   final VodMovie movie;
   final String description;
+  final String genre;
   final String category;
   final VideoController? controller;
   final Player? player;
@@ -8961,6 +9070,7 @@ class MovieDetailScreen extends StatelessWidget {
     final tv = TvUi.isActive(context);
     if (tv) {
       final meta = [
+        if (genre.isNotEmpty) genre,
         if (category.isNotEmpty) category,
         if (movie.rating.isNotEmpty) '★ ${movie.rating}',
         movie.containerExtension.toUpperCase(),
@@ -9274,7 +9384,11 @@ class MovieDetailScreen extends StatelessWidget {
                                 children: [
                                   _MetaBadge(
                                     icon: Icons.movie_outlined,
-                                    label: category.isEmpty ? 'Film' : category,
+                                    label: genre.isNotEmpty
+                                        ? genre
+                                        : (category.isEmpty
+                                              ? 'Film'
+                                              : category),
                                   ),
                                   if (movie.rating.isNotEmpty)
                                     _MetaBadge(
@@ -9439,6 +9553,7 @@ class SeriesDetailScreen extends StatelessWidget {
   const SeriesDetailScreen({
     required this.show,
     required this.description,
+    required this.genre,
     required this.episodes,
     required this.loading,
     required this.controller,
@@ -9465,6 +9580,7 @@ class SeriesDetailScreen extends StatelessWidget {
 
   final SeriesShow show;
   final String description;
+  final String genre;
   final List<SeriesEpisode> episodes;
   final bool loading;
   final VideoController? controller;
@@ -9492,6 +9608,7 @@ class SeriesDetailScreen extends StatelessWidget {
     final tv = TvUi.isActive(context);
     if (tv) {
       final meta = [
+        if (genre.isNotEmpty) genre,
         if (show.rating.isNotEmpty) '★ ${show.rating}',
         if (show.year.isNotEmpty) show.year,
         '${episodes.length} episodi',
@@ -9636,7 +9753,10 @@ class SeriesDetailScreen extends StatelessWidget {
         _useCompactAdaptiveLayout(MediaQuery.sizeOf(context));
     return _PageScaffold(
       title: show.name,
-      eyebrow: '${episodes.length} episodi',
+      eyebrow: [
+        if (genre.trim().isNotEmpty) genre.trim(),
+        '${episodes.length} episodi',
+      ].join(' · '),
       child: mobile
           ? ListView(
               children: [
@@ -9712,6 +9832,7 @@ class SeriesDetailScreen extends StatelessWidget {
                       ? _WindowsSeriesDetailPane(
                           show: show,
                           description: description,
+                          genre: genre,
                           episodes: episodes,
                           loading: loading,
                           canResume: canResume,
@@ -11112,7 +11233,8 @@ class _SettingsAppVersion extends StatelessWidget {
         final info = snapshot.data;
         final label = info == null
             ? 'Versione app: …'
-            : 'Versione app: ${info.version} (${info.buildNumber})';
+            : 'Versione app: ${info.version} (${info.buildNumber})'
+                  ' · build ${_buildId.length > 10 ? _buildId.substring(0, 10) : _buildId}';
         return Text(
           label,
           textAlign: TextAlign.center,
@@ -12946,8 +13068,8 @@ class _CatalogToolbar extends StatelessWidget {
                   _ToolbarSelect<String>(
                     label: 'Ordina',
                     value: sort!,
-                    items: const ['default', 'az'],
-                    itemLabel: (value) => value == 'az' ? 'A-Z' : 'Recenti',
+                    items: const ['default', 'az', 'rating', 'recommended'],
+                    itemLabel: _catalogSortLabel,
                     onChanged: onSortChanged!,
                   ),
                 ],
@@ -12971,8 +13093,8 @@ class _CatalogToolbar extends StatelessWidget {
                     child: _ToolbarSelect<String>(
                       label: 'Ordina',
                       value: sort!,
-                      items: const ['default', 'az'],
-                      itemLabel: (value) => value == 'az' ? 'A-Z' : 'Recenti',
+                      items: const ['default', 'az', 'rating', 'recommended'],
+                      itemLabel: _catalogSortLabel,
                       onChanged: onSortChanged!,
                     ),
                   ),
@@ -12982,6 +13104,13 @@ class _CatalogToolbar extends StatelessWidget {
     );
   }
 }
+
+String _catalogSortLabel(String value) => switch (value) {
+  'az' => 'Titolo A-Z',
+  'rating' => 'Punteggio',
+  'recommended' => 'Consigliati per te',
+  _ => 'Più recenti',
+};
 
 class _ToolbarSelect<T> extends StatelessWidget {
   const _ToolbarSelect({
@@ -14063,6 +14192,7 @@ class _WindowsSeriesDetailPane extends StatelessWidget {
   const _WindowsSeriesDetailPane({
     required this.show,
     required this.description,
+    required this.genre,
     required this.episodes,
     required this.loading,
     required this.canResume,
@@ -14074,6 +14204,7 @@ class _WindowsSeriesDetailPane extends StatelessWidget {
 
   final SeriesShow show;
   final String description;
+  final String genre;
   final List<SeriesEpisode> episodes;
   final bool loading;
   final bool canResume;
@@ -14143,6 +14274,18 @@ class _WindowsSeriesDetailPane extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 7),
+                        if (genre.trim().isNotEmpty) ...[
+                          Text(
+                            genre.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: LelegColors.accent,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                        ],
                         Expanded(
                           child: Text(
                             description.trim().isEmpty

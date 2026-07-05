@@ -176,11 +176,19 @@ export class CatalogState {
       };
       saveCatalogCache(this.snapshot);
       this.status(`Pronto: ${live.channels.length} canali live`);
+      this.warmInitialMediaCategories();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.status(`Errore catalogo: ${message}`, true);
       throw error;
     }
+  }
+
+  warmInitialMediaCategories(): void {
+    const vodCategory = this.vodCategories.find((category) => category.id);
+    const seriesCategory = this.seriesCategories.find((category) => category.id);
+    if (vodCategory) void this.loadMovies(vodCategory.id).catch(() => []);
+    if (seriesCategory) void this.loadSeries(seriesCategory.id).catch(() => []);
   }
 
   async loadEpg(channel: LiveChannel): Promise<EpgProgramme[]> {

@@ -1008,10 +1008,28 @@ body {
 }
 
 .library-count {
-  margin: -16px 0 18px;
+  margin: 0;
   color: var(--muted);
   font-size: 22px;
   font-weight: 700;
+}
+
+.library-toolbar {
+  min-height: 52px;
+  margin: -16px 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.catalog-sort {
+  min-width: 250px;
+  padding: 10px 16px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 750;
+  text-align: left;
 }
 
 .library-browser {

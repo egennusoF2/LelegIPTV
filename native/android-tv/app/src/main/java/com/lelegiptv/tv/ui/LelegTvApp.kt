@@ -521,6 +521,7 @@ fun LelegTvApp(viewModel: TvViewModel) {
             )
             TvRoute.Movies -> MovieBrowserScreen(
                 state = vodState,
+                library = libraryState,
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
                 onCategorySelect = { categoryId ->
@@ -535,6 +536,7 @@ fun LelegTvApp(viewModel: TvViewModel) {
             )
             TvRoute.Series -> SeriesBrowserScreen(
                 state = seriesState,
+                library = libraryState,
                 firstFocusRequester = contentRequester,
                 onMoveLeftToMenu = ::focusSidebarMenu,
                 onCategorySelect = { categoryId ->

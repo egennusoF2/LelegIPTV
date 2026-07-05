@@ -315,7 +315,7 @@ class XtreamClient {
     return detail.episodes;
   }
 
-  Future<String> vodDescription(VodMovie movie) async {
+  Future<VodDetailData> vodDetail(VodMovie movie) async {
     final json = await _getJson(
       'get_vod_info',
       apiUri('get_vod_info', {'vod_id': movie.id.toString()}),
@@ -326,17 +326,27 @@ class XtreamClient {
     final movieData = map['movie_data'] is Map
         ? map['movie_data'] as Map
         : const {};
-    return EpgProgramme._decodeMaybeBase64(
-      (info['plot'] ??
-                  info['description'] ??
-                  info['description_raw'] ??
-                  movieData['plot'] ??
-                  movieData['description'] ??
-                  movieData['description_raw'])
-              ?.toString() ??
-          '',
-    ).trim();
+    final merged = <String, dynamic>{
+      ...movieData.map((key, value) => MapEntry(key.toString(), value)),
+      ...info.map((key, value) => MapEntry(key.toString(), value)),
+    };
+    return VodDetailData(
+      description: EpgProgramme._decodeMaybeBase64(
+        (info['plot'] ??
+                    info['description'] ??
+                    info['description_raw'] ??
+                    movieData['plot'] ??
+                    movieData['description'] ??
+                    movieData['description_raw'])
+                ?.toString() ??
+            '',
+      ).trim(),
+      genre: (merged['genre'] ?? merged['genres'])?.toString().trim() ?? '',
+    );
   }
+
+  Future<String> vodDescription(VodMovie movie) async =>
+      (await vodDetail(movie)).description;
 
   Future<SeriesDetailData> seriesDetail(SeriesShow show) async {
     final json = await _getJson(
@@ -374,6 +384,7 @@ class XtreamClient {
                 ?.toString() ??
             '',
       ).trim(),
+      genre: (info['genre'] ?? info['genres'])?.toString().trim() ?? '',
       episodes: episodes.where((item) => item.id > 0).toList(),
     );
   }
@@ -955,9 +966,21 @@ class SeriesEpisode {
   }
 }
 
-class SeriesDetailData {
-  const SeriesDetailData({required this.description, required this.episodes});
+class VodDetailData {
+  const VodDetailData({required this.description, required this.genre});
 
   final String description;
+  final String genre;
+}
+
+class SeriesDetailData {
+  const SeriesDetailData({
+    required this.description,
+    required this.genre,
+    required this.episodes,
+  });
+
+  final String description;
+  final String genre;
   final List<SeriesEpisode> episodes;
 }

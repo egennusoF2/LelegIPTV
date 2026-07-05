@@ -22,6 +22,7 @@ export class FocusManager {
   setItems(items: FocusableElement[]): void {
     this.items = items;
     if (this.index >= this.items.length) this.index = Math.max(0, this.items.length - 1);
+    if (this.items[this.index] === this.focused) return;
     this.applyFocus();
   }
 

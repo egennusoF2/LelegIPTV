@@ -73,6 +73,33 @@ let activePlaylistTitle = ""
 const CAT_FAVORITES = "__favorites__"
 const CAT_RECENTS = "__recents__"
 
+function catalogRating(item) {
+  return Number.parseFloat(String(item.rating || item.rating_5based || "0").replace(",", ".")) || 0
+}
+
+function recommendationWords(item) {
+  return new Set(
+    `${item.genre || ""} ${item.category || ""} ${item.name || ""}`
+      .toLocaleLowerCase("it")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .split(/\s+/)
+      .filter((word) => word.length >= 3),
+  )
+}
+
+function recommendationScore(item, favorites) {
+  let score = catalogRating(item) * 0.1
+  const words = recommendationWords(item)
+  for (const favorite of favorites) {
+    if (favorite.category && favorite.category === item.category) score += 6
+    const favoriteWords = recommendationWords(favorite)
+    for (const word of words) {
+      if (favoriteWords.has(word)) score += 2
+    }
+  }
+  return score
+}
+
 const picker = mountCategoryPicker({
   kind: "series",
   idPrefix: "series-category-picker",
@@ -558,6 +585,19 @@ function applyFilter() {
         (a.name || "").localeCompare(b.name || "", "en", {
           sensitivity: "base",
         })
+      )
+  } else if (mode === "rating") {
+    out = out.slice().sort((a, b) => catalogRating(b) - catalogRating(a))
+  } else if (mode === "recommended") {
+    const favoriteIds = getFavorites(activePlaylistId, "series")
+    const favorites = all.filter((show) => favoriteIds.has(show.id))
+    out = out
+      .filter((show) => !favoriteIds.has(show.id))
+      .slice()
+      .sort(
+        (a, b) =>
+          recommendationScore(b, favorites) - recommendationScore(a, favorites) ||
+          Number(b.added || b.id || 0) - Number(a.added || a.id || 0),
       )
   }
 

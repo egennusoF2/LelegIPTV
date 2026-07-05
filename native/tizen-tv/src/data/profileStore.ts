@@ -130,8 +130,11 @@ function mediaCacheKey(
   return `${MEDIA_CACHE_PREFIX}${kind}.${(hash >>> 0).toString(16)}`;
 }
 
+let mediaDbPromise: Promise<IDBDatabase | null> | null = null;
+
 function openMediaDb(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
+  if (mediaDbPromise) return mediaDbPromise;
+  mediaDbPromise = new Promise((resolve) => {
     if (!globalThis.indexedDB) {
       resolve(null);
       return;
@@ -143,8 +146,12 @@ function openMediaDb(): Promise<IDBDatabase | null> {
       }
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
+    request.onerror = () => {
+      mediaDbPromise = null;
+      resolve(null);
+    };
   });
+  return mediaDbPromise;
 }
 
 export async function loadMediaCache<T>(

@@ -226,6 +226,8 @@ function parseVodMovie(item: Record<string, unknown>): VodMovie | null {
     rating: text(item, "rating", "rating_5based", "tmdb_rating"),
     year: text(item, "year", "releaseDate", "release_date", "releasedate"),
     plot: text(item, "plot", "description", "overview"),
+    genre: text(item, "genre", "genres"),
+    added: int(item, "added", "last_modified", "release_timestamp"),
   };
 }
 
@@ -250,6 +252,8 @@ function parseVodInfo(value: JsonValue, fallback: VodMovie): VodMovie {
     plot:
       decodeBase64Maybe(text(merged, "plot", "description", "overview", "storyline")).trim() ||
       fallback.plot,
+    genre: text(merged, "genre", "genres") || fallback.genre,
+    added: int(merged, "added", "last_modified", "release_timestamp") || fallback.added,
   };
 }
 
@@ -264,6 +268,8 @@ function parseSeriesShow(item: Record<string, unknown>): SeriesShow | null {
     rating: text(item, "rating", "rating_5based", "tmdb_rating"),
     year: text(item, "year", "releaseDate", "release_date"),
     plot: text(item, "plot", "description", "overview"),
+    genre: text(item, "genre", "genres"),
+    added: int(item, "added", "last_modified", "release_timestamp"),
   };
 }
 
@@ -471,6 +477,8 @@ export class XtreamClient {
         rating: "",
         year: "",
         plot: "",
+        genre: "",
+        added: 0,
       } satisfies SeriesShow);
     return { show, episodes: parseEpisodes(root.episodes) };
   }
