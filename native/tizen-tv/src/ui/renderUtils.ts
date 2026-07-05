@@ -92,7 +92,7 @@ export function renderPosterRow(
   container: HTMLElement,
   movies: VodMovie[],
   onSelect: (movie: VodMovie) => void,
-  onItemsChanged?: (items: FocusableElement[]) => void,
+  onItemsChanged?: (items: FocusableElement[], startIndex: number) => void,
 ): FocusableElement[] {
   clearElement(container);
   const grid = el("div", "poster-grid");
@@ -104,6 +104,7 @@ export function renderPosterRow(
   const items: FocusableElement[] = [];
   let rendered = 0;
   const appendBatch = (): void => {
+    const startIndex = rendered;
     const end = Math.min(movies.length, rendered + 12);
     for (let index = rendered; index < end; index += 1) {
       const movie = movies[index]!;
@@ -118,7 +119,6 @@ export function renderPosterRow(
         onFocus: () => {
           if (index >= rendered - 4 && rendered < movies.length) {
             appendBatch();
-            onItemsChanged?.(items);
           }
         },
       };
@@ -126,6 +126,7 @@ export function renderPosterRow(
       grid.append(card);
     }
     rendered = end;
+    if (startIndex > 0) onItemsChanged?.(items, startIndex);
   };
   appendBatch();
   return items;
@@ -135,7 +136,7 @@ export function renderSeriesPosterRow(
   container: HTMLElement,
   shows: SeriesShow[],
   onSelect: (show: SeriesShow) => void,
-  onItemsChanged?: (items: FocusableElement[]) => void,
+  onItemsChanged?: (items: FocusableElement[], startIndex: number) => void,
 ): FocusableElement[] {
   clearElement(container);
   const grid = el("div", "poster-grid");
@@ -147,6 +148,7 @@ export function renderSeriesPosterRow(
   const items: FocusableElement[] = [];
   let rendered = 0;
   const appendBatch = (): void => {
+    const startIndex = rendered;
     const end = Math.min(shows.length, rendered + 12);
     for (let index = rendered; index < end; index += 1) {
       const show = shows[index]!;
@@ -161,7 +163,6 @@ export function renderSeriesPosterRow(
         onFocus: () => {
           if (index >= rendered - 4 && rendered < shows.length) {
             appendBatch();
-            onItemsChanged?.(items);
           }
         },
       };
@@ -169,6 +170,7 @@ export function renderSeriesPosterRow(
       grid.append(card);
     }
     rendered = end;
+    if (startIndex > 0) onItemsChanged?.(items, startIndex);
   };
   appendBatch();
   return items;

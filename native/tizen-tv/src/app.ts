@@ -443,7 +443,12 @@ export class LelegTvApp {
       gridHost,
       this.movies,
       (movie) => void this.renderMovieDetail(movie),
-      (items) => {
+      (items, startIndex) => {
+        this.wireLibraryNavigation(
+          [sort, ...catButtons],
+          items,
+          Math.max(0, startIndex - 1),
+        );
         this.contentFocus.setItems([sort, ...catButtons, ...items]);
       },
     );
@@ -631,7 +636,12 @@ export class LelegTvApp {
       gridHost,
       this.series,
       (show) => void this.renderSeriesDetail(show),
-      (items) => {
+      (items, startIndex) => {
+        this.wireLibraryNavigation(
+          [sort, ...categoryButtons],
+          items,
+          Math.max(0, startIndex - 1),
+        );
         this.contentFocus.setItems([sort, ...categoryButtons, ...items]);
       },
     );
@@ -668,6 +678,7 @@ export class LelegTvApp {
   private wireLibraryNavigation(
     categories: FocusableElement[],
     posters: FocusableElement[],
+    startPosterIndex = 0,
   ): void {
     const categoryCount = categories.length;
     const columns = 6;
@@ -692,7 +703,8 @@ export class LelegTvApp {
         return true;
       };
     });
-    posters.forEach((item, index) => {
+    for (let index = startPosterIndex; index < posters.length; index += 1) {
+      const item = posters[index]!;
       item.onLeft = () => {
         if (index % columns === 0) {
           this.contentFocus.focusIndex(activeCategoryIndex);
@@ -717,7 +729,7 @@ export class LelegTvApp {
         this.contentFocus.focusIndex(categoryCount + next);
         return true;
       };
-    });
+    }
   }
 
   private async renderSeriesDetail(show: SeriesShow): Promise<void> {

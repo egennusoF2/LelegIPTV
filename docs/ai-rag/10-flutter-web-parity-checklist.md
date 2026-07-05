@@ -32,7 +32,7 @@ experience.
 | Settings watching | `src/pages/settings.astro` | Missing | Needs Live TV layout, progress retention, EPG timezone/offset, playback backend/preferences where relevant to native. |
 | Settings network | `src/pages/settings.astro` | Missing | Needs network/user-agent/provider diagnostics and native-specific connection checks. |
 | Settings library/data | `src/pages/settings.astro` | Missing | Needs hidden categories, favorites reorder, hub strips, downloads folder, backup/export/import, cache/storage controls. |
-| Player | Web ArtPlayer/Shaka/HLS stack | Functional | Native uses `media_kit` where available, AVPlay on Tizen, and iOS media paths where needed. Play/pause/seek/audio track selector/subtitle selector/speed/fullscreen are wired. PiP is currently unavailable and needs a native layer. Controls auto-hide on pointer inactivity. |
+| Player | Web ArtPlayer/Shaka/HLS stack | Functional | Flutter uses `media_kit` where available and iOS media paths where needed; the dedicated Tizen app uses Samsung AVPlay. Play/pause/seek/audio track selector/subtitle selector/speed/fullscreen are wired. Unsupported PiP controls are intentionally hidden. On non-TV layouts, tapping the inline video enters fullscreen; fullscreen taps reveal the auto-hiding controls. |
 | Icons/app identity | `src-tauri/app-icon.png` | Functional | Flutter Android/iOS/macOS/Tizen icons are generated from the Leleg icon. Dock/launcher may cache old icons until app rebuild/reinstall. |
 
 ## Native EPG Implementation Notes

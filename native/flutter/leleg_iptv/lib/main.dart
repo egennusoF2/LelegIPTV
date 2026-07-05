@@ -922,7 +922,14 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     super.initState();
     final mediaPlayer = isTizenRuntime || _useAppleVideoBackend
         ? null
-        : Player(configuration: const PlayerConfiguration(title: 'Leleg IPTV'));
+        : Player(
+            configuration: PlayerConfiguration(
+              title: 'Leleg IPTV',
+              bufferSize: Platform.isWindows
+                  ? 64 * 1024 * 1024
+                  : 32 * 1024 * 1024,
+            ),
+          );
     _player = mediaPlayer;
     _videoController = mediaPlayer == null
         ? null
@@ -12005,7 +12012,7 @@ class _PlayerCardState extends State<PlayerCard> {
     );
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: _revealControls,
+      onTap: widget.focusMode ? _revealControls : widget.onToggleFocusMode,
       onDoubleTap: widget.onToggleFocusMode,
       child: MouseRegion(
         onEnter: (_) => _revealControls(),
@@ -12217,11 +12224,6 @@ class _AppleTimelineControls extends StatelessWidget {
                                   : Icons.fullscreen,
                             ),
                           ),
-                          IconButton(
-                            tooltip: 'Picture-in-Picture non disponibile',
-                            onPressed: onPictureInPicture,
-                            icon: const Icon(Icons.picture_in_picture_alt),
-                          ),
                         ],
                       )
                     : Row(
@@ -12261,11 +12263,6 @@ class _AppleTimelineControls extends StatelessWidget {
                                   ? Icons.fullscreen_exit
                                   : Icons.fullscreen,
                             ),
-                          ),
-                          IconButton(
-                            tooltip: 'Picture-in-Picture non disponibile',
-                            onPressed: onPictureInPicture,
-                            icon: const Icon(Icons.picture_in_picture_alt),
                           ),
                         ],
                       );
@@ -12422,11 +12419,6 @@ class _TizenTimelineControls extends StatelessWidget {
                                   : Icons.fullscreen,
                             ),
                           ),
-                          IconButton(
-                            tooltip: 'Picture-in-Picture non disponibile',
-                            onPressed: onPictureInPicture,
-                            icon: const Icon(Icons.picture_in_picture_alt),
-                          ),
                         ],
                       )
                     : Row(
@@ -12466,11 +12458,6 @@ class _TizenTimelineControls extends StatelessWidget {
                                   ? Icons.fullscreen_exit
                                   : Icons.fullscreen,
                             ),
-                          ),
-                          IconButton(
-                            tooltip: 'Picture-in-Picture non disponibile',
-                            onPressed: onPictureInPicture,
-                            icon: const Icon(Icons.picture_in_picture_alt),
                           ),
                         ],
                       );
@@ -12632,14 +12619,6 @@ class _PlayerTimelineControls extends StatelessWidget {
                                           : Icons.fullscreen,
                                     ),
                                   ),
-                                  IconButton(
-                                    tooltip:
-                                        'Picture-in-Picture non disponibile',
-                                    onPressed: onPictureInPicture,
-                                    icon: const Icon(
-                                      Icons.picture_in_picture_alt,
-                                    ),
-                                  ),
                                 ],
                               )
                             : Row(
@@ -12663,14 +12642,6 @@ class _PlayerTimelineControls extends StatelessWidget {
                                       focusMode
                                           ? Icons.fullscreen_exit
                                           : Icons.fullscreen,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip:
-                                        'Picture-in-Picture non disponibile',
-                                    onPressed: onPictureInPicture,
-                                    icon: const Icon(
-                                      Icons.picture_in_picture_alt,
                                     ),
                                   ),
                                 ],

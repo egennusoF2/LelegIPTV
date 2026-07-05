@@ -127,18 +127,9 @@ export class AvplayPlayer {
     } catch {
       // ignore
     }
-    if (this.isLive) {
-      try {
-        player.setStreamingProperty?.("ADAPTIVE_INFO", "STARTBITRATE=HIGHEST");
-      } catch {
-        // ignore
-      }
-    }
-    try {
-      player.setBufferingParam?.("PLAYER_BUFFER_FOR_PLAY", "PLAYER_BUFFER_SIZE_IN_SECOND", 3);
-    } catch {
-      // ignore
-    }
+    // Keep Samsung's adaptive bitrate and buffering defaults. Forcing the
+    // highest rendition with a three-second buffer causes avoidable stalls on
+    // variable IPTV streams and slower TV network interfaces.
   }
 
   private openWithAvplay(

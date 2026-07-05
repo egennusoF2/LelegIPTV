@@ -39,8 +39,8 @@ The app must work in several environments:
   available and Apple platform bridges for downloads and orientation behavior.
 - Flutter Android phone/tablet/TV: native Android app with responsive mobile,
   tablet, and TV layouts, Android DownloadManager, and D-pad/touch navigation.
-- Flutter Tizen TV: `.tpk` app using Samsung AVPlay via `video_player_avplay`;
-  it intentionally skips `media_kit`/`libmpv`.
+- Samsung Tizen TV: dedicated TypeScript `.wgt` app using Samsung AVPlay;
+  it is isolated from Flutter and skips `media_kit`/`libmpv`.
 - Astro SSR/build/test contexts: browser globals may be unavailable.
 
 Release/device targets currently implied by the codebase:
@@ -60,10 +60,9 @@ Release/device targets currently implied by the codebase:
 - iOS/iPhone and iPadOS are Flutter targets. Unsigned IPA packaging is handled
   by `scripts/package-flutter-ios-unsigned-ipa.sh` for Scarlet/Sideloadly/
   AltStore/Xcode sideloading.
-- Samsung Tizen TV is wired through the Flutter native app, not the Astro web
-  package. Build a `.tpk` with `pnpm flutter:tizen:build`; the Tizen runtime
-  uses Samsung AVPlay via `video_player_avplay` and intentionally skips
-  `media_kit`/`libmpv`.
+- Samsung Tizen TV is the dedicated `native/tizen-tv` application, not the
+  Astro or Flutter package. Build and sign its `.wgt` with `npm run build` and
+  `npm run package:wgt`; fullscreen playback uses Samsung AVPlay.
 
 ## Core data ownership
 

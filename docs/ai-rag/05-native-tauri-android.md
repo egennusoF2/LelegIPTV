@@ -225,42 +225,48 @@ Implementation rules:
 
 ## Samsung Tizen TV packaging
 
-Tizen TV is not a Tauri target. It is packaged from the Flutter native app as a
-Samsung `.tpk`; do not use the old Astro web package as the release path.
+Tizen TV is not a Tauri target. The current release is the dedicated TypeScript
+TV app packaged as a Samsung `.wgt`; do not use the old Astro or Flutter Tizen
+packages as the release path.
 
 Files:
 
-- `native/flutter/leleg_iptv/tizen/tizen-manifest.xml`: package id,
-  `api-version="6.5"`, TV/runtime metadata and internet/media privileges.
-- `native/flutter/leleg_iptv/lib/main.dart`: runtime branch that skips
-  `media_kit` on Tizen and uses `video_player_avplay`/Samsung AVPlay.
-- `tools/flutter-tizen/`: local official Flutter Tizen toolchain clone; ignored
-  by git and recreated when needed.
+- `native/tizen-tv/config.xml`: package identity, CSP and TV privileges.
+- `native/tizen-tv/src/player/avplay.ts`: Samsung AVPlay lifecycle, tracks,
+  display rectangles and playback state.
+- `native/tizen-tv/src/ui/virtualList.ts`: bounded channel/category rendering.
+- `native/tizen-tv/src/app/focusManager.ts`: deterministic D-pad navigation.
 
 Commands:
 
 ```bash
-pnpm flutter:tizen:build
+cd native/tizen-tv
+npm install
+npm run build
+npm run package:wgt
 ```
 
-The installable artifact is
-`native/flutter/leleg_iptv/build/tizen/tpk/com.lelegiptv.leleg_iptv-1.0.0.tpk`.
-Copy it to `www/downloads/current/LelegIPTV-tizen-tv-release.tpk` and install
-it on a developer-mode TV with `sdb`/Tizen Studio.
+The signed artifact is `native/tizen-tv/build/LelegIPTV-tizen-tv.wgt` and is
+also copied to `www/downloads/current/LelegIPTV-tizen-tv-release.wgt`.
 
 Runtime constraints:
 
 - No Tauri plugins, Rust commands, desktop updater or tray.
-- Playback must use AVPlay on Tizen. `media_kit` requires `libmpv`, which is
-  unavailable on Samsung TV and previously caused launch crashes.
+- Fullscreen playback must use Samsung AVPlay.
+- Keep Samsung's default adaptive bitrate and buffering values. Forcing
+  `STARTBITRATE=HIGHEST` with a small custom buffer produced freezes on
+  variable IPTV streams.
 - D-pad/remote navigation, focus rings, overscan and TV performance mode are
   mandatory release checks.
+- Poster batches must receive explicit directional handlers. Falling back to
+  geometric DOM searches on every key press causes progressively slower
+  navigation as the catalogue grows.
 
 Known limitation:
 
-- AVPlay HTTP headers are limited by the plugin, so providers that require
+- AVPlay HTTP headers are limited by the TV API, so providers that require
   non-standard headers must be verified on real TV firmware.
-- Keep Tizen playback code isolated from macOS/iOS/Android playback branches.
+- Keep Tizen playback isolated from Flutter macOS/iOS/Android branches.
 
 ## Native change checklist
 

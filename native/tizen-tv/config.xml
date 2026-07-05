@@ -2,7 +2,7 @@
 <widget xmlns="http://www.w3.org/ns/widgets"
         xmlns:tizen="http://tizen.org/ns/widgets"
         id="http://lelegiptv.ddns.net/tizen-tv"
-        version="0.4.9"
+        version="0.4.10"
         viewmodes="maximized">
   <tizen:application id="LelegIPTV1.LelegIPTVTv"
                      package="LelegIPTV1"
