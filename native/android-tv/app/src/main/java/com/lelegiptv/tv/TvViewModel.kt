@@ -14,7 +14,6 @@ import com.lelegiptv.tv.data.SeriesShow
 import com.lelegiptv.tv.data.VodCategory
 import com.lelegiptv.tv.data.VodInfo
 import com.lelegiptv.tv.data.VodMovie
-import com.lelegiptv.tv.data.ProfilePresets
 import com.lelegiptv.tv.data.ProfileStore
 import com.lelegiptv.tv.data.UserLibraryStore
 import com.lelegiptv.tv.data.FavoriteKind
@@ -93,10 +92,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     init {
         refreshProfilesState()
         val active = store.loadActive()
-        when {
-            active != null -> load(active.profile, persist = false)
-            else -> ProfilePresets.resolve("ITALIA1")?.let { addProfile(it) }
-        }
+        if (active != null) load(active.profile, persist = false)
     }
 
     private fun refreshProfilesState() {

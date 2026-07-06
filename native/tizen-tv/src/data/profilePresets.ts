@@ -1,32 +1,32 @@
 import type { XtreamProfile } from "./models";
 
 const PRESETS: Record<string, Omit<XtreamProfile, "title"> & { title: string }> = {
-  ITALIA1: {
-    title: "ITALIA1",
+  LELEG: {
+    title: "LELEG",
     serverUrl: "http://muti14.fonsecatemp.com",
     username: "notv_w7cehc",
     password: "ffhuax4a",
   },
-  ITALIA2: {
-    title: "ITALIA2",
+  JOLLY: {
+    title: "JOLLY",
     serverUrl: "http://muti14.fonsecatemp.com",
     username: "notv_71d762",
     password: "qgjjhnty",
   },
-  ITALIA3: {
-    title: "ITALIA3",
+  AMICO: {
+    title: "AMICO",
     serverUrl: "http://muti14.fonsecatemp.com",
     username: "notv_93me22",
     password: "x7g35zhh",
   },
-  MONDO1: {
-    title: "MONDO1",
+  ALESSANDRO: {
+    title: "ALESSANDRO",
     serverUrl: "http://watchtivo-4k.com",
     username: "S8eLtOiTtE",
     password: "ut6YxwMG6X",
   },
-  MONDO2: {
-    title: "MONDO2",
+  GIORDANO: {
+    title: "GIORDANO",
     serverUrl: "http://watchtivo-4k.com",
     username: "bSFZGHX1Gr",
     password: "zHwiKBmB1O",

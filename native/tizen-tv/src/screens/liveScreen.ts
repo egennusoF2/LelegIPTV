@@ -159,6 +159,20 @@ export class LiveScreen {
     }
   }
 
+  restorePreviewFromFullscreen(channel: LiveChannel): void {
+    if (!this.mounted) return;
+    this.previewSuspended = false;
+    this.previewGeneration += 1;
+    this.debouncedPreview.cancel?.();
+    this.selectedChannel = channel;
+    this.previewLabel.style.display = "none";
+    if (this.deps.useAvplay()) {
+      this.deps.avplay.setPreviewRect(this.previewPanel);
+    } else {
+      void this.startPreview(channel);
+    }
+  }
+
   focusColumn(column: LiveColumn): void {
     this.column = column;
     this.categoryList.setActive(column === "categories");

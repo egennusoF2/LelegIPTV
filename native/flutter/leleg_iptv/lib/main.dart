@@ -1077,32 +1077,32 @@ class _LelegNativeShellState extends State<LelegNativeShell>
   XtreamProfile? _playlistPresetForCode(String rawCode) {
     final code = rawCode.trim().toUpperCase();
     const presets = <String, XtreamProfile>{
-      'ITALIA1': XtreamProfile(
-        title: 'ITALIA1',
+      'LELEG': XtreamProfile(
+        title: 'LELEG',
         serverUrl: 'http://muti14.fonsecatemp.com',
         username: 'notv_w7cehc',
         password: 'ffhuax4a',
       ),
-      'ITALIA2': XtreamProfile(
-        title: 'ITALIA2',
+      'JOLLY': XtreamProfile(
+        title: 'JOLLY',
         serverUrl: 'http://muti14.fonsecatemp.com',
         username: 'notv_71d762',
         password: 'qgjjhnty',
       ),
-      'ITALIA3': XtreamProfile(
-        title: 'ITALIA3',
+      'AMICO': XtreamProfile(
+        title: 'AMICO',
         serverUrl: 'http://muti14.fonsecatemp.com',
         username: 'notv_93me22',
         password: 'x7g35zhh',
       ),
-      'MONDO1': XtreamProfile(
-        title: 'MONDO1',
+      'ALESSANDRO': XtreamProfile(
+        title: 'ALESSANDRO',
         serverUrl: 'http://watchtivo-4k.com',
         username: 'S8eLtOiTtE',
         password: 'ut6YxwMG6X',
       ),
-      'MONDO2': XtreamProfile(
-        title: 'MONDO2',
+      'GIORDANO': XtreamProfile(
+        title: 'GIORDANO',
         serverUrl: 'http://watchtivo-4k.com',
         username: 'bSFZGHX1Gr',
         password: 'zHwiKBmB1O',

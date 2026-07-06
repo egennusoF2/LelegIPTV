@@ -32,7 +32,7 @@ chmod +x scripts/tv-emulator-remote.sh
 ./scripts/tv-emulator-remote.sh down
 ./scripts/tv-emulator-remote.sh ok
 ./scripts/tv-emulator-remote.sh back
-./scripts/tv-emulator-remote.sh text ITALIA2
+./scripts/tv-emulator-remote.sh text JOLLY
 ```
 
 In Android Studio: **Emulator → Settings → General** → disattiva

@@ -197,14 +197,53 @@ export function canReplayProgramme(
 }
 
 export function mergeEpgProgrammes(...sources: EpgProgramme[][]): EpgProgramme[] {
-  const unique = new Map<string, EpgProgramme>();
-  for (const source of sources) {
-    for (const programme of source) {
-      const key = `${programme.startTimeMillis}|${programme.endTimeMillis}|${programme.title.toLowerCase()}`;
-      unique.set(key, programme);
+  const result: EpgProgramme[] = [];
+  const sorted = sources
+    .flat()
+    .filter((programme) => programme.title.trim())
+    .sort((a, b) => a.startTimeMillis - b.startTimeMillis);
+
+  for (const programme of sorted) {
+    const duplicateIndex = result.findIndex((existing) =>
+      epgProgrammesLookDuplicate(existing, programme),
+    );
+    if (duplicateIndex >= 0) {
+      const existing = result[duplicateIndex]!;
+      if (epgProgrammeScore(programme) > epgProgrammeScore(existing)) {
+        result[duplicateIndex] = programme;
+      }
+      continue;
     }
+    result.push(programme);
   }
-  return [...unique.values()].sort((a, b) => a.startTimeMillis - b.startTimeMillis);
+  return result.sort((a, b) => a.startTimeMillis - b.startTimeMillis);
+}
+
+function normalizeEpgTitle(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function epgProgrammeScore(programme: EpgProgramme): number {
+  const duration = Math.max(0, programme.endTimeMillis - programme.startTimeMillis);
+  return duration + programme.description.length * 1000;
+}
+
+function epgProgrammesLookDuplicate(a: EpgProgramme, b: EpgProgramme): boolean {
+  if (normalizeEpgTitle(a.title) !== normalizeEpgTitle(b.title)) return false;
+  const startDiff = Math.abs(a.startTimeMillis - b.startTimeMillis);
+  const endDiff = Math.abs(a.endTimeMillis - b.endTimeMillis);
+  if (startDiff <= 3 * 60_000 && endDiff <= 3 * 60_000) return true;
+  if (startDiff <= 20 * 60_000 && endDiff <= 5 * 60_000) return true;
+
+  const overlapStart = Math.max(a.startTimeMillis, b.startTimeMillis);
+  const overlapEnd = Math.min(a.endTimeMillis, b.endTimeMillis);
+  const overlap = overlapEnd - overlapStart;
+  if (overlap <= 0) return false;
+  const shortest = Math.min(
+    a.endTimeMillis - a.startTimeMillis,
+    b.endTimeMillis - b.startTimeMillis,
+  );
+  return shortest > 0 && overlap / shortest >= 0.75;
 }
 
 export interface CatalogSnapshot {

@@ -1206,7 +1206,7 @@ export class LelegTvApp {
 
     const profile = this.catalog.activeProfile;
     const titleInput = document.createElement("input");
-    titleInput.placeholder = "Codice lista (es. ITALIA1)";
+    titleInput.placeholder = "Codice lista (es. LELEG)";
 
     const serverInput = document.createElement("input");
     serverInput.placeholder = "Server";
@@ -1391,20 +1391,26 @@ export class LelegTvApp {
     if (!this.fullscreen) return;
     this.persistPlaybackProgress(true);
     const onClose = this.fullscreenOnClose;
+    const liveChannel = this.fullscreenChannel;
+    const keepLivePlaying = !!liveChannel && this.useAvplay();
     this.fullscreen = false;
     this.fullscreenChannel = null;
     this.fullscreenProgressMeta = null;
     this.fullscreenOnClose = null;
-    this.liveScreen?.setFullscreenActive(false);
     setVisible(this.playerLayer, false);
-    this.avplay.stop();
-    this.htmlPreview.stop();
     if (this.fullscreenUiTimer !== null) window.clearTimeout(this.fullscreenUiTimer);
     if (this.fullscreenProgressTimer !== null) window.clearInterval(this.fullscreenProgressTimer);
     this.fullscreenUiTimer = null;
     this.fullscreenProgressTimer = null;
     clearElement(this.playerLayer);
     setVisible(this.root, true);
+    if (keepLivePlaying && liveChannel) {
+      this.liveScreen?.restorePreviewFromFullscreen(liveChannel);
+    } else {
+      this.liveScreen?.setFullscreenActive(false);
+      this.avplay.stop();
+      this.htmlPreview.stop();
+    }
     if (onClose) onClose();
     else if (this.router.current === "home") {
       clearElement(this.content);
