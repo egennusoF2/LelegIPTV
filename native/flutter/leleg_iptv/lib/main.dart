@@ -5270,7 +5270,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         : byCategory
               .where((item) => item.name.toLowerCase().contains(q))
               .toList();
-    return _sortMovies(source, _movieSort).take(350).toList();
+    return _sortMovies(source, _movieSort);
   }
 
   List<VodMovie> get _favoriteMovies =>
@@ -5291,7 +5291,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         : byCategory
               .where((item) => item.name.toLowerCase().contains(q))
               .toList();
-    return _sortSeries(source, _seriesSort).take(350).toList();
+    return _sortSeries(source, _seriesSort);
   }
 
   List<VodMovie> _sortMovies(List<VodMovie> movies, String sort) {
@@ -5394,6 +5394,40 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       if (category.id == id) return category.name;
     }
     return 'Categoria $id';
+  }
+
+  Map<String, int> _liveCategoryCounts() {
+    final counts = <String, int>{'': _playableLiveChannels.length};
+    for (final channel in _playableLiveChannels) {
+      counts[channel.categoryId] = (counts[channel.categoryId] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  Map<String, int> _movieCategoryCounts() {
+    final counts = <String, int>{'': _movies.length};
+    for (final movie in _movies) {
+      counts[movie.categoryId] = (counts[movie.categoryId] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  Map<String, int> _seriesCategoryCounts() {
+    final counts = <String, int>{'': _series.length};
+    for (final show in _series) {
+      counts[show.categoryId] = (counts[show.categoryId] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  String _categoryNameWithCount(
+    List<XtreamCategory> categories,
+    String id,
+    Map<String, int> counts,
+  ) {
+    final name = _categoryName(categories, id);
+    final count = counts[id];
+    return count == null ? name : '$name ($count)';
   }
 
   Widget _tvPopScope(Widget child) {
@@ -5987,6 +6021,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         categories: _liveCategories,
         selectedCategoryId: _liveCategoryId,
         categoryName: (id) => _categoryName(_liveCategories, id),
+        categoryLabel: (id) =>
+            _categoryNameWithCount(_liveCategories, id, _liveCategoryCounts()),
         playerTitle: _playerTitle,
         controller: _videoController,
         player: _player,
@@ -6035,6 +6071,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                       categories: _movieCategories,
                       selectedCategoryId: _movieCategoryId,
                       categoryName: (id) => _categoryName(_movieCategories, id),
+                      categoryLabel: (id) => _categoryNameWithCount(
+                        _movieCategories,
+                        id,
+                        _movieCategoryCounts(),
+                      ),
                       onCategoryChanged: _setMovieCategory,
                       onOpen: _openMovie,
                       isFavorite: (movie) =>
@@ -6051,6 +6092,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                       selectedCategoryId: _movieCategoryId,
                       sort: _movieSort,
                       categoryName: (id) => _categoryName(_movieCategories, id),
+                      categoryLabel: (id) => _categoryNameWithCount(
+                        _movieCategories,
+                        id,
+                        _movieCategoryCounts(),
+                      ),
                       onCategoryChanged: _setMovieCategory,
                       onSortChanged: (sort) =>
                           setState(() => _movieSort = sort),
@@ -6195,6 +6241,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                       selectedCategoryId: _seriesCategoryId,
                       categoryName: (id) =>
                           _categoryName(_seriesCategories, id),
+                      categoryLabel: (id) => _categoryNameWithCount(
+                        _seriesCategories,
+                        id,
+                        _seriesCategoryCounts(),
+                      ),
                       onCategoryChanged: _setSeriesCategory,
                       onOpen: _openSeries,
                     )
@@ -6208,6 +6259,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                       sort: _seriesSort,
                       categoryName: (id) =>
                           _categoryName(_seriesCategories, id),
+                      categoryLabel: (id) => _categoryNameWithCount(
+                        _seriesCategories,
+                        id,
+                        _seriesCategoryCounts(),
+                      ),
                       onCategoryChanged: _setSeriesCategory,
                       onSortChanged: (sort) =>
                           setState(() => _seriesSort = sort),
@@ -7931,6 +7987,7 @@ class LiveScreen extends StatelessWidget {
     required this.categories,
     required this.selectedCategoryId,
     required this.categoryName,
+    this.categoryLabel,
     required this.playerTitle,
     required this.controller,
     required this.player,
@@ -7963,6 +8020,7 @@ class LiveScreen extends StatelessWidget {
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
   final String Function(String id) categoryName;
+  final String Function(String id)? categoryLabel;
   final String playerTitle;
   final VideoController? controller;
   final Player? player;
@@ -8097,6 +8155,7 @@ class LiveScreen extends StatelessWidget {
                   categories: categories,
                   selectedCategoryId: selectedCategoryId,
                   categoryName: categoryName,
+                  categoryLabel: categoryLabel,
                   onCategoryChanged: onCategoryChanged,
                 ),
                 Expanded(
@@ -8120,6 +8179,7 @@ class LiveScreen extends StatelessWidget {
                         categories: categories,
                         selectedCategoryId: selectedCategoryId,
                         categoryName: categoryName,
+                        categoryLabel: categoryLabel,
                         onCategoryChanged: onCategoryChanged,
                         narrow: true,
                       ),
@@ -8153,6 +8213,7 @@ class LiveScreen extends StatelessWidget {
                   child: _TvCategorySidebar(
                     categories: categories,
                     selectedCategoryId: selectedCategoryId,
+                    categoryLabel: categoryLabel,
                     onCategoryChanged: onCategoryChanged,
                   ),
                 ),
@@ -8373,6 +8434,7 @@ class TvFeaturedBrowseScreen<T> extends StatelessWidget {
     this.categories = const [],
     this.selectedCategoryId = '',
     this.categoryName,
+    this.categoryLabel,
     this.onCategoryChanged,
     this.isFavorite,
     this.onToggleFavorite,
@@ -8393,6 +8455,7 @@ class TvFeaturedBrowseScreen<T> extends StatelessWidget {
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
   final String Function(String id)? categoryName;
+  final String Function(String id)? categoryLabel;
   final ValueChanged<String>? onCategoryChanged;
   final bool Function(T item)? isFavorite;
   final ValueChanged<T>? onToggleFavorite;
@@ -8446,6 +8509,7 @@ class TvFeaturedBrowseScreen<T> extends StatelessWidget {
                       _QuickCategoryStrip(
                         categories: categories,
                         selectedCategoryId: selectedCategoryId,
+                        categoryLabel: categoryLabel,
                         onCategoryChanged: onCategoryChanged!,
                       ),
                     Padding(
@@ -8929,6 +8993,7 @@ class MoviesScreen extends StatelessWidget {
     this.selectedCategoryId = '',
     this.sort = 'default',
     this.categoryName,
+    this.categoryLabel,
     this.onCategoryChanged,
     this.onSortChanged,
     super.key,
@@ -8942,6 +9007,7 @@ class MoviesScreen extends StatelessWidget {
   final String selectedCategoryId;
   final String sort;
   final String Function(String id)? categoryName;
+  final String Function(String id)? categoryLabel;
   final ValueChanged<String>? onCategoryChanged;
   final ValueChanged<String>? onSortChanged;
   final ValueChanged<VodMovie> onPlay;
@@ -8967,6 +9033,7 @@ class MoviesScreen extends StatelessWidget {
               categories: categories,
               selectedCategoryId: selectedCategoryId,
               categoryName: categoryName!,
+              categoryLabel: categoryLabel,
               onCategoryChanged: onCategoryChanged!,
               sort: sort,
               onSortChanged: onSortChanged,
@@ -8977,6 +9044,7 @@ class MoviesScreen extends StatelessWidget {
             _QuickCategoryStrip(
               categories: categories,
               selectedCategoryId: selectedCategoryId,
+              categoryLabel: categoryLabel,
               onCategoryChanged: onCategoryChanged!,
             ),
           Expanded(
@@ -9479,6 +9547,7 @@ class SeriesScreen extends StatelessWidget {
     required this.selectedCategoryId,
     required this.sort,
     required this.categoryName,
+    this.categoryLabel,
     required this.onCategoryChanged,
     required this.onSortChanged,
     required this.onOpen,
@@ -9496,6 +9565,7 @@ class SeriesScreen extends StatelessWidget {
   final String selectedCategoryId;
   final String sort;
   final String Function(String id) categoryName;
+  final String Function(String id)? categoryLabel;
   final ValueChanged<String> onCategoryChanged;
   final ValueChanged<String> onSortChanged;
   final ValueChanged<SeriesShow> onOpen;
@@ -9516,6 +9586,7 @@ class SeriesScreen extends StatelessWidget {
             categories: categories,
             selectedCategoryId: selectedCategoryId,
             categoryName: categoryName,
+            categoryLabel: categoryLabel,
             onCategoryChanged: onCategoryChanged,
             sort: sort,
             onSortChanged: onSortChanged,
@@ -9524,6 +9595,7 @@ class SeriesScreen extends StatelessWidget {
             _QuickCategoryStrip(
               categories: categories,
               selectedCategoryId: selectedCategoryId,
+              categoryLabel: categoryLabel,
               onCategoryChanged: onCategoryChanged,
             ),
           Expanded(
@@ -12997,6 +13069,7 @@ class _CatalogToolbar extends StatelessWidget {
     required this.selectedCategoryId,
     required this.categoryName,
     required this.onCategoryChanged,
+    this.categoryLabel,
     this.sort,
     this.onSortChanged,
     this.narrow = false,
@@ -13006,6 +13079,7 @@ class _CatalogToolbar extends StatelessWidget {
   final String selectedCategoryId;
   final String Function(String id) categoryName;
   final ValueChanged<String> onCategoryChanged;
+  final String Function(String id)? categoryLabel;
   final String? sort;
   final ValueChanged<String>? onSortChanged;
   final bool narrow;
@@ -13031,7 +13105,7 @@ class _CatalogToolbar extends StatelessWidget {
                   label: 'Categoria',
                   value: selected,
                   items: categoryIds,
-                  itemLabel: categoryName,
+                  itemLabel: categoryLabel ?? categoryName,
                   onChanged: onCategoryChanged,
                 ),
                 if (sort != null && onSortChanged != null) ...[
@@ -13053,7 +13127,7 @@ class _CatalogToolbar extends StatelessWidget {
                     label: 'Categoria',
                     value: selected,
                     items: categoryIds,
-                    itemLabel: categoryName,
+                    itemLabel: categoryLabel ?? categoryName,
                     onChanged: onCategoryChanged,
                   ),
                 ),
@@ -13127,11 +13201,13 @@ class _QuickCategoryStrip extends StatelessWidget {
     required this.categories,
     required this.selectedCategoryId,
     required this.onCategoryChanged,
+    this.categoryLabel,
   });
 
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
   final ValueChanged<String> onCategoryChanged;
+  final String Function(String id)? categoryLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -13145,7 +13221,7 @@ class _QuickCategoryStrip extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: _CategoryChipButton(
-              label: 'Tutte',
+              label: categoryLabel?.call('') ?? 'Tutte',
               selected: selectedCategoryId.isEmpty,
               onTap: () => onCategoryChanged(''),
             ),
@@ -13154,7 +13230,7 @@ class _QuickCategoryStrip extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: _CategoryChipButton(
-                label: category.name,
+                label: categoryLabel?.call(category.id) ?? category.name,
                 selected: category.id == selectedCategoryId,
                 onTap: () => onCategoryChanged(category.id),
               ),
@@ -13410,11 +13486,13 @@ class _TvCategorySidebar extends StatelessWidget {
     required this.categories,
     required this.selectedCategoryId,
     required this.onCategoryChanged,
+    this.categoryLabel,
   });
 
   final List<XtreamCategory> categories;
   final String selectedCategoryId;
   final ValueChanged<String> onCategoryChanged;
+  final String Function(String id)? categoryLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -13422,13 +13500,13 @@ class _TvCategorySidebar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
         _TvCategoryItem(
-          label: 'Tutte',
+          label: categoryLabel?.call('') ?? 'Tutte',
           selected: selectedCategoryId.isEmpty,
           onTap: () => onCategoryChanged(''),
         ),
         for (final category in categories)
           _TvCategoryItem(
-            label: category.name,
+            label: categoryLabel?.call(category.id) ?? category.name,
             selected: selectedCategoryId == category.id,
             onTap: () => onCategoryChanged(category.id),
           ),
