@@ -881,10 +881,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
 
   bool get _useAppleVideoBackend => false;
 
-  bool get _preferHlsLivePlayback {
+  bool get _preferTsLivePlayback {
     if (isTizenRuntime) return false;
-    if (Platform.isAndroid) return false;
-    return Platform.isIOS ||
+    if (Platform.isIOS) return false;
+    return Platform.isAndroid ||
         Platform.isMacOS ||
         Platform.isWindows ||
         Platform.isLinux;
@@ -3686,9 +3686,9 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       candidates.add(candidate);
     }
 
-    if (_preferHlsLivePlayback) {
-      addCandidate(profile.copyWith(liveContainer: 'm3u8'));
+    if (_preferTsLivePlayback) {
       addCandidate(profile.copyWith(liveContainer: 'ts'));
+      addCandidate(profile.copyWith(liveContainer: 'm3u8'));
     } else if (Platform.isAndroid && !isTizenRuntime) {
       final primary = profile.liveContainer.trim().toLowerCase();
       final first = primary == 'm3u8' ? 'm3u8' : 'ts';
@@ -3713,7 +3713,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         XtreamClient(candidate).liveUrl(channel),
         channel.name,
         preferApple: Platform.isIOS,
-        validatePlayback: _preferHlsLivePlayback,
+        validatePlayback: _preferTsLivePlayback,
         validationTimeout: const Duration(seconds: 8),
       );
       if (playbackId != _livePlaybackGeneration) return;
