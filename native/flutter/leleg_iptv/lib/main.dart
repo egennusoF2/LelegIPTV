@@ -881,6 +881,15 @@ class _LelegNativeShellState extends State<LelegNativeShell>
 
   bool get _useAppleVideoBackend => false;
 
+  bool get _preferHlsLivePlayback {
+    if (isTizenRuntime) return false;
+    if (Platform.isAndroid) return false;
+    return Platform.isIOS ||
+        Platform.isMacOS ||
+        Platform.isWindows ||
+        Platform.isLinux;
+  }
+
   void _traceTv(String message) {
     debugPrint('[leleg-tv] $message');
   }
@@ -925,7 +934,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         : Player(
             configuration: PlayerConfiguration(
               title: 'Leleg IPTV',
-              bufferSize: Platform.isWindows
+              bufferSize: (Platform.isMacOS || Platform.isWindows)
                   ? 64 * 1024 * 1024
                   : 32 * 1024 * 1024,
             ),
@@ -3677,7 +3686,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       candidates.add(candidate);
     }
 
-    if (Platform.isAndroid && !isTizenRuntime) {
+    if (_preferHlsLivePlayback) {
+      addCandidate(profile.copyWith(liveContainer: 'm3u8'));
+      addCandidate(profile.copyWith(liveContainer: 'ts'));
+    } else if (Platform.isAndroid && !isTizenRuntime) {
       final primary = profile.liveContainer.trim().toLowerCase();
       final first = primary == 'm3u8' ? 'm3u8' : 'ts';
       final second = first == 'ts' ? 'm3u8' : 'ts';
@@ -3701,6 +3713,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         XtreamClient(candidate).liveUrl(channel),
         channel.name,
         preferApple: Platform.isIOS,
+        validatePlayback: _preferHlsLivePlayback,
+        validationTimeout: const Duration(seconds: 8),
       );
       if (playbackId != _livePlaybackGeneration) return;
       if (opened) {
@@ -4542,7 +4556,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         validatePlayback ||
         (autoValidateLivePlayback &&
             isLive &&
-            Platform.isAndroid &&
+            (Platform.isAndroid ||
+                Platform.isMacOS ||
+                Platform.isWindows ||
+                Platform.isLinux) &&
             !isTizenRuntime);
     if (shouldValidate) {
       final hasVideo = await _waitForMediaKitVideoFrame(
