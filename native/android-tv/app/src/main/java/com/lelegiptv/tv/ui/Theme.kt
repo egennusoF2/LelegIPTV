@@ -58,8 +58,8 @@ object TvTypography {
     val hubSubtitleCompact = 11.sp
     val hubProminentIcon = 42.dp
     val hubIcon = 30.dp
-    val posterWidth = 158.dp
-    val sidebarWidth = 200.dp
+    val posterWidth = 132.dp
+    val sidebarWidth = 156.dp
     val navItemHeight = 40.dp
 
     val brand = brandLabel

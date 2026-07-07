@@ -1,6 +1,6 @@
 4d6b5d0419442baad63a7297aabd7069b6f840577e69c67cb7d7600ca4ebf974  ./LelegIPTV-android-mobile-release.apk
-51681a277167acf6446d2efb2d40635e2632cdb25075739bd42fc0a16c3da764  ./LelegIPTV-android-tv-release.apk
-7730c3248b8028e3074c87b6e414f0478e13736003c36776be7764dcff9d08c1  ./LelegIPTV-android-tv-release.apk.sha256
+024b11042ff96cbba8007689896a9b526845b111dc136b36d4de1d3d2abcb325  ./LelegIPTV-android-tv-release.apk
+1f97a0bf08c8d93b1697eeed5d71d30c0832f90b0faa5d2dec96a5f9d48de622  ./LelegIPTV-android-tv-release.apk.sha256
 b78956855bbacee5fe4e8a5c22034ac3f7b90132ba612ee923d8b9d924caebc7  ./LelegIPTV-ios-unsigned.ipa
 83e18dab5cbe3480559ad6b1e18e18c986204a5df3dd5ed18775411a112ffefa  ./LelegIPTV-macos-arm64-release.dmg
 09863828cef0becc650857c209bab73fc8111ada5845dcfb045933a5b1d6c979  ./LelegIPTV-macos-arm64-release.zip

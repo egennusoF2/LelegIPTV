@@ -925,6 +925,9 @@ private fun defaultLiveCategory(categories: List<LiveCategory>): LiveCategory {
 private const val LiveChannelDisplayLimit = 400
 private const val LIVE_EPG_DEBOUNCE_MS = 450L
 
+private fun categoryLabel(name: String, count: Int?): String =
+    if (count == null) name else "$name ($count)"
+
 @Composable
 private fun LiveBrowser(
     state: CatalogState.Ready,
@@ -957,6 +960,13 @@ private fun LiveBrowser(
     }
     val channelsByCategory = remember(state.channels) {
         state.channels.groupBy(LiveChannel::categoryId)
+    }
+    val liveCategoryCounts = remember(state.channels, channelsByCategory, library.favoriteLive) {
+        buildMap {
+            put("", state.channels.size)
+            put(LIVE_FAVORITES_CATEGORY_ID, library.favoriteLive.size)
+            channelsByCategory.forEach { (categoryId, channels) -> put(categoryId, channels.size) }
+        }
     }
     val filtered = remember(state.channels, channelsByCategory, selectedCategory.id, library.favoriteLive) {
         when (selectedCategory.id) {
@@ -1066,7 +1076,7 @@ private fun LiveBrowser(
                                 }
                             },
                     ) {
-                        ListLabel(category.name)
+                        ListLabel(categoryLabel(category.name, liveCategoryCounts[category.id]))
                     }
                 }
             }
@@ -1170,6 +1180,8 @@ private fun LiveEpgPanel(
         now >= it.startTimeMillis && now < it.endTimeMillis
     }.coerceAtLeast(0)
     val firstVisibleProgramme = (currentIndex - 3).coerceAtLeast(0)
+    val fullscreenFocusRequester = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1208,6 +1220,21 @@ private fun LiveEpgPanel(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FocusCard(
                         onClick = onToggleFavorite,
+                        focusRequester = epgFocusRequester,
+                        modifier = Modifier.onPreviewKeyEvent {
+                            if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (it.key) {
+                                Key.DirectionLeft -> {
+                                    onMoveLeft()
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    scope.launch { fullscreenFocusRequester.safeRequestFocus() }
+                                    true
+                                }
+                                else -> false
+                            }
+                        },
                         padding = androidx.compose.foundation.layout.PaddingValues(
                             horizontal = 12.dp,
                             vertical = 8.dp,
@@ -1217,7 +1244,7 @@ private fun LiveEpgPanel(
                     }
                     FocusCard(
                         onClick = onOpenFullscreen,
-                        focusRequester = epgFocusRequester,
+                        focusRequester = fullscreenFocusRequester,
                         modifier = Modifier.onPreviewKeyEvent {
                             if (it.type == KeyEventType.KeyDown && it.key == Key.DirectionLeft) {
                                 onMoveLeft()

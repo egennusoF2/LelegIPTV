@@ -71,7 +71,9 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     private var guideWarmJob: Job? = null
     private var guideChannelJob: Job? = null
     private var vodLoadJob: Job? = null
+    private var vodIndexJob: Job? = null
     private var seriesLoadJob: Job? = null
+    private var seriesIndexJob: Job? = null
     private var vodCategoryJob: Job? = null
     private var seriesCategoryJob: Job? = null
     private val vodCategoryCache = mutableMapOf<String, List<VodMovie>>()
@@ -242,7 +244,9 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         guideChannelJob?.cancel()
         guideFullLoadChannels.clear()
         vodLoadJob?.cancel()
+        vodIndexJob?.cancel()
         seriesLoadJob?.cancel()
+        seriesIndexJob?.cancel()
         vodCategoryJob?.cancel()
         seriesCategoryJob?.cancel()
         vodCategoryCache.clear()
@@ -325,6 +329,12 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         guideWarmJob?.cancel()
         guideChannelJob?.cancel()
         guideFullLoadChannels.clear()
+        vodLoadJob?.cancel()
+        vodIndexJob?.cancel()
+        seriesLoadJob?.cancel()
+        seriesIndexJob?.cancel()
+        vodCategoryJob?.cancel()
+        seriesCategoryJob?.cancel()
         mutableState.value = CatalogState.Empty
         mutableEpgState.value = EpgState.Idle
         mutableGuideState.value = GuideState.Idle
@@ -343,15 +353,24 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun allCachedVodMovies(): List<VodMovie> =
-        vodCategoryCache.values.flatten().distinctBy(VodMovie::id)
+        (mutableVodState.value as? VodState.Ready)
+            ?.allMovies
+            ?.takeIf { it.isNotEmpty() }
+            ?: vodCategoryCache.values.flatten().distinctBy(VodMovie::id)
 
     fun allCachedSeriesShows(): List<SeriesShow> =
-        seriesCategoryCache.values.flatten().distinctBy(SeriesShow::id)
+        (mutableSeriesState.value as? SeriesState.Ready)
+            ?.allShows
+            ?.takeIf { it.isNotEmpty() }
+            ?: seriesCategoryCache.values.flatten().distinctBy(SeriesShow::id)
 
     fun ensureVod(profile: XtreamProfile) {
         when (val current = mutableVodState.value) {
             is VodState.Loading -> return
-            is VodState.Ready -> if (!current.refreshing && current.categories.isNotEmpty()) return
+            is VodState.Ready -> if (!current.refreshing && current.categories.isNotEmpty()) {
+                if (current.allMovies.isEmpty()) warmVodIndex(profile)
+                return
+            }
             else -> Unit
         }
         vodLoadJob?.cancel()
@@ -377,6 +396,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
                 if (firstCategoryId.isNotBlank()) {
                     loadVodCategory(profile, firstCategoryId, fromBootstrap = true)
                 }
+                warmVodIndex(profile)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -387,8 +407,39 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun warmVodIndex(profile: XtreamProfile) {
+        vodIndexJob?.cancel()
+        vodIndexJob = viewModelScope.launch {
+            try {
+                val movies = withContext(Dispatchers.IO) {
+                    client.loadVodMovies(profile)
+                }
+                if (!isActive) return@launch
+                val latest = mutableVodState.value as? VodState.Ready ?: return@launch
+                mutableVodState.value = latest.copy(
+                    allMovies = movies,
+                    movies = if (latest.selectedCategoryId.isBlank()) movies else latest.movies,
+                    categoryLoading = if (latest.selectedCategoryId.isBlank()) false else latest.categoryLoading,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(TAG, "VOD index non disponibile", error)
+            }
+        }
+    }
+
     fun loadVodCategory(profile: XtreamProfile, categoryId: String, fromBootstrap: Boolean = false) {
-        require(categoryId.isNotBlank()) { "categoryId richiesto" }
+        if (categoryId.isBlank()) {
+            val current = mutableVodState.value as? VodState.Ready ?: return
+            mutableVodState.value = current.copy(
+                selectedCategoryId = "",
+                movies = current.allMovies,
+                categoryLoading = current.allMovies.isEmpty(),
+            )
+            if (current.allMovies.isEmpty()) warmVodIndex(profile)
+            return
+        }
         vodCategoryCache[categoryId]?.let { cached ->
             val current = mutableVodState.value as? VodState.Ready ?: return
             mutableVodState.value = current.copy(
@@ -440,7 +491,10 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
     fun ensureSeries(profile: XtreamProfile) {
         when (val current = mutableSeriesState.value) {
             is SeriesState.Loading -> return
-            is SeriesState.Ready -> if (!current.refreshing && current.categories.isNotEmpty()) return
+            is SeriesState.Ready -> if (!current.refreshing && current.categories.isNotEmpty()) {
+                if (current.allShows.isEmpty()) warmSeriesIndex(profile)
+                return
+            }
             else -> Unit
         }
         seriesLoadJob?.cancel()
@@ -466,6 +520,7 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
                 if (firstCategoryId.isNotBlank()) {
                     loadSeriesCategory(profile, firstCategoryId, fromBootstrap = true)
                 }
+                warmSeriesIndex(profile)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -476,12 +531,43 @@ class TvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun warmSeriesIndex(profile: XtreamProfile) {
+        seriesIndexJob?.cancel()
+        seriesIndexJob = viewModelScope.launch {
+            try {
+                val shows = withContext(Dispatchers.IO) {
+                    client.loadSeries(profile)
+                }
+                if (!isActive) return@launch
+                val latest = mutableSeriesState.value as? SeriesState.Ready ?: return@launch
+                mutableSeriesState.value = latest.copy(
+                    allShows = shows,
+                    shows = if (latest.selectedCategoryId.isBlank()) shows else latest.shows,
+                    categoryLoading = if (latest.selectedCategoryId.isBlank()) false else latest.categoryLoading,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w(TAG, "Series index non disponibile", error)
+            }
+        }
+    }
+
     fun loadSeriesCategory(
         profile: XtreamProfile,
         categoryId: String,
         fromBootstrap: Boolean = false,
     ) {
-        require(categoryId.isNotBlank()) { "categoryId richiesto" }
+        if (categoryId.isBlank()) {
+            val current = mutableSeriesState.value as? SeriesState.Ready ?: return
+            mutableSeriesState.value = current.copy(
+                selectedCategoryId = "",
+                shows = current.allShows,
+                categoryLoading = current.allShows.isEmpty(),
+            )
+            if (current.allShows.isEmpty()) warmSeriesIndex(profile)
+            return
+        }
         seriesCategoryCache[categoryId]?.let { cached ->
             val current = mutableSeriesState.value as? SeriesState.Ready ?: return
             mutableSeriesState.value = current.copy(
@@ -842,6 +928,7 @@ sealed interface VodState {
     data class Ready(
         val categories: List<VodCategory>,
         val movies: List<VodMovie>,
+        val allMovies: List<VodMovie> = emptyList(),
         val selectedCategoryId: String = "",
         val categoryLoading: Boolean = false,
         val refreshing: Boolean = false,
@@ -855,6 +942,7 @@ sealed interface SeriesState {
     data class Ready(
         val categories: List<SeriesCategory>,
         val shows: List<SeriesShow>,
+        val allShows: List<SeriesShow> = emptyList(),
         val selectedCategoryId: String = "",
         val categoryLoading: Boolean = false,
         val refreshing: Boolean = false,

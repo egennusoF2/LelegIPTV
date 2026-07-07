@@ -133,6 +133,9 @@ private fun sortShows(
     }
 }
 
+private fun categoryLabel(name: String, count: Int?): String =
+    if (count == null) name else "$name ($count)"
+
 @Composable
 fun HomeScreen(
     firstFocusRequester: FocusRequester,
@@ -325,10 +328,19 @@ fun MovieBrowserScreen(
                 LibraryLoading("Caricamento titoli...")
             } else {
             val categories = remember(state.categories) {
-                state.categories.map { it.id to it.name }
+                listOf("" to "Tutti i film") + state.categories.map { it.id to it.name }
             }
-            val selectedCategory = state.selectedCategoryId.ifBlank {
-                state.categories.firstOrNull()?.id.orEmpty()
+            val selectedCategory = state.selectedCategoryId
+            val categoryCounts = remember(state.allMovies, state.movies, selectedCategory) {
+                val counts = state.allMovies
+                    .takeIf { it.isNotEmpty() }
+                    ?.groupingBy(VodMovie::categoryId)
+                    ?.eachCount()
+                    .orEmpty()
+                    .toMutableMap()
+                if (state.allMovies.isNotEmpty()) counts[""] = state.allMovies.size
+                if (counts.isEmpty()) counts[selectedCategory] = state.movies.size
+                counts
             }
             var sortMode by remember { mutableStateOf(CatalogSortMode.RECENT) }
             val sortedMovies = remember(state.movies, sortMode, library.favoriteVod) {
@@ -338,6 +350,7 @@ fun MovieBrowserScreen(
                 title = "Film",
                 countLabel = "${state.movies.size} titoli in questa categoria",
                 categories = categories,
+                categoryCounts = categoryCounts,
                 selectedCategory = selectedCategory,
                 onCategory = onCategorySelect,
                 firstFocusRequester = firstFocusRequester,
@@ -375,10 +388,19 @@ fun SeriesBrowserScreen(
                 LibraryLoading("Caricamento titoli...")
             } else {
             val categories = remember(state.categories) {
-                state.categories.map { it.id to it.name }
+                listOf("" to "Tutte le serie") + state.categories.map { it.id to it.name }
             }
-            val selectedCategory = state.selectedCategoryId.ifBlank {
-                state.categories.firstOrNull()?.id.orEmpty()
+            val selectedCategory = state.selectedCategoryId
+            val categoryCounts = remember(state.allShows, state.shows, selectedCategory) {
+                val counts = state.allShows
+                    .takeIf { it.isNotEmpty() }
+                    ?.groupingBy(SeriesShow::categoryId)
+                    ?.eachCount()
+                    .orEmpty()
+                    .toMutableMap()
+                if (state.allShows.isNotEmpty()) counts[""] = state.allShows.size
+                if (counts.isEmpty()) counts[selectedCategory] = state.shows.size
+                counts
             }
             var sortMode by remember { mutableStateOf(CatalogSortMode.RECENT) }
             val sortedShows = remember(state.shows, sortMode, library.favoriteSeries) {
@@ -388,6 +410,7 @@ fun SeriesBrowserScreen(
                 title = "Serie",
                 countLabel = "${state.shows.size} titoli in questa categoria",
                 categories = categories,
+                categoryCounts = categoryCounts,
                 selectedCategory = selectedCategory,
                 onCategory = onCategorySelect,
                 firstFocusRequester = firstFocusRequester,
@@ -411,6 +434,7 @@ private fun <T> LibraryBrowser(
     title: String,
     countLabel: String,
     categories: List<Pair<String, String>>,
+    categoryCounts: Map<String, Int>,
     selectedCategory: String,
     onCategory: (String) -> Unit,
     firstFocusRequester: FocusRequester,
@@ -429,6 +453,7 @@ private fun <T> LibraryBrowser(
     val entryGridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     var focusedEntryIndex by remember { mutableIntStateOf(0) }
+    val gridColumns = 4
 
     LaunchedEffect(selectedCategory, entries.size) {
         focusedEntryIndex = 0
@@ -465,7 +490,7 @@ private fun <T> LibraryBrowser(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Column(
-                modifier = Modifier.width(220.dp).fillMaxHeight(),
+                modifier = Modifier.width(196.dp).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FocusCard(
@@ -540,7 +565,7 @@ private fun <T> LibraryBrowser(
                                 }
                             },
                     ) {
-                        ItemTitle(category.second)
+                        ItemTitle(categoryLabel(category.second, categoryCounts[category.first]))
                     }
                 }
             }
@@ -560,7 +585,7 @@ private fun <T> LibraryBrowser(
             } else {
                 LazyVerticalGrid(
                     state = entryGridState,
-                    columns = GridCells.Adaptive(TvTypography.posterWidth),
+                    columns = GridCells.Fixed(gridColumns),
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -573,7 +598,7 @@ private fun <T> LibraryBrowser(
                         val isFocusedEntry = index == focusedEntryIndex
                         FocusCard(
                             onClick = { onEntry(entry) },
-                            focusRequester = if (index == 0) entryFocusRequester else null,
+                            focusRequester = if (index == focusedEntryIndex) entryFocusRequester else null,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .aspectRatio(2f / 3f)
@@ -584,8 +609,12 @@ private fun <T> LibraryBrowser(
                                     if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                     when (it.key) {
                                         Key.DirectionLeft -> {
-                                            focusCategoryList()
-                                            true
+                                            if (index % gridColumns == 0) {
+                                                focusCategoryList()
+                                                true
+                                            } else {
+                                                false
+                                            }
                                         }
                                         else -> false
                                     }
