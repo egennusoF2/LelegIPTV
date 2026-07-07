@@ -462,15 +462,7 @@ List<EpgProgramme> _contextualEpgWindowForChannel(
   int before = 3,
   int after = 3,
 }) {
-  final now = DateTime.now();
-  final items = _cleanEpgProgrammes(source)
-      .where(
-        (programme) =>
-            _epgIsLiveNow(programme) ||
-            Catchup.canReplayProgramme(channel, programme) ||
-            (programme.start?.isAfter(now) ?? false),
-      )
-      .toList();
+  final items = _cleanEpgProgrammes(source);
   items.sort((a, b) {
     final aStart = a.start;
     final bStart = b.start;
