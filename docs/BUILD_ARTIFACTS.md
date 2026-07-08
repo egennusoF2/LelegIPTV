@@ -123,13 +123,37 @@ Output:
 www/downloads/current/LelegIPTV-android-tv-release.apk
 ```
 
+## iOS / iPadOS TestFlight
+
+```bash
+APPLE_TEAM_ID=F925SY4K37 bash scripts/package-ios-testflight-ipa.sh
+```
+
+Output:
+
+```text
+www/downloads/current/LelegIPTV-ios-testflight.ipa
+```
+
+L'IPA e' firmata per App Store Connect/TestFlight. Prima build una tantum:
+crea l'app su App Store Connect con bundle ID `com.lelegiptv.lelegIptv`, imposta
+il team `F925SY4K37` in Xcode e lascia il provisioning automatico attivo.
+
+Upload:
+
+```bash
+export ASC_API_KEY="ABC123DEFG"
+export ASC_API_ISSUER="00000000-0000-0000-0000-000000000000"
+export ASC_API_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_ABC123DEFG.p8"
+bash scripts/upload-ios-testflight.sh
+```
+
+Guida completa: `docs/TESTFLIGHT_DISTRIBUTION.md`.
+
 ## iOS unsigned IPA per Scarlet / Sideloadly / AltStore
 
 ```bash
-cd native/flutter/leleg_iptv
-flutter config --no-enable-swift-package-manager
-flutter build ios --release --no-codesign
-bash ../../../scripts/package-flutter-ios-unsigned-ipa.sh
+bash scripts/package-flutter-ios-unsigned-ipa.sh
 ```
 
 Output:
@@ -138,10 +162,8 @@ Output:
 www/downloads/current/LelegIPTV-ios-unsigned.ipa
 ```
 
-L'IPA non e' firmata. Scarlet/Sideloadly/AltStore/Xcode applicano la firma
-personale al momento dell'installazione. La pagina pubblica deve linkare
-direttamente `LelegIPTV-ios-unsigned.ipa` e spiegare l'import da Scarlet senza
-mostrare questi comandi di build.
+L'IPA unsigned resta un fallback per sideload manuale. Il canale consigliato per
+altri tester e' TestFlight.
 
 Runtime iOS:
 

@@ -20,6 +20,8 @@
     "flutter:android:build:tv": "cd native/flutter/leleg_iptv && flutter build apk --release --flavor tv --dart-define=LELEG_ANDROID_TV=true",
     "flutter:ios:build": "cd native/flutter/leleg_iptv && flutter build ios --release --no-codesign",
     "flutter:ios:package": "bash ./scripts/package-flutter-ios-unsigned-ipa.sh",
+    "flutter:ios:testflight": "bash ./scripts/package-ios-testflight-ipa.sh",
+    "flutter:ios:testflight:upload": "bash ./scripts/upload-ios-testflight.sh",
     "flutter:tizen:build": "cd native/flutter/leleg_iptv && TIZEN_SDK=\"$HOME/tizen-studio\" ../../../tools/flutter-tizen/bin/flutter-tizen build tpk --device-profile tv",
     "flutter:tizen:run": "cd native/flutter/leleg_iptv && TIZEN_SDK=\"$HOME/tizen-studio\" ../../../tools/flutter-tizen/bin/flutter-tizen run --release",
     "tizen-tv:dev": "cd native/tizen-tv && npm run dev",

@@ -91,13 +91,16 @@ flutter build apk --release
 
 ### iOS and iPadOS artifacts
 
-Requires macOS, Xcode, Apple signing for device install, and Flutter iOS tooling.
+Requires macOS, Xcode, Apple Developer Program signing, and Flutter iOS tooling.
 
 ```bash
-cd native/flutter/leleg_iptv
-flutter build ios --release --no-codesign
-bash ../../scripts/package-flutter-ios-unsigned-ipa.sh
+APPLE_TEAM_ID=F925SY4K37 bash scripts/package-ios-testflight-ipa.sh
+bash scripts/upload-ios-testflight.sh
 ```
+
+TestFlight setup is documented in `docs/TESTFLIGHT_DISTRIBUTION.md`. The
+unsigned IPA remains available as a fallback for Scarlet, Sideloadly, AltStore,
+or local Xcode installs.
 
 ### Samsung Tizen TV artifacts
 
