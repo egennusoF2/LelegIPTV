@@ -302,7 +302,8 @@ The repository can currently target these app/device families:
 - Android XR: Android large-screen target represented by screenshot profile;
   verify input/focus behavior separately before release.
 - iOS/iPhone native app: Flutter command path wired through
-  `flutter:ios:*`; package unsigned IPA with `pnpm flutter:ios:package`.
+  `flutter:ios:*`; package the signed TestFlight IPA with
+  `pnpm flutter:ios:testflight`.
 - iPadOS native app: same Flutter iOS target, with tablet layout selected at
   runtime and physical iPad validation before release.
 - Samsung Tizen TV app: Flutter native package path through

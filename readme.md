@@ -99,8 +99,8 @@ bash scripts/upload-ios-testflight.sh
 ```
 
 TestFlight setup is documented in `docs/TESTFLIGHT_DISTRIBUTION.md`. The
-unsigned IPA remains available as a fallback for Scarlet, Sideloadly, AltStore,
-or local Xcode installs.
+recommended distribution channel for iPhone and iPad testers is TestFlight via
+App Store Connect.
 
 ### Samsung Tizen TV artifacts
 
@@ -138,8 +138,8 @@ flutter run -d <device>   # iOS/Android physical device or simulator
 ```
 
 **iOS dev on a physical device:** use Flutter/Xcode signing for local install.
-Unsigned IPA packaging for Scarlet, Sideloadly, AltStore, or Xcode is described
-in `docs/BUILD_ARTIFACTS.md`.
+For tester distribution, build the TestFlight IPA and upload it through App
+Store Connect as described in `docs/TESTFLIGHT_DISTRIBUTION.md`.
 
 To test the dev server on another device on the LAN (phone, TV), set `XTREAM_HMR_HOST` to your machine's LAN IP so Vite advertises the right HMR host:
 

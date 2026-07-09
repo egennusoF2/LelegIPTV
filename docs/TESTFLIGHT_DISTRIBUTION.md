@@ -103,8 +103,21 @@ mancano contratti/termini da accettare. Risolvi da:
 L'utente deve essere Account Holder/Admin oppure avere accesso esplicito a
 Certificates, Identifiers & Profiles.
 
-## Fallback sideload
+## Distribuzione tester
 
-`www/downloads/current/LelegIPTV-ios-unsigned.ipa` resta disponibile per Scarlet,
-Sideloadly, AltStore o installazioni manuali. Non e' il canale consigliato ora
-che l'account Developer e' attivo.
+Dopo l'upload, apri App Store Connect, entra nell'app Leleg IPTV, vai su
+TestFlight e assegna la build a tester interni o gruppi esterni. I tester
+installano l'app dall'app TestFlight ufficiale di Apple.
+
+## Link pubblico TestFlight
+
+Il codice o link pubblico non viene generato dal progetto locale. Lo crea Apple
+in App Store Connect:
+
+1. Apri App Store Connect > Apps > Leleg IPTV > TestFlight.
+2. In External Testing crea o apri un gruppo tester.
+3. Assegna al gruppo la build caricata e completa la Beta App Review se richiesta.
+4. Nel gruppo apri la tab Testers.
+5. Clicca Create Public Link e copia il link generato.
+
+Il tester installa TestFlight dall'App Store e apre quel link sul dispositivo.

@@ -2,13 +2,14 @@
 
 ## Native release flow
 
-Files: `native/flutter/leleg_iptv`, `scripts/package-flutter-ios-unsigned-ipa.sh`,
+Files: `native/flutter/leleg_iptv`, `scripts/package-ios-testflight-ipa.sh`,
+`scripts/upload-ios-testflight.sh`,
 `scripts/prepare-download-center.mjs`, `docs/BUILD_ARTIFACTS.md`,
 `.github/workflows/flutter-installable-artifacts.yml`.
 
 1. The active native app is the Flutter project under
    `native/flutter/leleg_iptv`.
-2. Android APK, macOS app, unsigned iOS IPA, Tizen TPK, Windows ZIP, and Linux
+2. Android APK, macOS app, iOS TestFlight IPA, Tizen TPK, Windows ZIP, and Linux
    TAR artifacts are described in `docs/BUILD_ARTIFACTS.md`.
 3. `scripts/prepare-download-center.mjs` publishes the public install homepage
    by copying `docs/installazione-dispositivi.html` to `dist/index.html` and

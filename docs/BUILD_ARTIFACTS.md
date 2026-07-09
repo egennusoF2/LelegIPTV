@@ -150,20 +150,21 @@ bash scripts/upload-ios-testflight.sh
 
 Guida completa: `docs/TESTFLIGHT_DISTRIBUTION.md`.
 
-## iOS unsigned IPA per Scarlet / Sideloadly / AltStore
+## iOS TestFlight
 
 ```bash
-bash scripts/package-flutter-ios-unsigned-ipa.sh
+APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh
+bash scripts/upload-ios-testflight.sh
 ```
 
 Output:
 
 ```text
-www/downloads/current/LelegIPTV-ios-unsigned.ipa
+www/downloads/current/LelegIPTV-ios-testflight.ipa
 ```
 
-L'IPA unsigned resta un fallback per sideload manuale. Il canale consigliato per
-altri tester e' TestFlight.
+Il canale di distribuzione per iPhone/iPad e' TestFlight tramite App Store
+Connect. Configura una API key o una app-specific password prima dell'upload.
 
 Runtime iOS:
 

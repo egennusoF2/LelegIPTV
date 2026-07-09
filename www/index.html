@@ -366,7 +366,7 @@ URL TV:     https://lelegiptv.ddns.net/dl/tv.apk</code></pre>
           <span class="dl-icon">📱</span>
           <div>
             <div class="dl-title">iOS &amp; iPadOS</div>
-            <div class="dl-sub">iPhone, iPad — Scarlet, Sideloadly, AltStore o Xcode</div>
+            <div class="dl-sub">iPhone e iPad — distribuzione tramite TestFlight</div>
           </div>
         </div>
         <div>
@@ -547,37 +547,45 @@ adb install -r downloads/current/LelegIPTV-android-tv-release.apk</code></pre>
   <section id="ios">
     <h2>📱 iOS e iPadOS</h2>
     <p>
-      Il file <code>.ipa</code> può essere installato solo tramite sideload con strumenti Apple o via TestFlight/Enterprise.
-      Non è distribuibile direttamente dall'App Store senza revisione Apple.
+      Il canale ufficiale per i tester è <strong>TestFlight</strong>. L'IPA generata va caricata su
+      App Store Connect; da lì puoi invitare utenti interni o tester esterni.
     </p>
 
-    <h3>Metodi di installazione</h3>
+    <h3>Installazione con TestFlight</h3>
 
     <div class="dl-grid" style="margin-top:14px">
       <div class="dl-card">
-        <div class="dl-title">TestFlight</div>
-        <div class="dl-sub">Canale consigliato per tester iPhone/iPad. L'IPA firmata e' pronta per upload su App Store Connect/TestFlight.</div>
+        <div class="dl-title">1. Scarica IPA TestFlight</div>
+        <div class="dl-sub">Artefatto firmato per App Store Connect/TestFlight.</div>
         <a class="btn-dl btn-dl-sec" href="downloads/current/LelegIPTV-ios-testflight.ipa" download>⬇ Scarica IPA TestFlight</a>
       </div>
       <div class="dl-card">
-        <div class="dl-title">Scarlet</div>
-        <div class="dl-sub">Fallback sideload: installa Scarlet da <a href="https://scarlet-ios.com/">scarlet-ios.com</a>, importa l'IPA e firma con Apple ID personale.</div>
-        <a class="btn-dl btn-dl-sec" href="downloads/current/LelegIPTV-ios-unsigned.ipa" download>⬇ Scarica .ipa</a>
+        <div class="dl-title">2. Carica su App Store Connect</div>
+        <div class="dl-sub">Usa Xcode Organizer, Transporter oppure lo script <code>scripts/upload-ios-testflight.sh</code> con API key App Store Connect.</div>
+        <a class="btn-dl btn-dl-sec" href="#ios">Vedi procedura</a>
       </div>
       <div class="dl-card">
-        <div class="dl-title">Apple Configurator 2</div>
-        <div class="dl-sub">Collega iPhone/iPad via USB al Mac, apri Apple Configurator e usa <em>Aggiungi → App</em>.</div>
-        <a class="btn-dl btn-dl-sec" href="downloads/current/LelegIPTV-ios-unsigned.ipa" download>⬇ Scarica .ipa</a>
+        <div class="dl-title">3. Invita i tester</div>
+        <div class="dl-sub">In App Store Connect apri l'app, vai su <strong>TestFlight</strong>, scegli la build e aggiungi tester interni o gruppi esterni.</div>
       </div>
       <div class="dl-card">
-        <div class="dl-title">AltStore / Sideloadly</div>
-        <div class="dl-sub">Strumenti di terze parti per sideload quando TestFlight non è disponibile.</div>
-        <a class="btn-dl btn-dl-sec" href="downloads/current/LelegIPTV-ios-unsigned.ipa" download>⬇ Scarica .ipa</a>
+        <div class="dl-title">4. Crea link pubblico</div>
+        <div class="dl-sub">Dopo la Beta App Review: <strong>App Store Connect → App → TestFlight → External Testing → gruppo tester → Testers → Create Public Link</strong>.</div>
       </div>
     </div>
 
     <div class="note">
-      Il team Apple nel progetto è <code>PD57DH2235</code>. Il canale principale è TestFlight; l'IPA unsigned resta solo fallback.
+      Nel popup <strong>Redeem Code</strong> di TestFlight non va inserito un codice generato da questa pagina:
+      Apple lo crea solo dopo l'invito TestFlight. Il modo piu' semplice e' condividere il <strong>public link</strong>
+      generato da App Store Connect; quando lo avrai, sostituisci qui il link TestFlight pubblico.
+    </div>
+
+    <div class="note">
+      <strong>Link pubblico TestFlight:</strong> in attesa di generazione da App Store Connect.
+    </div>
+
+    <div class="note">
+      Il team Apple nel progetto è <code>PD57DH2235</code>. Bundle ID iOS/iPadOS: <code>it.emanuelegennuso.lelegiptv</code>.
       I download offline su iPhone/iPad vengono salvati in
       <strong>File → Su iPhone/iPad → Leleg IPTV → LelegIPTV</strong> e restano apribili dalla sezione Download dell'app.
     </div>
