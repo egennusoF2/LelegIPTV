@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="${ROOT_DIR}/native/flutter/leleg_iptv"
 OUT_DIR="${ROOT_DIR}/www/downloads/current"
 EXPORT_PLIST="${APP_DIR}/ios/ExportOptions-TestFlight.plist"
-TEAM_ID="${APPLE_TEAM_ID:-F925SY4K37}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH}"
+TEAM_ID="${APPLE_TEAM_ID:-PD57DH2235}"
 BUILD_NAME="${BUILD_NAME:-}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 FLUTTER_BIN="${FLUTTER_BIN:-}"
@@ -77,9 +78,12 @@ cd "${APP_DIR}"
 "${FLUTTER_BIN}" build ios \
   --release \
   --no-codesign \
+  --config-only \
   --build-name "${BUILD_NAME}" \
   --build-number "${BUILD_NUMBER}" \
   --dart-define "LELEG_BUILD_ID=${BUILD_NUMBER}"
+
+pod install --project-directory=ios
 
 ARCHIVE_PATH="${APP_DIR}/build/ios/archive/LelegIPTV.xcarchive"
 EXPORT_PATH="${APP_DIR}/build/ios/testflight"
@@ -102,6 +106,7 @@ xcodebuild \
   -archivePath "${ARCHIVE_PATH}" \
   DEVELOPMENT_TEAM="${TEAM_ID}" \
   CODE_SIGN_STYLE=Automatic \
+  CODE_SIGNING_ALLOWED=NO \
   -allowProvisioningUpdates \
   ${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"} \
   archive

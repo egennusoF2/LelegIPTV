@@ -66,7 +66,7 @@ prompt on HTTPS or localhost.
 | Web browser / hosted static app | `pnpm build:pages && pnpm download-center:prepare` | `dist/` |
 | macOS Apple Silicon | `cd native/flutter/leleg_iptv && flutter build macos --release` | `www/downloads/current/LelegIPTV-macos-arm64-release.dmg` / `.zip` |
 | Android phone / tablet / TV | `cd native/flutter/leleg_iptv && flutter build apk --release` | `www/downloads/current/LelegIPTV-android-universal-release.apk` |
-| iOS / iPhone / iPadOS | `cd native/flutter/leleg_iptv && flutter build ios --release --no-codesign` | `www/downloads/current/LelegIPTV-ios-unsigned.ipa` |
+| iOS / iPhone / iPadOS | `APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh` | `www/downloads/current/LelegIPTV-ios-testflight.ipa` |
 | Samsung Tizen TV | `cd native/tizen-tv && npm run build && npm run package:wgt` | `www/downloads/current/LelegIPTV-tizen-tv-release.wgt` |
 | Windows x64 | GitHub Action `Flutter installable artifacts` | GitHub release asset `LelegIPTV-windows-x64-release.zip` |
 | Linux x64 | GitHub Action `Flutter installable artifacts` | GitHub release asset `LelegIPTV-linux-x64-release.tar.gz` |
@@ -94,7 +94,7 @@ flutter build apk --release
 Requires macOS, Xcode, Apple Developer Program signing, and Flutter iOS tooling.
 
 ```bash
-APPLE_TEAM_ID=F925SY4K37 bash scripts/package-ios-testflight-ipa.sh
+APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh
 bash scripts/upload-ios-testflight.sh
 ```
 

@@ -19,7 +19,7 @@ local build outputs from this repository, not to official app-store listings.
 | Linux | GitHub Action `Flutter installable artifacts` on Ubuntu | `LelegIPTV-linux-x64-release.tar.gz` |
 | Android phone / tablet / TV | `pnpm flutter:android:build` | `www/downloads/current/LelegIPTV-android-universal-release.apk` |
 | Chromebook / Android XR | `pnpm flutter:android:build` or `pnpm build:pages` | Android APK or `dist/` depending on deployment |
-| iOS / iPadOS | `pnpm flutter:ios:build`, then `pnpm flutter:ios:package` | `www/downloads/current/LelegIPTV-ios-unsigned.ipa` |
+| iOS / iPadOS | `pnpm flutter:ios:testflight` | `www/downloads/current/LelegIPTV-ios-testflight.ipa` |
 | Samsung Tizen TV | `pnpm flutter:tizen:build` with Tizen Studio installed | `native/flutter/leleg_iptv/build/tizen/tpk/*.tpk` |
 | Web browser | `pnpm build:pages && pnpm download-center:prepare` | `dist/` |
 

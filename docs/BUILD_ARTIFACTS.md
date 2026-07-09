@@ -126,7 +126,7 @@ www/downloads/current/LelegIPTV-android-tv-release.apk
 ## iOS / iPadOS TestFlight
 
 ```bash
-APPLE_TEAM_ID=F925SY4K37 bash scripts/package-ios-testflight-ipa.sh
+APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh
 ```
 
 Output:
@@ -136,8 +136,8 @@ www/downloads/current/LelegIPTV-ios-testflight.ipa
 ```
 
 L'IPA e' firmata per App Store Connect/TestFlight. Prima build una tantum:
-crea l'app su App Store Connect con bundle ID `com.lelegiptv.lelegIptv`, imposta
-il team `F925SY4K37` in Xcode e lascia il provisioning automatico attivo.
+crea l'app su App Store Connect con bundle ID `it.emanuelegennuso.lelegiptv`, imposta
+il team `PD57DH2235` in Xcode e lascia il provisioning automatico attivo.
 
 Upload:
 

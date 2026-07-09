@@ -6,13 +6,13 @@ tramite Apple Developer Program. macOS resta distribuito come `.dmg` esterno.
 ## Prerequisiti una tantum
 
 1. In Apple Developer, verifica che esista l'App ID
-   `com.lelegiptv.lelegIptv`.
+   `it.emanuelegennuso.lelegiptv`.
 2. In App Store Connect, crea l'app iOS/iPadOS con:
    - nome: `Leleg IPTV`
-   - bundle ID: `com.lelegiptv.lelegIptv`
+   - bundle ID: `it.emanuelegennuso.lelegiptv`
    - SKU libero, ad esempio `leleg-iptv-ios`
 3. In Xcode, apri `Settings > Accounts` e accedi con il team Apple Developer
-   `F925SY4K37`.
+   `PD57DH2235`.
 4. Se non esiste ancora un certificato `Apple Distribution`, lascia che Xcode lo
    crei automaticamente: apri `native/flutter/leleg_iptv/ios/Runner.xcworkspace`,
    seleziona `Runner`, abilita `Automatically manage signing` e imposta il team.
@@ -31,7 +31,7 @@ per TestFlight.
 Dal root del repository:
 
 ```bash
-APPLE_TEAM_ID=F925SY4K37 bash scripts/package-ios-testflight-ipa.sh
+APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh
 ```
 
 Lo script:
@@ -47,7 +47,7 @@ Per forzare versione e build number:
 
 ```bash
 BUILD_NAME=1.0.20 BUILD_NUMBER=2026070801 \
-APPLE_TEAM_ID=F925SY4K37 \
+APPLE_TEAM_ID=PD57DH2235 \
 bash scripts/package-ios-testflight-ipa.sh
 ```
 
@@ -88,7 +88,7 @@ Xcode > Settings > Accounts > Team > Manage Certificates > + > Apple Distributio
 Poi rilancia:
 
 ```bash
-APPLE_TEAM_ID=F925SY4K37 bash scripts/package-ios-testflight-ipa.sh
+APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh
 ```
 
 ### `Team ... does not have permission to create "iOS App Store" provisioning profiles`

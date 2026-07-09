@@ -311,10 +311,10 @@
         <article class="download-card">
           <div>
             <h3>iPhone / iPad</h3>
-            <p>IPA non firmata da firmare con Scarlet, Sideloadly, AltStore o Xcode usando Apple ID personale.</p>
-            <p class="meta">14 MB · rinnovo periodico con Apple ID gratuito</p>
+            <p>IPA firmata per App Store Connect/TestFlight. L'IPA unsigned resta disponibile solo come fallback sideload.</p>
+            <p class="meta">27 MB · TestFlight / Apple Developer Program</p>
           </div>
-          <a class="button primary" href="../www/downloads/current/LelegIPTV-ios-unsigned.ipa">Scarica IPA unsigned</a>
+          <a class="button primary" href="../www/downloads/current/LelegIPTV-ios-testflight.ipa">Scarica IPA TestFlight</a>
         </article>
 
         <article class="download-card">
@@ -398,7 +398,13 @@ adb install -r LelegIPTV-android-tv-release.apk</code></pre>
 
     <section id="apple">
       <h2>Installazione iOS, iPadOS e macOS</h2>
-      <h3>iPhone e iPad con Scarlet, Sideloadly o AltStore</h3>
+      <h3>iPhone e iPad con TestFlight</h3>
+      <ol>
+        <li>Genera o scarica <a href="../www/downloads/current/LelegIPTV-ios-testflight.ipa">LelegIPTV-ios-testflight.ipa</a>.</li>
+        <li>Carica l'IPA su App Store Connect con <code>bash scripts/upload-ios-testflight.sh</code> dopo aver configurato una API key o una app-specific password.</li>
+        <li>Invita i tester da App Store Connect &gt; TestFlight.</li>
+      </ol>
+      <h3>Fallback con Scarlet, Sideloadly o AltStore</h3>
       <ol>
         <li>Scarica <a href="../www/downloads/current/LelegIPTV-ios-unsigned.ipa">LelegIPTV-ios-unsigned.ipa</a>.</li>
         <li>Metodo Scarlet: apri <a href="https://scarlet-ios.com/">scarlet-ios.com</a>, installa Scarlet seguendo le istruzioni del sito, poi importa l'IPA scaricata.</li>
