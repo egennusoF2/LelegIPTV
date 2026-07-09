@@ -3,6 +3,16 @@
 Questa e' la procedura consigliata per distribuire Leleg IPTV su iPhone e iPad
 tramite Apple Developer Program. macOS resta distribuito come `.dmg` esterno.
 
+Link pubblico per i tester:
+
+```text
+https://testflight.apple.com/join/vVYrQzUk
+```
+
+Gli utenti non devono scaricare l'IPA dal sito: aprono il link su iPhone o iPad,
+installano TestFlight dall'App Store se richiesto, accettano l'invito e poi
+installano Leleg IPTV da TestFlight.
+
 ## Prerequisiti una tantum
 
 1. In Apple Developer, verifica che esista l'App ID
@@ -106,13 +116,19 @@ Certificates, Identifiers & Profiles.
 ## Distribuzione tester
 
 Dopo l'upload, apri App Store Connect, entra nell'app Leleg IPTV, vai su
-TestFlight e assegna la build a tester interni o gruppi esterni. I tester
-installano l'app dall'app TestFlight ufficiale di Apple.
+TestFlight e assegna la build al gruppo esterno collegato al link pubblico. I
+tester installano l'app dall'app TestFlight ufficiale di Apple.
 
 ## Link pubblico TestFlight
 
-Il codice o link pubblico non viene generato dal progetto locale. Lo crea Apple
-in App Store Connect:
+Link pubblico attivo:
+
+```text
+https://testflight.apple.com/join/vVYrQzUk
+```
+
+Se in futuro va rigenerato, il codice o link pubblico non viene generato dal
+progetto locale. Lo crea Apple in App Store Connect:
 
 1. Apri App Store Connect > Apps > Leleg IPTV > TestFlight.
 2. In External Testing crea o apri un gruppo tester.
@@ -121,3 +137,5 @@ in App Store Connect:
 5. Clicca Create Public Link e copia il link generato.
 
 Il tester installa TestFlight dall'App Store e apre quel link sul dispositivo.
+Se TestFlight mostra una finestra "Redeem Code", non serve inserire un codice:
+va usato direttamente il link pubblico.

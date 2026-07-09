@@ -66,7 +66,7 @@ prompt on HTTPS or localhost.
 | Web browser / hosted static app | `pnpm build:pages && pnpm download-center:prepare` | `dist/` |
 | macOS Apple Silicon | `cd native/flutter/leleg_iptv && flutter build macos --release` | `www/downloads/current/LelegIPTV-macos-arm64-release.dmg` / `.zip` |
 | Android phone / tablet / TV | `cd native/flutter/leleg_iptv && flutter build apk --release` | `www/downloads/current/LelegIPTV-android-universal-release.apk` |
-| iOS / iPhone / iPadOS | `APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh` | `www/downloads/current/LelegIPTV-ios-testflight.ipa` |
+| iOS / iPhone / iPadOS | `APPLE_TEAM_ID=PD57DH2235 bash scripts/package-ios-testflight-ipa.sh && bash scripts/upload-ios-testflight.sh` | TestFlight pubblico: <https://testflight.apple.com/join/vVYrQzUk> |
 | Samsung Tizen TV | `cd native/tizen-tv && npm run build && npm run package:wgt` | `www/downloads/current/LelegIPTV-tizen-tv-release.wgt` |
 | Windows x64 | GitHub Action `Flutter installable artifacts` | GitHub release asset `LelegIPTV-windows-x64-release.zip` |
 | Linux x64 | GitHub Action `Flutter installable artifacts` | GitHub release asset `LelegIPTV-linux-x64-release.tar.gz` |
@@ -99,8 +99,8 @@ bash scripts/upload-ios-testflight.sh
 ```
 
 TestFlight setup is documented in `docs/TESTFLIGHT_DISTRIBUTION.md`. The
-recommended distribution channel for iPhone and iPad testers is TestFlight via
-App Store Connect.
+recommended distribution channel for iPhone and iPad testers is the public
+TestFlight link: <https://testflight.apple.com/join/vVYrQzUk>.
 
 ### Samsung Tizen TV artifacts
 
@@ -138,8 +138,9 @@ flutter run -d <device>   # iOS/Android physical device or simulator
 ```
 
 **iOS dev on a physical device:** use Flutter/Xcode signing for local install.
-For tester distribution, build the TestFlight IPA and upload it through App
-Store Connect as described in `docs/TESTFLIGHT_DISTRIBUTION.md`.
+For tester distribution, build and upload the TestFlight IPA through App Store
+Connect, then share the public TestFlight link documented in
+`docs/TESTFLIGHT_DISTRIBUTION.md`.
 
 To test the dev server on another device on the LAN (phone, TV), set `XTREAM_HMR_HOST` to your machine's LAN IP so Vite advertises the right HMR host:
 
