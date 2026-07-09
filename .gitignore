@@ -55,5 +55,6 @@ www/downloads/current/*
 
 cmds.md
 store-listings.md
+release/*.zip
 .oracle.env
 ssh-key-*.key
