@@ -23,10 +23,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.lelegiptv.tv.data.LiveChannel
@@ -36,7 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 
 private const val PreviewDebounceMs = 550L
-private const val PreviewPlayTimeoutMs = 3_500L
+private const val PreviewPlayTimeoutMs = 6_000L
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -63,22 +59,18 @@ fun LivePreviewPlayer(
     }
 
     val player = remember(profile.baseUrl) {
-        val dataSource = DefaultHttpDataSource.Factory()
-            .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
-            .setDefaultRequestProperties(mapOf("Referer" to "${profile.baseUrl}/"))
-            .setAllowCrossProtocolRedirects(true)
-        ExoPlayer.Builder(context)
-            .setRenderersFactory(
-                DefaultRenderersFactory(context).setEnableDecoderFallback(true),
-            )
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
-            .build()
-            .apply {
-                volume = if (lightweight) 0f else 1f
-            }
+        StreamPlayback.createPlayer(
+            context,
+            "${profile.baseUrl}/",
+            preview = true,
+            live = true,
+        ).apply {
+            volume = if (lightweight) 0f else 1f
+        }
     }
 
     DisposableEffect(player) {
+        val continuity = StreamPlayback.attachLiveContinuity(player) { true }
         val listener = object : Player.Listener {
             override fun onPlayerError(playbackError: PlaybackException) {
                 error = playbackError.errorCodeName
@@ -87,6 +79,7 @@ fun LivePreviewPlayer(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
+            player.removeListener(continuity)
             player.stop()
             player.clearMediaItems()
             player.release()

@@ -64,16 +64,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.lelegiptv.tv.data.EpgProgramme
@@ -126,20 +121,12 @@ fun PlayerScreen(
     val rootFocus = remember { FocusRequester() }
     val isLive = onPreviousChannel != null || onNextChannel != null
 
-    val player = remember(referer) {
-        val dataSource = DefaultHttpDataSource.Factory()
-            .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
-            .setDefaultRequestProperties(mapOf("Referer" to referer))
-            .setAllowCrossProtocolRedirects(true)
-        ExoPlayer.Builder(context)
-            .setRenderersFactory(
-                DefaultRenderersFactory(context).setEnableDecoderFallback(true),
-            )
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSource))
-            .build()
+    val player = remember(referer, isLive) {
+        StreamPlayback.createPlayer(context, referer, live = isLive)
     }
 
     DisposableEffect(player) {
+        val continuity = StreamPlayback.attachLiveContinuity(player) { isLive }
         val listener = object : Player.Listener {
             override fun onPlayerError(playbackError: PlaybackException) {
                 error = playbackError.errorCodeName
@@ -167,6 +154,7 @@ fun PlayerScreen(
                 }
             }
             player.removeListener(listener)
+            player.removeListener(continuity)
             player.release()
         }
     }

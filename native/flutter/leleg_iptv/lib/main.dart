@@ -156,6 +156,41 @@ Map<String, String> _mediaHttpHeaders(String url, XtreamProfile? profile) {
   };
 }
 
+/// Follow IPTV 302s (portal → CDN host:port) so AVPlayer/media_kit open the
+/// final playlist URL. Without this, macOS ATS and some players fail on the
+/// portal URL even when standalone mpv works.
+Future<String> _resolvePlaybackRedirects(
+  String url, {
+  Map<String, String>? headers,
+  int maxHops = 5,
+}) async {
+  var current = url;
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+  try {
+    for (var hop = 0; hop < maxHops; hop += 1) {
+      final uri = Uri.tryParse(current);
+      if (uri == null) return current;
+      final request = await client.getUrl(uri);
+      request.followRedirects = false;
+      headers?.forEach(request.headers.set);
+      final response = await request.close().timeout(const Duration(seconds: 8));
+      await response.drain<void>();
+      final code = response.statusCode;
+      if (code < 300 || code >= 400) {
+        return current;
+      }
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      if (location == null || location.isEmpty) return current;
+      current = uri.resolve(location).toString();
+    }
+  } catch (_) {
+    return url;
+  } finally {
+    client.close(force: true);
+  }
+  return current;
+}
+
 bool _isLivePlaybackUrl(String url) {
   final target = url.toLowerCase();
   return RegExp(r'/live/').hasMatch(target) ||
@@ -810,6 +845,9 @@ class _LelegNativeShellState extends State<LelegNativeShell>
   bool _playerFocusMode = false;
   bool _isAndroidTv = false;
   bool _livePlayerActive = false;
+  bool _allowLiveReload = false;
+  int _liveReloadCount = 0;
+  String? _currentPlaybackUrl;
   bool _fullscreenOverlayVisible = true;
   bool get _usesDesktopFullscreenOverlay =>
       !_isAndroidTv && (Platform.isMacOS || Platform.isWindows);
@@ -871,6 +909,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     };
   }
 
+  /// Prefer AVFoundation for Apple platforms via [preferApple] on open.
+  /// Keep media_kit Player alive on macOS as fallback (Metal texture can fail).
   bool get _useAppleVideoBackend => false;
 
   bool get _preferTsLivePlayback {
@@ -937,7 +977,9 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         : VideoController(
             mediaPlayer,
             configuration: VideoControllerConfiguration(
-              enableHardwareAcceleration: !Platform.isWindows,
+              // Windows + macOS: HW path often yields a black Metal texture.
+              enableHardwareAcceleration:
+                  !Platform.isWindows && !Platform.isMacOS,
               androidAttachSurfaceAfterVideoParameters: true,
             ),
           );
@@ -960,6 +1002,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         ? const []
         : [
             mediaPlayer.stream.error.listen((error) {
+              // Ignore media_kit noise while AVPlayer is the active surface.
+              if (_appleVideoController != null) return;
               if (mounted) setState(() => _status = 'Player error: $error');
             }),
             mediaPlayer.stream.playing.listen((playing) {
@@ -968,6 +1012,11 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                   () => _status = playing ? 'In riproduzione' : 'In pausa',
                 );
               }
+            }),
+            mediaPlayer.stream.completed.listen((completed) {
+              if (!completed || !mounted) return;
+              final generation = _livePlaybackGeneration;
+              unawaited(_reloadLiveIfInterrupted(generation));
             }),
           ];
     _storageChannel.setMethodCallHandler(_handleNativeStorageCall);
@@ -3668,6 +3717,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       _livePlayerActive = true;
       _playerTitle = channel.name;
     });
+    _allowLiveReload = false;
+    _liveReloadCount = 0;
     final candidates = <XtreamProfile>[];
     void addCandidate(XtreamProfile candidate) {
       if (candidates.any(
@@ -3678,23 +3729,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       candidates.add(candidate);
     }
 
-    if (_preferTsLivePlayback) {
-      addCandidate(profile.copyWith(liveContainer: 'ts'));
-      addCandidate(profile.copyWith(liveContainer: 'm3u8'));
-    } else if (Platform.isAndroid && !isTizenRuntime) {
-      final primary = profile.liveContainer.trim().toLowerCase();
-      final first = primary == 'm3u8' ? 'm3u8' : 'ts';
-      final second = first == 'ts' ? 'm3u8' : 'ts';
-      addCandidate(profile.copyWith(liveContainer: first));
-      addCandidate(profile.copyWith(liveContainer: second));
-    } else {
-      addCandidate(profile);
-      addCandidate(
-        profile.copyWith(
-          liveContainer: profile.liveContainer == 'ts' ? 'm3u8' : 'ts',
-        ),
-      );
-    }
+    // Progressive Xtream `.ts` often ends after a few seconds. HLS keeps
+    // pulling the next playlist/chunks; `.ts` stays a fallback only.
+    addCandidate(profile.copyWith(liveContainer: 'm3u8'));
+    addCandidate(profile.copyWith(liveContainer: 'ts'));
 
     var opened = false;
     for (final candidate in candidates) {
@@ -3710,6 +3748,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       );
       if (playbackId != _livePlaybackGeneration) return;
       if (opened) {
+        _allowLiveReload = true;
+        _liveReloadCount = 0;
         _enterLivePlaybackFullscreen();
         if (mounted) {
           setState(() {
@@ -3739,6 +3779,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     final profile = _profile;
     if (profile == null) return;
     final playbackId = ++_livePlaybackGeneration;
+    _allowLiveReload = false;
     final resolved = _enrichProgramme(
       channel,
       _resolveGuideProgramme(channel, programme),
@@ -3840,8 +3881,8 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         if (!isTs) return 1;
         return 2;
       }
-      if (isTs) return 0;
-      if (!isM3u8) return 1;
+      if (isM3u8) return 0;
+      if (!isTs) return 1;
       return 2;
     }
 
@@ -3887,7 +3928,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
   Future<void> _playMovie(VodMovie movie, {bool fromStart = false}) async {
     final profile = _profile;
     if (profile == null) return;
-    setState(() => _livePlayerActive = false);
+    setState(() {
+      _livePlayerActive = false;
+      _allowLiveReload = false;
+    });
     final progress = fromStart ? null : _movieProgress[movie.id];
     final startAt = progress?.canResume == true
         ? Duration(milliseconds: progress!.positionMs)
@@ -4358,7 +4402,10 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     final show = _selectedSeries;
     if (profile == null) return;
     if (show != null) unawaited(_recordRecentSeries(show.id));
-    setState(() => _livePlayerActive = false);
+    setState(() {
+      _livePlayerActive = false;
+      _allowLiveReload = false;
+    });
     final progress = fromStart ? null : _episodeProgress[episode.id];
     final startAt = progress?.canResume == true
         ? Duration(milliseconds: progress!.positionMs)
@@ -4417,14 +4464,27 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     });
   }
 
-  /// Fullscreen landscape player on phone and tablet (mobile flavor only).
-  void _enterMobilePlaybackFullscreen() {
-    _enterFullscreenOnPhonePlayback(force: _isMobileHandheld);
+  /// Live TV stays inline on tablets and enters fullscreen directly on phones.
+  /// On desktop (macOS/Windows), also jump to fullscreen so the picture is obvious.
+  void _enterLivePlaybackFullscreen() {
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      if (!_playerFocusMode) {
+        _setPlayerFocusMode(true);
+      }
+      return;
+    }
+    _enterFullscreenOnPhonePlayback();
   }
 
-  /// Live TV stays inline on tablets and enters fullscreen directly on phones.
-  void _enterLivePlaybackFullscreen() {
-    _enterFullscreenOnPhonePlayback();
+  /// Fullscreen landscape player on phone and tablet (mobile flavor only).
+  void _enterMobilePlaybackFullscreen() {
+    if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {
+      if (!_playerFocusMode) {
+        _setPlayerFocusMode(true);
+      }
+      return;
+    }
+    _enterFullscreenOnPhonePlayback(force: _isMobileHandheld);
   }
 
   Future<bool> _openMedia(
@@ -4440,12 +4500,28 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       _playerTitle = title;
       _status = 'Apertura: $title';
     });
-    if (preferApple || _useAppleVideoBackend) {
-      final opened = await _openAppleMedia(url, title, startAt: startAt);
+    final headers = _profile == null
+        ? const <String, String>{}
+        : _mediaHttpHeaders(url, _profile);
+    final resolved = await _resolvePlaybackRedirects(url, headers: headers);
+    if (resolved != url) {
+      _traceTv('playback redirect $url -> $resolved');
+    }
+    // Prefer AVFoundation on all Apple platforms (iOS + macOS).
+    final tryApple =
+        preferApple || _useAppleVideoBackend || Platform.isMacOS || Platform.isIOS;
+    if (tryApple) {
+      final opened = await _openAppleMedia(resolved, title, startAt: startAt);
       if (opened) return true;
-      if (preferApple && !_useAppleVideoBackend) {
+      // Apple platforms: never fall back to media_kit — providers with
+      // max_connections=1 reject the second open ("Failed to open").
+      if (Platform.isMacOS || Platform.isIOS) {
+        _traceTv('apple open failed; not falling back to media_kit');
+        return false;
+      }
+      if (preferApple) {
         return _openMediaKitMedia(
-          url,
+          resolved,
           startAt: startAt,
           validatePlayback: validatePlayback,
           validationTimeout: validationTimeout,
@@ -4455,7 +4531,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       return false;
     }
     if (isTizenRuntime) {
-      for (final candidate in _tizenMediaCandidates(url)) {
+      for (final candidate in _tizenMediaCandidates(resolved)) {
         final opened = await _openTizenMedia(
           candidate,
           title,
@@ -4466,7 +4542,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       return false;
     }
     return _openMediaKitMedia(
-      url,
+      resolved,
       startAt: startAt,
       validatePlayback: validatePlayback,
       validationTimeout: validationTimeout,
@@ -4528,6 +4604,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       }
     } catch (_) {}
     final isLive = _isLivePlaybackUrl(url);
+    _currentPlaybackUrl = url;
     try {
       await mediaPlayer.open(
         Media(
@@ -4554,17 +4631,30 @@ class _LelegNativeShellState extends State<LelegNativeShell>
                 Platform.isLinux) &&
             !isTizenRuntime);
     if (shouldValidate) {
+      final timeout = validatePlayback
+          ? validationTimeout
+          : const Duration(seconds: 5);
       final hasVideo = await _waitForMediaKitVideoFrame(
         mediaPlayer,
-        timeout: validatePlayback
-            ? validationTimeout
-            : const Duration(seconds: 5),
+        timeout: timeout,
       );
       if (!hasVideo) {
-        try {
-          await mediaPlayer.stop();
-        } catch (_) {}
-        return false;
+        // On desktop, live/HLS often reports playing + A/V time before
+        // videoParams width/height arrive. Killing the player here made
+        // Mac playback look "broken" while standalone mpv worked.
+        final playingAnyway = mediaPlayer.state.playing ||
+            mediaPlayer.state.position > Duration.zero ||
+            mediaPlayer.state.buffering;
+        if (playingAnyway) {
+          _traceTv(
+            'live validation: no videoParams yet but player active; keep open',
+          );
+        } else {
+          try {
+            await mediaPlayer.stop();
+          } catch (_) {}
+          return false;
+        }
       }
       if (Platform.isAndroid) {
         _syncMediaKitSurfaceAfterLayoutChange();
@@ -4589,9 +4679,54 @@ class _LelegNativeShellState extends State<LelegNativeShell>
         final w = params.dw ?? 0;
         final h = params.dh ?? 0;
         if (w > 0 && h > 0) return true;
+        // Audio-only progress still means the open succeeded for live.
+        if (player.state.playing && player.state.position > Duration.zero) {
+          return true;
+        }
       }
     } catch (_) {}
-    return (player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0;
+    if ((player.state.width ?? 0) > 0 && (player.state.height ?? 0) > 0) {
+      return true;
+    }
+    return player.state.playing && player.state.position > Duration.zero;
+  }
+
+  Future<void> _reloadLiveIfInterrupted(int generation) async {
+    if (!_allowLiveReload || !_livePlayerActive) return;
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted || generation != _livePlaybackGeneration) return;
+    if (!_allowLiveReload || !_livePlayerActive) return;
+    final player = _player;
+    if (player == null || player.state.playing) return;
+    final url = _currentPlaybackUrl;
+    if (url == null || !RegExp(r'/live/').hasMatch(url.toLowerCase())) return;
+    if (_liveReloadCount >= 8) return;
+    _liveReloadCount += 1;
+    final next = _liveReloadUrl(url);
+    _traceTv('live interrupted; reopen $next ($_liveReloadCount)');
+    if (Platform.isMacOS || Platform.isIOS) {
+      await _openAppleMedia(next, _playerTitle);
+    } else {
+      await _openMediaKitMedia(
+        next,
+        validatePlayback: false,
+        autoValidateLivePlayback: false,
+      );
+    }
+  }
+
+  String _liveReloadUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return url;
+    final path = uri.path;
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.ts')) {
+      return uri.replace(path: '${path.substring(0, path.length - 3)}.m3u8').toString();
+    }
+    if (lower.endsWith('.m3u8')) {
+      return uri.replace(path: '${path.substring(0, path.length - 5)}.ts').toString();
+    }
+    return url;
   }
 
   Future<bool> _openAppleMedia(
@@ -4617,10 +4752,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       Uri.parse(url),
       httpHeaders: _profile == null
           ? const <String, String>{}
-          : {
-              'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
-              'Referer': '${_profile!.baseUrl}/',
-            },
+          : _mediaHttpHeaders(url, _profile),
       videoPlayerOptions: vp.VideoPlayerOptions(allowBackgroundPlayback: false),
     );
     controller.addListener(() {
@@ -4636,20 +4768,30 @@ class _LelegNativeShellState extends State<LelegNativeShell>
     setState(() => _status = 'Preparazione player iPhone: $title');
     try {
       await controller.initialize();
-      var size = controller.value.size;
-      for (var attempt = 0; attempt < 12; attempt += 1) {
-        if (size.width > 0 && size.height > 0) break;
-        await Future<void>.delayed(const Duration(milliseconds: 250));
-        size = controller.value.size;
-      }
-      if (size.width <= 0 || size.height <= 0) {
-        throw StateError('Player Apple inizializzato senza traccia video');
-      }
       if (startAt != null && startAt.inMilliseconds > 0) {
         await controller.seekTo(startAt);
       }
       await controller.play();
-      if (mounted) setState(() => _status = 'In riproduzione');
+      // Live/HLS on macOS often reports 0x0 briefly; do not abort — that would
+      // burn the provider's single connection and break any fallback player.
+      var size = controller.value.size;
+      for (var attempt = 0; attempt < (Platform.isMacOS ? 20 : 8); attempt += 1) {
+        if (size.width > 0 && size.height > 0) break;
+        if (controller.value.hasError) {
+          throw StateError(
+            controller.value.errorDescription ?? 'Player Apple in errore',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        size = controller.value.size;
+      }
+      if (mounted) {
+        setState(() {
+          _status = size.width > 0
+              ? 'In riproduzione'
+              : 'In riproduzione (attesa frame…)';
+        });
+      }
       return true;
     } catch (error) {
       try {
@@ -5191,6 +5333,7 @@ class _LelegNativeShellState extends State<LelegNativeShell>
       } catch (_) {}
     }
     _setPlayerFocusMode(false);
+    _allowLiveReload = false;
     if (!mounted) return;
     setState(() {
       _playerTitle = 'Scegli qualcosa da guardare.';
